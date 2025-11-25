@@ -1,0 +1,8 @@
+pvporcupine
+pyaudio
+numpy
+soundfile
+SpeechRecognition
+pyttsx3
+openai
+python-dotenv
