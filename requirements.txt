@@ -6,3 +6,5 @@ SpeechRecognition
 pyttsx3
 openai
 python-dotenv
+pystray
+Pillow

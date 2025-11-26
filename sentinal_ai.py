@@ -1,4 +1,4 @@
-<<<<<<< HEAD
+#
 # sentinel_ai_fixed.py
 import os
 import time
@@ -22,8 +22,14 @@ import pythoncom
 import httpx
 import shutil
 import winsound
-import requests
+try:
+    import requests
+except Exception:
+    requests = None
 import json
+import winreg
+from pathlib import Path
+import logging
 
 # Speaker embedding utilities
 # Silero VAD utils
@@ -31,6 +37,13 @@ import json
 
 # GUI
 import tkinter as tk
+from tkinter import messagebox, ttk
+try:
+    import pystray
+    from PIL import Image, ImageDraw
+    _tray_available = True
+except Exception:
+    _tray_available = False
 
 load_dotenv()
 
@@ -48,6 +61,372 @@ status_queue = Queue()
 agent_active = False
 pending_step = None
 next_agent_capture_time = 0
+entertainment_active = False
+
+# App registry paths
+APPDATA_DIR = os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "SentinelAi")
+APPS_REGISTRY_PATH = os.path.join(APPDATA_DIR, "apps_registry.json")
+apps_index = {}
+_mru = {}
+MRU_PATH = os.path.join(APPDATA_DIR, "mru.json")
+SETTINGS_PATH = os.path.join(APPDATA_DIR, "settings.json")
+wake_stop_event = threading.Event()
+wake_thread = None
+root_window = None
+ALIASES = {
+    "vs code": "vscode",
+    "code": "vscode",
+    "visual studio code": "vscode",
+    "google": "google chrome",
+    "chrome": "google chrome",
+    "ms word": "word",
+    "microsoft word": "word",
+    "ms excel": "excel",
+    "microsoft excel": "excel",
+    "power point": "powerpoint",
+    "power-point": "powerpoint",
+    "photoshop": "photoshop",
+    "illustrator": "illustrator",
+    "premiere": "premiere",
+    "after effects": "aftereffects",
+    "after-effects": "aftereffects",
+    "onenote": "onenote",
+    "outlook": "outlook",
+    "teams": "teams",
+    "whatsapp": "whatsapp",
+    "telegram": "telegram",
+    "discord": "discord"
+}
+
+def _normalize_name(name):
+    return (name or "").lower().strip()
+
+def ensure_appdata_dir():
+    try:
+        Path(APPDATA_DIR).mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    try:
+        log_path = os.path.join(APPDATA_DIR, "sentinel.log")
+        logging.basicConfig(filename=log_path, level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
+    except Exception:
+        pass
+
+def _load_apps_index():
+    global apps_index
+    try:
+        if os.path.exists(APPS_REGISTRY_PATH):
+            with open(APPS_REGISTRY_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                apps_index.clear()
+                apps_index.update(data)
+    except Exception:
+        apps_index.clear()
+
+def _load_mru():
+    global _mru
+    try:
+        if os.path.exists(MRU_PATH):
+            with open(MRU_PATH, "r", encoding="utf-8") as f:
+                _mru = json.load(f)
+    except Exception:
+        _mru = {}
+
+def _save_mru():
+    try:
+        with open(MRU_PATH, "w", encoding="utf-8") as f:
+            json.dump(_mru, f, indent=2)
+    except Exception:
+        pass
+
+def record_mru(name):
+    n = _normalize_name(name)
+    if not _mru:
+        _load_mru()
+    rec = _mru.get(n, {"count": 0})
+    rec["count"] = int(rec.get("count", 0)) + 1
+    _mru[n] = rec
+    _save_mru()
+
+def top_mru(limit=5):
+    if not _mru:
+        _load_mru()
+    items = sorted(_mru.items(), key=lambda kv: kv[1].get("count", 0), reverse=True)
+    return [k for k, _ in items[:limit]]
+
+def _save_apps_index():
+    try:
+        with open(APPS_REGISTRY_PATH, "w", encoding="utf-8") as f:
+            json.dump(apps_index, f, indent=2)
+    except Exception:
+        pass
+
+def _load_settings():
+    try:
+        if os.path.exists(SETTINGS_PATH):
+            with open(SETTINGS_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        return {}
+    return {}
+
+def _save_settings(data):
+    try:
+        with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+    except Exception:
+        pass
+
+def _scan_uninstall_key(root):
+    results = {}
+    try:
+        with winreg.OpenKey(root, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall") as key:
+            i = 0
+            while True:
+                try:
+                    sub = winreg.EnumKey(key, i)
+                except OSError:
+                    break
+                i += 1
+                try:
+                    with winreg.OpenKey(key, sub) as sk:
+                        name, _ = winreg.QueryValueEx(sk, "DisplayName")
+                        icon = None
+                        loc = None
+                        try:
+                            icon, _ = winreg.QueryValueEx(sk, "DisplayIcon")
+                        except OSError:
+                            pass
+                        try:
+                            loc, _ = winreg.QueryValueEx(sk, "InstallLocation")
+                        except OSError:
+                            pass
+                        exe = None
+                        if icon and str(icon).lower().endswith(".exe"):
+                            exe = icon
+                        elif loc and os.path.isdir(loc):
+                            # try common exe names
+                            candidates = [p for p in Path(loc).glob("*.exe")]
+                            if candidates:
+                                exe = str(candidates[0])
+                        if name:
+                            results[_normalize_name(name)] = exe or ""
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return results
+
+def build_app_registry():
+    ensure_appdata_dir()
+    idx = {}
+    # HKLM and HKCU
+    idx.update(_scan_uninstall_key(winreg.HKEY_LOCAL_MACHINE))
+    idx.update(_scan_uninstall_key(winreg.HKEY_CURRENT_USER))
+    # Known apps fallback
+    known = {
+        "chrome": r"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        "google chrome": r"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+        "notepad": r"C:\\Windows\\System32\\notepad.exe",
+        "paint": r"C:\\Windows\\System32\\mspaint.exe",
+        "calculator": r"C:\\Windows\\System32\\calc.exe",
+        "vscode": os.path.expandvars(r"%LocalAppData%\\Programs\\Microsoft VS Code\\Code.exe"),
+        "visual studio code": os.path.expandvars(r"%LocalAppData%\\Programs\\Microsoft VS Code\\Code.exe"),
+        "edge": r"C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+        "brave": os.path.expandvars(r"%LocalAppData%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"),
+        "opera": os.path.expandvars(r"%LocalAppData%\\Programs\\Opera\\launcher.exe"),
+        "vlc": r"C:\\Program Files\\VideoLAN\\VLC\\vlc.exe",
+        "notepad++": r"C:\\Program Files\\Notepad++\\notepad++.exe",
+        "spotify": os.path.expandvars(r"%LocalAppData%\\Microsoft\\WindowsApps\\Spotify.exe"),
+        "steam": r"C:\\Program Files (x86)\\Steam\\steam.exe",
+        "word": r"C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE",
+        "excel": r"C:\\Program Files\\Microsoft Office\\root\\Office16\\EXCEL.EXE",
+        "powerpoint": r"C:\\Program Files\\Microsoft Office\\root\\Office16\\POWERPNT.EXE",
+    }
+    for k, v in known.items():
+        if k not in idx and os.path.exists(v):
+            idx[k] = v
+    # PATH scan for common executables
+    try:
+        for d in os.getenv("PATH", "").split(os.pathsep):
+            d = d.strip('"')
+            if not d:
+                continue
+            for name, exe in [("python", "python.exe"), ("git", "git.exe"), ("node", "node.exe"), ("vlc", "vlc.exe"), ("code", "Code.exe")]:
+                p = os.path.join(d, exe)
+                if os.path.exists(p):
+                    idx[_normalize_name(name if name != "code" else "vscode")] = p
+    except Exception:
+        pass
+    # Adobe scan
+    try:
+        ad = r"C:\\Program Files\\Adobe"
+        if os.path.isdir(ad):
+            for p in Path(ad).glob("**/Photoshop.exe"):
+                idx["photoshop"] = str(p)
+            for p in Path(ad).glob("**/Illustrator.exe"):
+                idx["illustrator"] = str(p)
+            for p in Path(ad).glob("**/Adobe Premiere*.exe"):
+                idx["premiere"] = str(p)
+            for p in Path(ad).glob("**/AfterFX.exe"):
+                idx["aftereffects"] = str(p)
+    except Exception:
+        pass
+    # Messaging scan
+    try:
+        wa = os.path.expandvars(r"%LocalAppData%\\WhatsApp\\WhatsApp.exe")
+        if os.path.exists(wa):
+            idx["whatsapp"] = wa
+        tg = os.path.expandvars(r"%LocalAppData%\\Telegram Desktop\\Telegram.exe")
+        if os.path.exists(tg):
+            idx["telegram"] = tg
+        for p in Path(os.path.expandvars(r"%LocalAppData%\\Discord")).glob("**/Discord.exe"):
+            idx["discord"] = str(p)
+    except Exception:
+        pass
+    # Persist
+    global apps_index
+    apps_index.clear()
+    apps_index.update(idx)
+    _save_apps_index()
+    status_queue.put(f"Apps indexed: {len(apps_index)}")
+
+def find_app_executable(name):
+    n = _normalize_name(name)
+    if n in ALIASES:
+        n = ALIASES[n]
+    if not apps_index:
+        _load_apps_index()
+    exe = apps_index.get(n)
+    if exe and os.path.exists(exe):
+        return exe
+    try:
+        for k, v in apps_index.items():
+            if n in k and v and os.path.exists(v):
+                return v
+    except Exception:
+        pass
+    return None
+
+def open_app(name):
+    exe = find_app_executable(name)
+    if exe:
+        try:
+            subprocess.Popen([exe])
+            status_queue.put(f"Opening {name}")
+            speak(f"Opening {name}")
+            record_mru(name)
+            return True
+        except Exception:
+            status_queue.put(f"Failed to open {name}")
+    return False
+
+def install_and_open_app(name):
+    status_queue.put(f"Installing {name}...")
+    speak(f"Installing {name}")
+    def _run():
+        try:
+            # Attempt winget install
+            subprocess.call(["winget", "install", "--silent", name], shell=True)
+        except Exception:
+            pass
+        # Refresh registry and open
+        build_app_registry()
+        if not open_app(name):
+            status_queue.put(f"Could not open {name}")
+            speak(f"Could not open {name}")
+    threading.Thread(target=_run, daemon=True).start()
+
+def ensure_autostart():
+    try:
+        import sys
+        exe_path = sys.executable if getattr(sys, 'frozen', False) else None
+        if exe_path:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE) as key:
+                winreg.SetValueEx(key, "SentinelAI", 0, winreg.REG_SZ, exe_path)
+    except Exception:
+        try:
+            subprocess.call(["schtasks", "/Create", "/SC", "ONLOGON", "/TN", "SentinelAI", "/TR", f'"{sys.executable}"'], shell=True)
+        except Exception:
+            pass
+
+def preflight_bootstrap():
+    ensure_appdata_dir()
+    _load_apps_index()
+    _load_mru()
+    settings = _load_settings()
+    if settings.get("autostart", True):
+        ensure_autostart()
+    if not apps_index:
+        build_app_registry()
+    missing = []
+    if not find_app_executable("google chrome"):
+        missing.append("Google Chrome")
+    if not find_app_executable("visual studio code") and not find_app_executable("vscode"):
+        missing.append("Visual Studio Code")
+    if missing:
+        try:
+            root = tk.Tk(); root.withdraw()
+            ans = messagebox.askyesno("Install Tools", f"Install {', '.join(missing)}?")
+            root.destroy()
+            if ans:
+                for m in missing:
+                    install_and_open_app(m)
+        except Exception:
+            pass
+
+def _make_tray_image():
+    img = Image.new('RGB', (64, 64), color=(30, 30, 30))
+    d = ImageDraw.Draw(img)
+    d.ellipse((8,8,56,56), outline=(0,200,255), width=3)
+    d.text((18,24), 'SA', fill=(255,255,255))
+    return img
+
+def start_tray():
+    if not _tray_available:
+        return
+    def tray_start(icon, item):
+        start_agent()
+    def tray_stop(icon, item):
+        stop_agent()
+    def tray_toggle_ent(icon, item):
+        global entertainment_active
+        entertainment_active = not entertainment_active
+        speak("Entertainment " + ("enabled" if entertainment_active else "disabled"))
+    def tray_record(icon, item):
+        try:
+            status_queue.put("Recording command...")
+            record_wav(COMMAND_WAV, duration=4)
+            try:
+                trim_wav_silence(COMMAND_WAV)
+            except Exception:
+                pass
+            text = transcribe_wav(COMMAND_WAV)
+            if text:
+                status_queue.put(f"Command: {text}")
+                execute_command(text)
+            else:
+                status_queue.put("Transcription empty.")
+                speak("Sorry, I couldn't understand.")
+        except Exception:
+            pass
+    def tray_settings(icon, item):
+        try:
+            open_settings_ui_global()
+        except Exception:
+            pass
+    def tray_quit(icon, item):
+        os._exit(0)
+    menu = pystray.Menu(
+        pystray.MenuItem('Start Agent', tray_start),
+        pystray.MenuItem('Stop Agent', tray_stop),
+        pystray.MenuItem('Record Command', tray_record),
+        pystray.MenuItem('Toggle Entertainment', tray_toggle_ent),
+        pystray.MenuItem('Settings', tray_settings),
+        pystray.MenuItem('Quit', tray_quit)
+    )
+    icon = pystray.Icon('SentinelAI', _make_tray_image(), 'SentinelAI', menu)
+    threading.Thread(target=icon.run, daemon=True).start()
 
 def start_agent():
     # Turn on the step-by-step helper. It will wait for steps and ask for confirmation.
@@ -355,8 +734,27 @@ def interpret_command(command):
         q = command.split(" ", 2)
         prompt = q[2] if len(q) > 2 else command
         return gemini_generate(prompt)
+    if entertainment_active:
+        # In entertainment mode, respond conversationally using OpenAI
+        from openai import OpenAI
+        key = os.getenv("OPEN_AI_API_KEY")
+        if not key:
+            return "No OpenAI key configured."
+        client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=key)
+        try:
+            resp = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role":"system","content":"You are a friendly, concise, kid-safe desktop companion named SentinelAI. Keep replies short unless asked to expand."},
+                    {"role":"user","content":command}
+                ],
+                max_tokens=120
+            )
+            return resp.choices[0].message.content.strip()
+        except Exception:
+            return "Chat error."
     from openai import OpenAI
-    key = os.getenv("OPENROUTER_API_KEY")
+    key = os.getenv("OPEN_AI_API_KEY")
     if not key:
         return "No OpenAI key configured."
     client = OpenAI(
@@ -401,11 +799,26 @@ def execute_command(command):
     if command in ("stop", "stop agent", "agent stop", "disable agent"):
         stop_agent()   # Turn off agent mode
         return
-    if "open browser" in command:
+    if command in ("enable entertainment", "entertain me", "talk mode"):
+        global entertainment_active
+        entertainment_active = True
+        status_queue.put("Entertainment mode enabled.")
+        speak("Entertainment mode enabled.")
+        return
+    if command in ("disable entertainment", "quiet mode", "stop talking"):
+        entertainment_active = False
+        status_queue.put("Entertainment mode disabled.")
+        speak("Entertainment mode disabled.")
+        return
+    if command.startswith("open "):
+        appname = command.split("open ", 1)[1].strip()
+        if not open_app(appname):
+            install_and_open_app(appname)
+    elif "open browser" in command:
         webbrowser.open("https://www.google.com")
     elif "open gmail" in command:
         webbrowser.open("https://mail.google.com")
-=======
+ 
 
 import os
 import subprocess
@@ -413,8 +826,8 @@ import webbrowser
 import pyttsx3
 import speech_recognition as sr
 import numpy as np
-from resemblyzer import VoiceEncoder, preprocess_wav
-import sounddevice as sd
+ 
+ 
 import soundfile as sf
 import time
 import tkinter as tk
@@ -435,7 +848,7 @@ status_queue = Queue()
 # Set your OpenAI API key
 openai.api_key = os.getenv("OPEN_AI_API_KEY")  # Or replace with your key string
 
-encoder = VoiceEncoder()
+ 
 
 # Initialize TTS engine
 def speak(text):
@@ -455,37 +868,22 @@ def record_audio_to_file(filename="liveness.wav", duration=3):
     return filename
 
 
-def liveness_check():
-    global session_valid_until
-    encoder = VoiceEncoder()
-
-    # First-time setup or reference loading
-    reference_path = "testcode.wav"
-    owner_embed_path = "owner_embed.npy"
-
-    if not os.path.exists(owner_embed_path):
-        if not os.path.exists(reference_path):
-            speak("Reference voice not found. Please register your voice.")
-            record_audio_to_file(reference_path, duration=3)
-        wav = preprocess_wav(reference_path)
-        owner_embed = encoder.embed_utterance(wav)
-        np.save(owner_embed_path, owner_embed)
-        speak("Voice registered successfully.")
-        return True
-
-    # Prompt and record live input
+def liveness_check(threshold=0.80):
+    # Uses simple audio embedding similarity to verify live voice vs owner sample
+    if not os.path.exists(OWNER_EMBED_PATH):
+        register_reference_if_missing()
     speak("Please repeat the phrase: I am the master.")
-    record_audio_to_file("liveness.wav", duration=3)
-
+    record_wav(LIVENESS_WAV, duration=3)
     try:
-        live_wav = preprocess_wav("liveness.wav")
-        live_embed = encoder.embed_utterance(live_wav)
-        owner_embed = np.load(owner_embed_path)
-
-        similarity = np.inner(live_embed, owner_embed)
+        trim_wav_silence(LIVENESS_WAV)
+    except Exception:
+        pass
+    try:
+        live_embed = compute_embedding(LIVENESS_WAV)
+        owner_embed = np.load(OWNER_EMBED_PATH)
+        similarity = _cosine(live_embed, owner_embed)
         print(f"[Liveness Similarity Score]: {similarity:.4f}")
-
-        return similarity > 0.40
+        return similarity >= threshold
     except Exception as e:
         print(f"[Error in liveness check]: {e}")
         return False
@@ -535,14 +933,14 @@ def execute_command(command):
         webbrowser.open("https://www.google.com")
     elif "open gmail" in command:
         webbrowser.open("https://www.google.com/gmail")
->>>>>>> b842af7c098ee245d7c2c3eedf6d4375cf1c8ffd
+ 
     elif "open youtube" in command:
         webbrowser.open("https://www.youtube.com")
     elif "open facebook" in command:
         webbrowser.open("https://www.facebook.com")
     elif "open github" in command:
         webbrowser.open("https://www.github.com")
-<<<<<<< HEAD
+ 
     elif "open settings" in command:
         os.system("start ms-settings:")
     elif "open task manager" in command or "task manager" in command:
@@ -610,7 +1008,7 @@ def execute_command(command):
         except Exception:
             speak("Web automation unavailable.")
             return
-=======
+ 
     elif "open gpt" in command:
         from selenium import webdriver
         from selenium.webdriver.common.by import By
@@ -620,7 +1018,7 @@ def execute_command(command):
         from selenium.webdriver.support import expected_conditions as EC
         import speech_recognition as sr
         import time
->>>>>>> b842af7c098ee245d7c2c3eedf6d4375cf1c8ffd
+ 
 
         # Set up Chrome options
         options = Options()
@@ -660,7 +1058,6 @@ def execute_command(command):
 
 
     elif "shutdown" in command:
-<<<<<<< HEAD
         speak("Shutting down. Goodbye.")
         os.system("shutdown /s /t 1")
     elif "restart" in command:
@@ -688,11 +1085,17 @@ def listen_for_wake_word_loop(session_duration=3600):
         status_queue.put("Porcupine key missing. Wake word disabled.")
         return
     try:
+        sens = 0.6
+        try:
+            s = _load_settings()
+            sens = float(s.get("wake_sensitivity", 0.6))
+        except Exception:
+            pass
         porcupine = pvporcupine.create(
             access_key=ACCESS_KEY,
             keyword_paths=[PORCUPINE_KEYWORD_PATH] if os.path.exists(PORCUPINE_KEYWORD_PATH) else None,
             keywords=["hey computer"] if not os.path.exists(PORCUPINE_KEYWORD_PATH) else None,
-            sensitivities=[0.6]
+            sensitivities=[sens]
         )
     except Exception as e:
         print("[Porcupine init error]", e)
@@ -710,7 +1113,7 @@ def listen_for_wake_word_loop(session_duration=3600):
     print("[Porcupine running]")
 
     try:
-        while True:
+        while not wake_stop_event.is_set():
             pcm = stream.read(porcupine.frame_length, exception_on_overflow=False)
             pcm_unpacked = np.frombuffer(pcm, dtype=np.int16)
             keyword_index = porcupine.process(pcm_unpacked)
@@ -768,6 +1171,29 @@ def listen_for_wake_word_loop(session_duration=3600):
         except Exception:
             pass
 
+def start_wake_listener():
+    global wake_thread
+    if wake_thread and wake_thread.is_alive():
+        return
+    wake_stop_event.clear()
+    wake_thread = threading.Thread(target=listen_for_wake_word_loop, daemon=True)
+    wake_thread.start()
+
+def stop_wake_listener():
+    try:
+        wake_stop_event.set()
+    except Exception:
+        pass
+
+def restart_wake_listener():
+    stop_wake_listener()
+    try:
+        if wake_thread:
+            wake_thread.join(timeout=2)
+    except Exception:
+        pass
+    start_wake_listener()
+
 # ---------- GUI ----------
 # def start_gui():
 
@@ -801,6 +1227,11 @@ def listen_for_wake_word_loop(session_duration=3600):
 def start_gui():
     # Builds a small window with useful buttons and status messages.
     root = tk.Tk()
+    try:
+        style = ttk.Style()
+        style.theme_use('clam')
+    except Exception:
+        pass
     root.title("SentinelAI Dashboard")
     root.geometry("420x240")
 
@@ -820,15 +1251,112 @@ def start_gui():
     diag_label = tk.Label(root, text=" | ".join(diag_items), font=("Arial", 9))
     diag_label.pack(pady=6)
 
-    register_btn = tk.Button(
+    register_btn = ttk.Button(
         root,
         text="Register Voice",
-        font=("Arial", 11),
-        padx=10,
-        pady=4,
+        
         command=manual_register_voice
     )
     register_btn.pack(pady=8)
+
+    def refresh_apps():
+        status_queue.put("Refreshing apps registry...")
+        threading.Thread(target=build_app_registry, daemon=True).start()
+
+    refresh_btn = ttk.Button(
+        root,
+        text="Refresh Apps Registry",
+        
+        command=refresh_apps
+    )
+    refresh_btn.pack(pady=6)
+
+    def show_top_apps():
+        items = top_mru(5)
+        messagebox.showinfo("Top Apps", "\n".join(items) if items else "No usage yet.")
+
+    top_btn = ttk.Button(
+        root,
+        text="Show Top Apps",
+        command=show_top_apps
+    )
+    top_btn.pack(pady=6)
+
+    # MRU combobox to open apps quickly
+    apps_var = tk.StringVar()
+    mru_items = top_mru(10)
+    mru_combo = ttk.Combobox(root, textvariable=apps_var, values=mru_items, state='readonly')
+    mru_combo.set(mru_items[0] if mru_items else '')
+    mru_combo.pack(pady=4, fill='x')
+
+    def open_selected_app():
+        name = apps_var.get()
+        if not name:
+            messagebox.showinfo("Open App", "No app selected.")
+            return
+        if not open_app(name):
+            install_and_open_app(name)
+
+    ttk.Button(root, text="Open Selected App", command=open_selected_app).pack(pady=4)
+
+    def refresh_mru():
+        items = top_mru(10)
+        mru_combo['values'] = items
+        if items:
+            mru_combo.set(items[0])
+
+    ttk.Button(root, text="Refresh Suggestions", command=refresh_mru).pack(pady=4)
+
+    def open_settings_ui():
+        s = _load_settings()
+        win = tk.Toplevel(root)
+        win.title("Settings")
+        win.geometry("320x260")
+        ent_var = tk.BooleanVar(value=entertainment_active)
+        auto_var = tk.BooleanVar(value=bool(s.get("autostart", True)))
+        bg_var = tk.BooleanVar(value=bool(s.get("background", False)))
+        sens_var = tk.DoubleVar(value=float(s.get("wake_sensitivity", 0.6)))
+
+        ttk.Checkbutton(win, text="Entertainment Mode", variable=ent_var).pack(pady=6)
+        ttk.Checkbutton(win, text="Autostart on Login", variable=auto_var).pack(pady=6)
+        ttk.Checkbutton(win, text="Run in Background (no GUI)", variable=bg_var).pack(pady=6)
+        ttk.Label(win, text="Wake Sensitivity").pack()
+        ttk.Scale(win, from_=0.1, to=1.0, orient='horizontal', variable=sens_var).pack(fill='x', padx=10)
+
+        def save_settings():
+            global entertainment_active
+            entertainment_active = ent_var.get()
+            data = {
+                "autostart": bool(auto_var.get()),
+                "background": bool(bg_var.get()),
+                "wake_sensitivity": float(sens_var.get())
+            }
+            _save_settings(data)
+            if data["autostart"]:
+                ensure_autostart()
+            messagebox.showinfo("Settings", "Saved. Some changes apply next start.")
+            win.destroy()
+
+        ttk.Button(win, text="Save", command=save_settings).pack(pady=10)
+
+    settings_btn = ttk.Button(
+        root,
+        text="Settings",
+        command=lambda: open_settings_ui_global(root)
+    )
+    settings_btn.pack(pady=6)
+
+    ttk.Button(root, text="Diagnostics", command=lambda: open_diagnostics_window(root)).pack(pady=6)
+
+    def on_close():
+        try:
+            start_tray()
+            root.withdraw()
+            status_queue.put("SentinelAI minimized to tray.")
+        except Exception:
+            root.destroy()
+
+    root.protocol("WM_DELETE_WINDOW", on_close)
 
     def manual_run_command():
         # Click this to record a command without saying the wake word.
@@ -846,38 +1374,32 @@ def start_gui():
             status_queue.put(f"Command: {text}")
             execute_command(text)
 
-    cmd_btn = tk.Button(
+    cmd_btn = ttk.Button(
         root,
         text="Record & Execute Command",
-        font=("Arial", 11),
-        padx=10,
-        pady=4,
+        
         command=manual_run_command
     )
     cmd_btn.pack(pady=6)
 
-    agent_start_btn = tk.Button(
+    agent_start_btn = ttk.Button(
         root,
         text="Start Agent",
-        font=("Arial", 11),
-        padx=10,
-        pady=4,
+        
         command=start_agent
     )
     agent_start_btn.pack(pady=4)
 
-    agent_stop_btn = tk.Button(
+    agent_stop_btn = ttk.Button(
         root,
         text="Stop Agent",
-        font=("Arial", 11),
-        padx=10,
-        pady=4,
+        
         command=stop_agent
     )
     agent_stop_btn.pack(pady=4)
 
     # Quit button
-    quit_button = tk.Button(root, text="Quit", padx=8, pady=4, command=root.destroy)
+    quit_button = ttk.Button(root, text="Quit", command=root.destroy)
     quit_button.pack(pady=8)
 
     # Update UI loop
@@ -900,211 +1422,72 @@ def main():
     # 3) Show the small dashboard
     # Ensure owner reference exists (register if missing)
     register_reference_if_missing()
+    preflight_bootstrap()
 
     # Start listener thread
-    t = threading.Thread(target=listen_for_wake_word_loop, daemon=True)
-    t.start()
+    start_wake_listener()
 
-    # Start GUI (blocks main thread)
-    start_gui()
+    # Start GUI (blocks main thread) unless background mode
+    bg = (os.getenv("SENTINEL_BACKGROUND","0").lower() in ("1","true","yes"))
+    if not bg:
+        start_gui()
+    else:
+        start_tray()
 
 if __name__ == "__main__":
     main()  # run the program when we start this file
-=======
-        os.system("shutdown /s /t 1")
-    elif "restart" in command:
-        os.system("shutdown /r /t 1")
-    elif "sleep" in command:
-        os.system("rundll32.exe powrprof.dll,SetSuspendState 0,1,0")
-    elif "lock computer" in command:
-        os.system("rundll32.exe user32.dll,LockWorkStation")
-    elif "open notepad" in command or "notepad" in command:
-        subprocess.Popen("notepad.exe")
-    elif "open chrome" in command or "chrome" in command:
-        import pyttsx3
-        query = command.replace("open chrome", "").replace("search", "").strip() or "python programming"
-    
-        # Register Chrome path if needed
-        webbrowser.register(
-            "chrome",
-            None,
-            webbrowser.BackgroundBrowser("C://Program Files//Google//Chrome//Application//chrome.exe")
-        )
+def open_settings_ui_global(parent=None):
+    s = _load_settings()
+    win = tk.Toplevel(parent) if parent else tk.Tk()
+    win.title("Settings")
+    win.geometry("320x260")
+    ent_var = tk.BooleanVar(value=entertainment_active)
+    auto_var = tk.BooleanVar(value=bool(s.get("autostart", True)))
+    bg_var = tk.BooleanVar(value=bool(s.get("background", False)))
+    sens_var = tk.DoubleVar(value=float(s.get("wake_sensitivity", 0.6)))
 
-        # Prepare search URL
-        search_url = f"https://www.google.com/search?q={query.replace(' ', '+')}"
+    ttk.Checkbutton(win, text="Entertainment Mode", variable=ent_var).pack(pady=6)
+    ttk.Checkbutton(win, text="Autostart on Login", variable=auto_var).pack(pady=6)
+    ttk.Checkbutton(win, text="Run in Background (no GUI)", variable=bg_var).pack(pady=6)
+    ttk.Label(win, text="Wake Sensitivity").pack()
+    ttk.Scale(win, from_=0.1, to=1.0, orient='horizontal', variable=sens_var).pack(fill='x', padx=10)
 
-        # Open in Chrome
-        webbrowser.get("chrome").open(search_url)
-
-        # Speak back confirmation
-        engine = pyttsx3.init()
-        engine.say(f"Searching Google for {query}")
-        engine.runAndWait()
-
-    elif "open calculator" in command:
-        subprocess.Popen("calc.exe")
-    elif "open command prompt" in command or "open cmd" in command:
-        subprocess.Popen("cmd.exe")
-    elif "open paint" in command:
-        subprocess.Popen("mspaint.exe")
-    elif "open explorer" in command:
-        subprocess.Popen("explorer.exe")
-    elif "open downloads" in command:
-        downloads = os.path.join(os.path.expanduser("~"), "Downloads")
-        os.startfile(downloads)
-    elif "open documents" in command:
-        documents = os.path.join(os.path.expanduser("~"), "Documents")
-        os.startfile(documents)
-    elif "open desktop" in command:
-        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
-        os.startfile(desktop)
-    elif "destroy yourself" in command or "quit app" in command or "close assistant" in command:
-        speak("Goodbye, Master. Shutting down.")
-        os._exit(0)
-    elif "wake up" in command or "unlock" in command:
-        import pyautogui
-        pyautogui.moveRel(0, 1)  # Tiny mouse movement to wake screen
-        pyautogui.press("shift")  # Simulate shift key to wake lock screen
-        speak("Screen is awake, Master. Please enter your code.")
-    elif "unlock with" in command:
-        passcode = command.split("unlock with")[-1].strip()
-        if passcode == "1234":
-            global session_valid_until
-            session_valid_until = time.time() + 3600  # 1 hour session
-            speak("Access granted. Welcome back, Master.")
-            status_queue.put("Unlocked via passcode. Session renewed.")
-        else:
-            speak("Incorrect passcode.")
-            status_queue.put("Failed unlock attempt with wrong passcode.")
-
-    elif "type" in command:
-        import pyautogui
-        text = command.split("type")[-1].strip()
-        pyautogui.write(text, interval=0.05)
-    else:
-        interpreted = interpret_command(command)
-        speak(interpreted)
-
-# Wake word listener
-session_valid_until = 0
-
-def listen_for_wake_word():
-    global session_valid_until
-
-    try:
-        porcupine = pvporcupine.create(
-            access_key=os.getenv("PVPORCUPINE_PRIVATE_KEY"),
-            keyword_paths=["./assets/sounds/Hey-robert_en_windows_v3_0_0.ppn"],
-            sensitivities=[0.6]
-        )
-        print("[Porcupine Wake Word Engine Initialized]")
-
-        pa = pyaudio.PyAudio()
-        print("[PyAudio Initialized]")
-        stream = pa.open(
-            format=pyaudio.paInt16,
-            channels=1,
-            rate=porcupine.sample_rate,
-            input=True,
-            frames_per_buffer=porcupine.frame_length
-        )
-
-        status_queue.put("Listening for wake word...")
-
-        while True:
-            pcm = stream.read(porcupine.frame_length, exception_on_overflow=False)
-            pcm = struct.unpack_from("h" * porcupine.frame_length, pcm)
-            keyword_index = porcupine.process(pcm)
-
-            if keyword_index >= 0:
-                print("[Wake Word Detected]")
-                status_queue.put("Wake word detected! Verifying voice...")
-                speak("Yes Master?")
-                current_time = time.time()
-
-                if current_time > session_valid_until:
-                    if liveness_check():
-                        print("[Liveness Confirmed]")
-                        status_queue.put("Liveness check passed!")
-                        speak("Liveness check passed. Please give your command.")
-                        session_valid_until = time.time() + 3600  # 1 hour
-                    else:
-                        print("[Liveness Failed]")
-                        status_queue.put("Access denied: voice mismatch.")
-                        speak("Access denied. Voice does not match.")
-                        continue
-
-                record_audio_to_file()
-                print("[Recording Command]")
-                status_queue.put("Command recorded. Recognizing...")
-
-                command = get_command()
-                print(f"[Command]: {command}")
-                status_queue.put(f"Executing: {command}")
-
-                if command:
-                    execute_command(command)
-
-    except Exception as e:
-        print(f"[Error in wake word listener]: {e}")
-        status_queue.put("Error in microphone or wake word engine.")
-
-    finally:
+    def save_settings():
+        global entertainment_active
+        entertainment_active = ent_var.get()
+        data = {
+            "autostart": bool(auto_var.get()),
+            "background": bool(bg_var.get()),
+            "wake_sensitivity": float(sens_var.get())
+        }
+        _save_settings(data)
+        if data["autostart"]:
+            ensure_autostart()
         try:
-            if stream is not None:
-                stream.stop_stream()
-                stream.close()
-            if pa is not None:
-                pa.terminate()
-            if porcupine is not None:
-                porcupine.delete()
-        except:
+            restart_wake_listener()
+        except Exception:
             pass
+        messagebox.showinfo("Settings", "Saved. Wake sensitivity applied. Other changes may apply next start.")
+        win.destroy()
 
+    ttk.Button(win, text="Save", command=save_settings).pack(pady=10)
+    ttk.Button(win, text="View Logs", command=lambda: open_diagnostics_window(win)).pack(pady=6)
 
-
-
-# GUI dashboard
-
-def start_gui():
-    def update_status():
-        while not status_queue.empty():
-            msg = status_queue.get_nowait()
-            status_label.config(text=msg)
-        root.after(1000, update_status)
-     
-    def update_session_time():
-        current_time = time.time()
-        if session_valid_until > current_time:
-            remaining = int(session_valid_until - current_time)
-            mins, secs = divmod(remaining, 60)
-            session_label.config(text=f"Session: {mins:02d}:{secs:02d} remaining")
-        else:
-            session_label.config(text="Session expired. Awaiting liveness.")
-
-
-    root = tk.Tk()
-    root.title("SentinelAI Dashboard")
-    root.geometry("300x150")
-
-    status_label = tk.Label(root, text="SentinelAI Running...", font=("Arial", 12))
-    status_label.pack(pady=10)
-
-    session_label = tk.Label(root, text="", font=("Arial", 10))
-    session_label.pack(pady=5)
-
-    quit_button = tk.Button(root, text="Quit", command=root.destroy)
-    quit_button.pack(pady=10)
-    
-    root.after(1000, update_status)
-    root.mainloop()
-
-# Main app entry point
-def main():
-    threading.Thread(target=listen_for_wake_word, daemon=True).start()
-    start_gui()
-
-if __name__ == "__main__":
-    main()
->>>>>>> b842af7c098ee245d7c2c3eedf6d4375cf1c8ffd
+def open_diagnostics_window(parent=None):
+    try:
+        lp = os.path.join(APPDATA_DIR, "sentinel.log")
+        text = ""
+        if os.path.exists(lp):
+            with open(lp, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()[-400:]
+                text = "".join(lines)
+        lv = tk.Toplevel(parent) if parent else tk.Tk()
+        lv.title("Diagnostics")
+        lv.geometry("620x420")
+        txt = tk.Text(lv, wrap='none')
+        txt.insert('1.0', text or "No logs.")
+        txt.configure(state='disabled')
+        txt.pack(fill='both', expand=True)
+    except Exception:
+        if messagebox:
+            messagebox.showerror("Diagnostics", "Unable to open logs.")
