@@ -396,14 +396,21 @@ def start_tray():
     def tray_record(icon, item):
         try:
             status_queue.put("Recording command...")
-            record_wav(COMMAND_WAV, duration=4)
             try:
-                trim_wav_silence(COMMAND_WAV)
+                winsound.Beep(800, 200)
             except Exception:
                 pass
-            text = transcribe_wav(COMMAND_WAV)
+            fn, had = record_until_silence(COMMAND_WAV)
+            if not had:
+                status_queue.put("No speech detected.")
+                return
+            text = transcribe_wav(fn)
             if text:
                 status_queue.put(f"Command: {text}")
+                try:
+                    speak(f"You said: {text}")
+                except Exception:
+                    pass
                 execute_command(text)
             else:
                 status_queue.put("Transcription empty.")
@@ -628,6 +635,75 @@ def record_wav(filename, duration=3, samplerate=16000, channels=1, frames_per_bu
     wf.close()
     print(f"[Saved] {filename}")
     return filename
+def record_until_silence(filename, max_duration=25, samplerate=16000, channels=1, frames_per_buffer=1024, min_duration=4.0, silence_threshold=0.008, speech_threshold=0.015, silence_duration=0.8):
+    pa = pyaudio.PyAudio()
+    try:
+        stream = pa.open(format=pyaudio.paInt16,
+                         channels=channels,
+                         rate=samplerate,
+                         input=True,
+                         frames_per_buffer=frames_per_buffer)
+    except Exception:
+        pa.terminate()
+        raise
+    frames = []
+    start_t = time.time()
+    quiet_t = 0.0
+    had_speech = False
+    peak_amp = 0.0
+    baseline_frames = int(max(1, (samplerate / frames_per_buffer) * 0.5))
+    baseline_vals = []
+    try:
+        while True:
+            data = stream.read(frames_per_buffer, exception_on_overflow=False)
+            frames.append(data)
+            samples = np.frombuffer(data, dtype=np.int16)
+            amp = float(np.mean(np.abs(samples))) / 32768.0
+            if amp > peak_amp:
+                peak_amp = amp
+            now = time.time()
+            elapsed = now - start_t
+            if len(baseline_vals) < baseline_frames:
+                baseline_vals.append(amp)
+                # continue collecting baseline without affecting quiet_t
+                continue
+            if baseline_vals:
+                base = np.median(baseline_vals)
+                base = max(base, 0.002)
+                sp_thr = max(speech_threshold, base * 2.5)
+                si_thr = max(silence_threshold, base * 1.2)
+            else:
+                sp_thr = speech_threshold
+                si_thr = silence_threshold
+            if amp < si_thr:
+                quiet_t += frames_per_buffer / float(samplerate)
+            else:
+                quiet_t = 0.0
+            if amp >= sp_thr:
+                had_speech = True
+            if elapsed >= min_duration:
+                if not had_speech:
+                    # If we never saw speech beyond threshold but peak is notably above baseline, accept.
+                    if peak_amp >= sp_thr * 0.9:
+                        had_speech = True
+                    else:
+                        break
+                if quiet_t >= silence_duration:
+                    break
+            if elapsed >= max_duration:
+                break
+    finally:
+        stream.stop_stream()
+        stream.close()
+        pa.terminate()
+    wf = wave.open(filename, 'wb')
+    wf.setnchannels(channels)
+    wf.setsampwidth(pyaudio.get_sample_size(pyaudio.paInt16))
+    wf.setframerate(samplerate)
+    wf.writeframes(b''.join(frames))
+    wf.close()
+    print(f"[Saved] {filename}")
+    return filename, had_speech
 
 def trim_wav_silence(filename, threshold=0.02):
     # This cuts off the quiet parts at the start and end of a sound file
@@ -794,9 +870,11 @@ def execute_command(command):
         agent_handle(command)  # When agent is active, treat every sentence as a step.
         return
     if command in ("start", "start agent", "agent start", "enable agent"):
+        speak("Starting agent")
         start_agent()  # Turn on agent mode
         return
     if command in ("stop", "stop agent", "agent stop", "disable agent"):
+        speak("Stopping agent")
         stop_agent()   # Turn off agent mode
         return
     if command in ("enable entertainment", "entertain me", "talk mode"):
@@ -812,11 +890,15 @@ def execute_command(command):
         return
     if command.startswith("open "):
         appname = command.split("open ", 1)[1].strip()
+        if appname:
+            speak(f"Opening {appname}")
         if not open_app(appname):
             install_and_open_app(appname)
     elif "open browser" in command:
+        speak("Opening browser")
         webbrowser.open("https://www.google.com")
     elif "open gmail" in command:
+        speak("Opening Gmail")
         webbrowser.open("https://mail.google.com")
  
 
@@ -1139,21 +1221,28 @@ def listen_for_wake_word_loop(session_duration=3600):
                 # Record user command
                 time.sleep(0.25)
                 status_queue.put("Recording command...")
-                record_wav(COMMAND_WAV, duration=4)
+                try:
+                    winsound.Beep(800, 200)
+                except Exception:
+                    pass
+                # Dynamic recording: 4s min, until user stops speaking
+                fn, had = record_until_silence(COMMAND_WAV)
+                if not had:
+                    status_queue.put("No speech detected.")
+                    continue
                 status_queue.put("Processing command...")
 
-                try:
-                    trim_wav_silence(COMMAND_WAV)
-                except Exception as e:
-                    print("[Trim error]", e)
-
                 # transcribe & execute
-                cmd_text = transcribe_wav(COMMAND_WAV)
+                cmd_text = transcribe_wav(fn)
                 if not cmd_text:
                     speak("Sorry, I couldn't understand the command.")
                     status_queue.put("Transcription empty.")
                 else:
                     status_queue.put(f"Command: {cmd_text}")
+                    try:
+                        speak(f"You said: {cmd_text}")
+                    except Exception:
+                        pass
                     execute_command(cmd_text)
 
                 if agent_active:
@@ -1361,17 +1450,24 @@ def start_gui():
     def manual_run_command():
         # Click this to record a command without saying the wake word.
         status_queue.put("Recording command...")
-        record_wav(COMMAND_WAV, duration=4)
         try:
-            trim_wav_silence(COMMAND_WAV)
-        except Exception as e:
-            print("[Trim error]", e)
-        text = transcribe_wav(COMMAND_WAV)
+            winsound.Beep(800, 200)
+        except Exception:
+            pass
+        fn, had = record_until_silence(COMMAND_WAV)
+        if not had:
+            status_queue.put("No speech detected.")
+            return
+        text = transcribe_wav(fn)
         if not text:
             status_queue.put("Transcription empty.")
             speak("Sorry, I couldn't understand the command.")
         else:
             status_queue.put(f"Command: {text}")
+            try:
+                speak(f"You said: {text}")
+            except Exception:
+                pass
             execute_command(text)
 
     cmd_btn = ttk.Button(
