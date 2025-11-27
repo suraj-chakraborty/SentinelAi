@@ -73,6 +73,9 @@ SETTINGS_PATH = os.path.join(APPDATA_DIR, "settings.json")
 wake_stop_event = threading.Event()
 wake_thread = None
 root_window = None
+listening_blocked_until = 0
+recording_overlay = None
+recording_overlay_var = None
 ALIASES = {
     "vs code": "vscode",
     "code": "vscode",
@@ -97,6 +100,10 @@ ALIASES = {
     "telegram": "telegram",
     "discord": "discord"
 }
+SECRETS_DB = os.path.join(APPDATA_DIR, "secrets.db")
+MASTER_META_KEY = "master_hash"
+MASTER_META_SALT = "master_salt"
+MACROS_PATH = os.path.join(APPDATA_DIR, "macros.json")
 
 def _normalize_name(name):
     return (name or "").lower().strip()
@@ -108,6 +115,18 @@ def ensure_appdata_dir():
         pass
     try:
         log_path = os.path.join(APPDATA_DIR, "sentinel.log")
+        # simple rotation
+        try:
+            if os.path.exists(log_path) and os.path.getsize(log_path) > 1_000_000:
+                bak = log_path + ".1"
+                try:
+                    if os.path.exists(bak):
+                        os.remove(bak)
+                except Exception:
+                    pass
+                os.replace(log_path, bak)
+        except Exception:
+            pass
         logging.basicConfig(filename=log_path, level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
     except Exception:
         pass
@@ -176,6 +195,184 @@ def _save_settings(data):
             json.dump(data, f, indent=2)
     except Exception:
         pass
+
+def _ensure_secrets_db():
+    ensure_appdata_dir()
+    conn = sqlite3.connect(SECRETS_DB)
+    cur = conn.cursor()
+    cur.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value BLOB)")
+    cur.execute("CREATE TABLE IF NOT EXISTS secrets (name TEXT PRIMARY KEY, salt BLOB, nonce BLOB, ciphertext BLOB)")
+    conn.commit()
+    return conn
+
+def _macros_load():
+    ensure_appdata_dir()
+    try:
+        if os.path.exists(MACROS_PATH):
+            with open(MACROS_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        return {}
+    return {}
+
+def _macros_save(macros):
+    try:
+        with open(MACROS_PATH, "w", encoding="utf-8") as f:
+            json.dump(macros, f, indent=2)
+        return True
+    except Exception:
+        return False
+
+def _pbkdf(master, salt, length=32, rounds=200000):
+    return hashlib.pbkdf2_hmac('sha256', master.encode('utf-8'), salt, rounds, dklen=length)
+
+def _keystream(key, nonce, length):
+    out = bytearray()
+    counter = 0
+    while len(out) < length:
+        counter_bytes = struct.pack('<Q', counter)
+        block = hashlib.sha256(key + nonce + counter_bytes).digest()
+        out.extend(block)
+        counter += 1
+    return bytes(out[:length])
+
+def _encrypt(master, plaintext_bytes):
+    salt = os.urandom(16)
+    key = _pbkdf(master, salt)
+    nonce = os.urandom(16)
+    ks = _keystream(key, nonce, len(plaintext_bytes))
+    ct = bytes(a ^ b for a, b in zip(plaintext_bytes, ks))
+    return salt, nonce, ct
+
+def _decrypt(master, salt, nonce, ciphertext):
+    key = _pbkdf(master, salt)
+    ks = _keystream(key, nonce, len(ciphertext))
+    pt = bytes(a ^ b for a, b in zip(ciphertext, ks))
+    return pt
+
+# Optional AES-GCM upgrade if cryptography is available
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+except Exception:
+    AESGCM = None
+
+def _encrypt_aes(master, plaintext_bytes):
+    if AESGCM is None:
+        return _encrypt(master, plaintext_bytes)
+    salt = os.urandom(16)
+    key = _pbkdf(master, salt, length=32)
+    aes = AESGCM(key)
+    nonce = os.urandom(12)
+    ct = aes.encrypt(nonce, plaintext_bytes, None)
+    return salt, nonce, ct
+
+def _decrypt_aes(master, salt, nonce, ciphertext):
+    if AESGCM is None:
+        return _decrypt(master, salt, nonce, ciphertext)
+    key = _pbkdf(master, salt, length=32)
+    aes = AESGCM(key)
+    return aes.decrypt(nonce, ciphertext, None)
+
+def _get_master_record(conn):
+    cur = conn.cursor()
+    cur.execute("SELECT value FROM meta WHERE key=?", (MASTER_META_SALT,))
+    row_salt = cur.fetchone()
+    cur.execute("SELECT value FROM meta WHERE key=?", (MASTER_META_KEY,))
+    row_hash = cur.fetchone()
+    return (row_salt[0] if row_salt else None, row_hash[0] if row_hash else None)
+
+def _set_master_record(conn, master):
+    salt = os.urandom(16)
+    mh = _pbkdf(master, salt)
+    cur = conn.cursor()
+    cur.execute("REPLACE INTO meta(key,value) VALUES(?,?)", (MASTER_META_SALT, salt))
+    cur.execute("REPLACE INTO meta(key,value) VALUES(?,?)", (MASTER_META_KEY, mh))
+    conn.commit()
+
+def _verify_master(conn, master):
+    salt, mh = _get_master_record(conn)
+    if not salt or not mh:
+        _set_master_record(conn, master)
+        return True
+    return hmac.compare_digest(_pbkdf(master, salt), mh)
+
+def _prompt_master(parent=None):
+    try:
+        pw = simpledialog.askstring("Master Password", "Enter master password:", show='*', parent=parent)
+    except Exception:
+        pw = None
+    return pw or ""
+
+def store_secret(name, password, parent=None):
+    conn = _ensure_secrets_db()
+    master = _prompt_master(parent)
+    if not master:
+        messagebox.showerror("Secrets", "Master password required.")
+        conn.close()
+        return False
+    if not _verify_master(conn, master):
+        messagebox.showerror("Secrets", "Invalid master password.")
+        conn.close()
+        return False
+    s = _load_settings()
+    if bool(s.get("require_strong_vault", False)) and AESGCM is None:
+        messagebox.showerror("Secrets", "Strong vault required but AES-GCM unavailable.")
+        conn.close()
+        return False
+    salt, nonce, ct = _encrypt_aes(master, password.encode('utf-8'))
+    cur = conn.cursor()
+    cur.execute("REPLACE INTO secrets(name,salt,nonce,ciphertext) VALUES(?,?,?,?)", (name, salt, nonce, ct))
+    conn.commit()
+    conn.close()
+    return True
+
+def fetch_secret(name, parent=None):
+    conn = _ensure_secrets_db()
+    master = _prompt_master(parent)
+    if not master:
+        messagebox.showerror("Secrets", "Master password required.")
+        conn.close()
+        return None
+    if not _verify_master(conn, master):
+        messagebox.showerror("Secrets", "Invalid master password.")
+        conn.close()
+        return None
+    cur = conn.cursor()
+    cur.execute("SELECT salt, nonce, ciphertext FROM secrets WHERE name=?", (name,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    salt, nonce, ct = row
+    pt = _decrypt_aes(master, salt, nonce, ct)
+    try:
+        return pt.decode('utf-8')
+    except Exception:
+        return None
+
+def speak_password_spelled(pw):
+    parts = []
+    for ch in pw:
+        if ch.isalpha():
+            if ch.isupper():
+                parts.append(f"capital {ch}")
+            else:
+                parts.append(f"small {ch}")
+        elif ch.isdigit():
+            parts.append(f"digit {ch}")
+        else:
+            names = {
+                ' ': 'space', '-': 'dash', '_': 'underscore', '@': 'at', '#': 'hash',
+                '!': 'exclamation', '$': 'dollar', '%': 'percent', '^': 'caret', '&': 'ampersand',
+                '*': 'asterisk', '(': 'left parenthesis', ')': 'right parenthesis',
+                '+': 'plus', '=': 'equals', '[': 'left bracket', ']': 'right bracket',
+                '{': 'left brace', '}': 'right brace', ';': 'semicolon', ':': 'colon',
+                '"': 'double quote', '\\': 'backslash', '/': 'slash', '?': 'question mark',
+                ',': 'comma', '.': 'dot', '<': 'less than', '>': 'greater than', '`': 'backtick',
+                '|': 'pipe'
+            }
+            parts.append(f"symbol {names.get(ch, ch)}")
+    speak(" ".join(parts))
 
 def _scan_uninstall_key(root):
     results = {}
@@ -400,7 +597,9 @@ def start_tray():
                 winsound.Beep(800, 200)
             except Exception:
                 pass
-            fn, had = record_until_silence(COMMAND_WAV)
+            show_recording_overlay()
+            fn, had = record_until_silence(COMMAND_WAV, on_amp=update_recording_overlay)
+            close_recording_overlay()
             if not had:
                 status_queue.put("No speech detected.")
                 return
@@ -603,6 +802,66 @@ def speak(text):
             _beep()
     threading.Thread(target=_s, daemon=True).start()
 
+def show_recording_overlay(parent=None):
+    # Create a lightweight overlay window with a waveform canvas
+    # to visualize microphone amplitude during recording.
+    global recording_overlay, recording_canvas, recording_wave_values
+    try:
+        p = parent or root_window
+        win = tk.Toplevel(p) if p else tk.Tk()
+        win.title("Listening...")
+        win.geometry("320x90")
+        ttk.Label(win, text="Listening...").pack(pady=6)
+        canvas = tk.Canvas(win, width=500, height=20, bg="#101010", highlightthickness=0)
+        canvas.pack(padx=10, pady=6)
+        recording_overlay = win
+        recording_canvas = canvas
+        recording_wave_values = []
+    except Exception:
+        recording_overlay = None
+        recording_canvas = None
+        recording_wave_values = []
+
+def update_recording_overlay(amp):
+    # Draw a scrolling waveform based on recent amplitude values.
+    try:
+        if recording_canvas is None:
+            return
+        w = int(recording_canvas.winfo_width())
+        h = int(recording_canvas.winfo_height())
+        # Normalize amplitude into [0,1] range and keep a short history
+        a = max(0.0, min(1.0, float(amp) * 6.0))
+        recording_wave_values.append(a)
+        max_points = max(60, w)  # keep roughly one point per pixel
+        if len(recording_wave_values) > max_points:
+            recording_wave_values[:] = recording_wave_values[-max_points:]
+        # Clear and redraw polyline
+        recording_canvas.delete("wave")
+        if len(recording_wave_values) > 1:
+            step = max(1, int(max_points / len(recording_wave_values)))
+            points = []
+            for i, v in enumerate(recording_wave_values):
+                x = int(i * (w / float(len(recording_wave_values))))
+                y = int(h - (v * h))
+                points.append((x, y))
+            # Draw lines connecting points
+            for i in range(1, len(points)):
+                x1, y1 = points[i-1]
+                x2, y2 = points[i]
+                recording_canvas.create_line(x1, y1, x2, y2, fill="#12d46b", width=2, tags="wave")
+    except Exception:
+        pass
+
+def close_recording_overlay():
+    global recording_overlay, recording_overlay_var
+    try:
+        if recording_overlay is not None:
+            recording_overlay.destroy()
+    except Exception:
+        pass
+    recording_overlay = None
+    recording_overlay_var = None
+
 # Record a wav using PyAudio for a fixed duration
 def record_wav(filename, duration=3, samplerate=16000, channels=1, frames_per_buffer=1024):
     pa = pyaudio.PyAudio()
@@ -635,7 +894,7 @@ def record_wav(filename, duration=3, samplerate=16000, channels=1, frames_per_bu
     wf.close()
     print(f"[Saved] {filename}")
     return filename
-def record_until_silence(filename, max_duration=25, samplerate=16000, channels=1, frames_per_buffer=1024, min_duration=4.0, silence_threshold=0.008, speech_threshold=0.015, silence_duration=0.8):
+def record_until_silence(filename, max_duration=25, samplerate=16000, channels=1, frames_per_buffer=1024, min_duration=4.0, silence_threshold=0.008, speech_threshold=0.015, silence_duration=0.8, on_amp=None):
     pa = pyaudio.PyAudio()
     try:
         stream = pa.open(format=pyaudio.paInt16,
@@ -681,6 +940,11 @@ def record_until_silence(filename, max_duration=25, samplerate=16000, channels=1
                 quiet_t = 0.0
             if amp >= sp_thr:
                 had_speech = True
+            if on_amp is not None:
+                try:
+                    on_amp(amp)
+                except Exception:
+                    pass
             if elapsed >= min_duration:
                 if not had_speech:
                     # If we never saw speech beyond threshold but peak is notably above baseline, accept.
@@ -786,6 +1050,44 @@ def liveness_check(threshold=0.80):
         return False
 
 # Transcribe a WAV file using SpeechRecognition (Google)
+def _has_network():
+    try:
+        import socket
+        socket.create_connection(("8.8.8.8", 53), timeout=2)
+        return True
+    except Exception:
+        return False
+
+def transcribe_wav_offline(filename):
+    try:
+        import vosk  # local import to avoid hard dependency
+    except Exception:
+        return ""
+    model_dir = os.getenv("VOSK_MODEL") or os.path.join(APPDATA_DIR, "vosk-model")
+    if not os.path.isdir(model_dir):
+        s = _load_settings()
+        if bool(s.get("offline_stt", True)) and ensure_vosk_model():
+            pass
+        else:
+            return ""
+    try:
+        model = vosk.Model(model_dir)
+        rec = vosk.KaldiRecognizer(model, 16000)
+        wf = wave.open(filename, "rb")
+        try:
+            while True:
+                data = wf.readframes(4000)
+                if len(data) == 0:
+                    break
+                rec.AcceptWaveform(data)
+        finally:
+            wf.close()
+        import json as _json
+        res = _json.loads(rec.Result())
+        text = (res.get("text") or "").strip()
+        return text.lower()
+    except Exception:
+        return ""
 def transcribe_wav(filename):
     # Turns a voice recording into text using Google's free speech tool.
     r = sr.Recognizer()
@@ -797,9 +1099,11 @@ def transcribe_wav(filename):
         return text.lower()
     except sr.UnknownValueError:
         return ""
-    except sr.RequestError as e:
-        print("[Speech API error]", e)
-        return ""
+    except sr.RequestError:
+        off = transcribe_wav_offline(filename)
+        if off:
+            print("[Offline Transcribed]:", off)
+        return off
 
 # Interpret command using OpenAI (simple wrapper)
 def interpret_command(command):
@@ -863,6 +1167,7 @@ def interpret_command(command):
 # Execute a handful of commands (keeps your original behaviors)
 def execute_command(command):
     # This is the action center. It reads the command text and does the matching thing.
+    original = command or ""
     command = (command or "").lower()
     print("[Execute] ", command)
     global agent_active
@@ -877,6 +1182,15 @@ def execute_command(command):
         speak("Stopping agent")
         stop_agent()   # Turn off agent mode
         return
+    if command in ("stop listening", "pause listening", "do not listen"):
+        global listening_blocked_until
+        listening_blocked_until = time.time() + 300
+        speak("Pausing listening for five minutes")
+        return
+    if command in ("start listening", "resume listening"):
+        listening_blocked_until = 0
+        speak("Listening resumed")
+        return
     if command in ("enable entertainment", "entertain me", "talk mode"):
         global entertainment_active
         entertainment_active = True
@@ -888,6 +1202,41 @@ def execute_command(command):
         status_queue.put("Entertainment mode disabled.")
         speak("Entertainment mode disabled.")
         return
+    # Secrets: store
+    if ("password for" in command or "variable" in command) and ("keep in mind" in command or "remember" in command or "store" in command) and (" is " in command or " = " in command):
+        base = "password for"
+        idx = command.find(base)
+        if idx == -1:
+            base = "variable"
+            idx = command.find(base)
+        end = command.find(" is ", idx)
+        sep = 4
+        if end == -1:
+            end = command.find(" = ", idx)
+            sep = 3
+        name = original[idx+len(base):end].strip()
+        pwd = original[end+sep:].strip()
+        if name and pwd:
+            ok = store_secret(_normalize_name(name), pwd, parent=root_window)
+            if ok:
+                speak(f"Stored password for {name}")
+        return
+    # Secrets: fetch
+    if ("password for" in command or "variable" in command) and ("give me" in command or "what is" in command or "show" in command):
+        base = "password for"
+        idx = command.find(base)
+        if idx == -1:
+            base = "variable"
+            idx = command.find(base)
+        name = original[idx+len(base):].strip()
+        if name:
+            pw = fetch_secret(_normalize_name(name), parent=root_window)
+            if pw:
+                speak_password_spelled(pw)
+            else:
+                speak("No password found")
+        return
+
     if command.startswith("open "):
         appname = command.split("open ", 1)[1].strip()
         if appname:
@@ -900,6 +1249,37 @@ def execute_command(command):
     elif "open gmail" in command:
         speak("Opening Gmail")
         webbrowser.open("https://mail.google.com")
+
+    # Notes management
+    elif command.startswith("remember note ") or command.startswith("save note "):
+        note = original.split(" ", 2)[2].strip()
+        if note:
+            _notes_add(note)
+            speak("Note saved")
+        return
+    elif command in ("list notes", "show notes"):
+        items = _notes_list()
+        if not items:
+            speak("No notes")
+        else:
+            speak("You have " + str(len(items)) + " notes")
+            for i, n in enumerate(items, 1):
+                speak(f"Note {i}: {n[:80]}")
+        return
+    elif command.startswith("forget note "):
+        idx_s = command.split("forget note ", 1)[1].strip()
+        try:
+            idx = int(idx_s)
+            if _notes_forget(idx):
+                speak("Note removed")
+            else:
+                speak("No such note")
+        except Exception:
+            speak("Please provide a valid note number")
+        return
+
+    elif command in ("list commands", "help commands", "what can you do"):
+        speak("You can say open app names, start or stop agent, query system info, battery report, and manage secrets by saying remember password for name is value, or give me password for name")
  
 
 import os
@@ -913,7 +1293,7 @@ import numpy as np
 import soundfile as sf
 import time
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, simpledialog
 import threading
 import pvporcupine
 import struct
@@ -921,6 +1301,11 @@ import pyaudio
 import openai
 from queue import Queue
 from dotenv import load_dotenv, dotenv_values
+import sqlite3
+import hashlib
+import hmac
+import ctypes
+from ctypes import wintypes
 
 load_dotenv() 
 
@@ -1010,7 +1395,8 @@ def interpret_command(command):
 
 # Execute interpreted action
 def execute_command(command):
-    
+    original = command or ""
+    lc = original.lower()
     if "open browser" in command:
         webbrowser.open("https://www.google.com")
     elif "open gmail" in command:
@@ -1148,9 +1534,151 @@ def execute_command(command):
         subprocess.Popen(["notepad.exe"])
     elif "open chrome" in command or "chrome" in command:
         query = command.replace("open chrome", "").replace("search", "").strip() or "python programming"
-        webbrowser.open(f"https://www.google.com/search?q={query.replace(' ', '+')}")
+        webbrowser.open(f"https://www.google.com/search?q={query.replace(' ', '+')}" )
         speak(f"Searching Chrome for {query}")
+    # Window management
+    elif command in ("minimize window", "window minimize"):
+        try:
+            hwnd = ctypes.windll.user32.GetForegroundWindow()
+            ctypes.windll.user32.ShowWindow(hwnd, 6)  # SW_MINIMIZE
+            speak("Window minimized")
+        except Exception:
+            speak("Unable to minimize window")
+    elif command in ("maximize window", "window maximize"):
+        try:
+            hwnd = ctypes.windll.user32.GetForegroundWindow()
+            ctypes.windll.user32.ShowWindow(hwnd, 3)  # SW_MAXIMIZE
+            speak("Window maximized")
+        except Exception:
+            speak("Unable to maximize window")
+    elif command in ("close window", "window close"):
+        try:
+            hwnd = ctypes.windll.user32.GetForegroundWindow()
+            ctypes.windll.user32.PostMessageW(hwnd, 0x0010, 0, 0)  # WM_CLOSE
+            speak("Window closed")
+        except Exception:
+            speak("Unable to close window")
+    elif command in ("snap left", "window left"):
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            sw = user32.GetSystemMetrics(0)
+            sh = user32.GetSystemMetrics(1)
+            user32.MoveWindow(hwnd, 0, 0, int(sw/2), sh, True)
+            speak("Snapped left")
+        except Exception:
+            speak("Unable to snap left")
+    elif command in ("snap right", "window right"):
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            sw = user32.GetSystemMetrics(0)
+            sh = user32.GetSystemMetrics(1)
+            user32.MoveWindow(hwnd, int(sw/2), 0, int(sw/2), sh, True)
+            speak("Snapped right")
+        except Exception:
+            speak("Unable to snap right")
+    elif command in ("move window to left monitor", "window left monitor"):
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            vx = user32.GetSystemMetrics(76)
+            vy = user32.GetSystemMetrics(77)
+            vw = user32.GetSystemMetrics(78)
+            vh = user32.GetSystemMetrics(79)
+            user32.MoveWindow(hwnd, vx, vy, int(vw/2), vh, True)
+            speak("Moved to left monitor")
+        except Exception:
+            speak("Unable to move window")
+    elif command in ("move window to right monitor", "window right monitor"):
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            vx = user32.GetSystemMetrics(76)
+            vy = user32.GetSystemMetrics(77)
+            vw = user32.GetSystemMetrics(78)
+            vh = user32.GetSystemMetrics(79)
+            user32.MoveWindow(hwnd, vx + int(vw/2), vy, int(vw/2), vh, True)
+            speak("Moved to right monitor")
+        except Exception:
+            speak("Unable to move window")
+    elif "clean downloads" in command:
+        d = os.path.join(os.path.expanduser("~"), "Downloads")
+        count = 0
+        try:
+            for rootp, dirs, files in os.walk(d):
+                for f in files:
+                    fp = os.path.join(rootp, f)
+                    try:
+                        os.remove(fp)
+                        count += 1
+                    except Exception:
+                        pass
+            speak(f"Cleaned {count} files from Downloads")
+        except Exception:
+            speak("Unable to clean Downloads")
+    elif "find large files" in command:
+        d = os.path.join(os.path.expanduser("~"), "Downloads")
+        results = []
+        try:
+            for rootp, dirs, files in os.walk(d):
+                for f in files:
+                    fp = os.path.join(rootp, f)
+                    try:
+                        sz = os.path.getsize(fp)
+                        if sz > 100 * 1024 * 1024:
+                            results.append((fp, sz))
+                    except Exception:
+                        pass
+            results.sort(key=lambda x: x[1], reverse=True)
+            if not results:
+                speak("No large files found in Downloads")
+            else:
+                speak("Top large files")
+                for fp, sz in results[:5]:
+                    speak(os.path.basename(fp) + " size " + str(int(sz/1024/1024)) + " megabytes")
+        except Exception:
+            speak("Unable to scan Downloads")
     else:
+        if lc in ("stop listening", "pause listening", "do not listen"):
+            global listening_blocked_until
+            listening_blocked_until = time.time() + 300
+            speak("Pausing listening for five minutes")
+            return
+        if lc in ("start listening", "resume listening"):
+            listening_blocked_until = 0
+            speak("Listening resumed")
+            return
+        if lc in ("list commands", "help commands", "what can you do"):
+            speak("You can say open apps, start or stop agent, system info, battery report, manage secrets by saying remember password for name is value or give me password for name")
+            return
+        # Secrets handling (store/fetch)
+        if ("password for" in lc or "variable" in lc) and ("keep in mind" in lc or "remember" in lc or "store" in lc) and (" is " in lc or " = " in lc):
+            base = "password for" if "password for" in lc else "variable"
+            idx = lc.find(base)
+            end = lc.find(" is ", idx)
+            sep = 4
+            if end == -1:
+                end = lc.find(" = ", idx)
+                sep = 3
+            name = original[idx+len(base):end].strip()
+            pwd = original[end+sep:].strip()
+            if name and pwd:
+                ok = store_secret(_normalize_name(name), pwd, parent=root_window)
+                if ok:
+                    speak(f"Stored password for {name}")
+            return
+        if ("password for" in lc or "variable" in lc) and ("give me" in lc or "what is" in lc or "show" in lc):
+            base = "password for" if "password for" in lc else "variable"
+            idx = lc.find(base)
+            name = original[idx+len(base):].strip()
+            if name:
+                pw = fetch_secret(_normalize_name(name), parent=root_window)
+                if pw:
+                    speak_password_spelled(pw)
+                else:
+                    speak("No password found")
+            return
         # fallback interpreter + speak
         resp = interpret_command(command)
         speak(resp)
@@ -1173,11 +1701,19 @@ def listen_for_wake_word_loop(session_duration=3600):
             sens = float(s.get("wake_sensitivity", 0.6))
         except Exception:
             pass
+        kw = ["hey computer"]
+        try:
+            s = _load_settings()
+            raw = s.get("wake_keywords") or s.get("wake_keyword")
+            if raw:
+                kw = [k.strip() for k in str(raw).split(',') if k.strip()]
+        except Exception:
+            pass
         porcupine = pvporcupine.create(
             access_key=ACCESS_KEY,
             keyword_paths=[PORCUPINE_KEYWORD_PATH] if os.path.exists(PORCUPINE_KEYWORD_PATH) else None,
-            keywords=["hey computer"] if not os.path.exists(PORCUPINE_KEYWORD_PATH) else None,
-            sensitivities=[sens]
+            keywords=kw if not os.path.exists(PORCUPINE_KEYWORD_PATH) else None,
+            sensitivities=[sens] if len(kw) <= 1 else [sens] * len(kw)
         )
     except Exception as e:
         print("[Porcupine init error]", e)
@@ -1218,6 +1754,9 @@ def listen_for_wake_word_loop(session_duration=3600):
                         status_queue.put("Liveness passed. Session active.")
                         speak("Liveness confirmed. Please speak your command after the beep.")
 
+                # respect listening pause
+                if time.time() < listening_blocked_until:
+                    continue
                 # Record user command
                 time.sleep(0.25)
                 status_queue.put("Recording command...")
@@ -1226,7 +1765,9 @@ def listen_for_wake_word_loop(session_duration=3600):
                 except Exception:
                     pass
                 # Dynamic recording: 4s min, until user stops speaking
-                fn, had = record_until_silence(COMMAND_WAV)
+                show_recording_overlay(root_window)
+                fn, had = record_until_silence(COMMAND_WAV, on_amp=update_recording_overlay)
+                close_recording_overlay()
                 if not had:
                     status_queue.put("No speech detected.")
                     continue
@@ -1316,6 +1857,8 @@ def restart_wake_listener():
 def start_gui():
     # Builds a small window with useful buttons and status messages.
     root = tk.Tk()
+    global root_window
+    root_window = root
     try:
         style = ttk.Style()
         style.theme_use('clam')
@@ -1370,6 +1913,7 @@ def start_gui():
         command=show_top_apps
     )
     top_btn.pack(pady=6)
+    ttk.Button(root, text="Macros", command=lambda: open_macros_ui(root)).pack(pady=6)
 
     # MRU combobox to open apps quickly
     apps_var = tk.StringVar()
@@ -1435,7 +1979,7 @@ def start_gui():
     )
     settings_btn.pack(pady=6)
 
-    ttk.Button(root, text="Diagnostics", command=lambda: open_diagnostics_window(root)).pack(pady=6)
+ 
 
     def on_close():
         try:
@@ -1454,7 +1998,9 @@ def start_gui():
             winsound.Beep(800, 200)
         except Exception:
             pass
-        fn, had = record_until_silence(COMMAND_WAV)
+        show_recording_overlay(root)
+        fn, had = record_until_silence(COMMAND_WAV, on_amp=update_recording_overlay)
+        close_recording_overlay()
         if not had:
             status_queue.put("No speech detected.")
             return
@@ -1541,12 +2087,19 @@ def open_settings_ui_global(parent=None):
     auto_var = tk.BooleanVar(value=bool(s.get("autostart", True)))
     bg_var = tk.BooleanVar(value=bool(s.get("background", False)))
     sens_var = tk.DoubleVar(value=float(s.get("wake_sensitivity", 0.6)))
+    kw_var = tk.StringVar(value=str(s.get("wake_keywords", s.get("wake_keyword", "hey computer"))))
+    offline_var = tk.BooleanVar(value=bool(s.get("offline_stt", True)))
+    strong_vault_var = tk.BooleanVar(value=bool(s.get("require_strong_vault", False)))
 
     ttk.Checkbutton(win, text="Entertainment Mode", variable=ent_var).pack(pady=6)
     ttk.Checkbutton(win, text="Autostart on Login", variable=auto_var).pack(pady=6)
     ttk.Checkbutton(win, text="Run in Background (no GUI)", variable=bg_var).pack(pady=6)
     ttk.Label(win, text="Wake Sensitivity").pack()
     ttk.Scale(win, from_=0.1, to=1.0, orient='horizontal', variable=sens_var).pack(fill='x', padx=10)
+    ttk.Label(win, text="Wake Keywords (comma-separated)").pack(pady=6)
+    ttk.Entry(win, textvariable=kw_var).pack(fill='x', padx=10)
+    ttk.Checkbutton(win, text="Enable offline STT fallback", variable=offline_var).pack(pady=6)
+    ttk.Checkbutton(win, text="Require strong vault (AES-GCM)", variable=strong_vault_var).pack(pady=6)
 
     def save_settings():
         global entertainment_active
@@ -1554,7 +2107,10 @@ def open_settings_ui_global(parent=None):
         data = {
             "autostart": bool(auto_var.get()),
             "background": bool(bg_var.get()),
-            "wake_sensitivity": float(sens_var.get())
+            "wake_sensitivity": float(sens_var.get()),
+            "wake_keywords": kw_var.get().strip(),
+            "offline_stt": bool(offline_var.get()),
+            "require_strong_vault": bool(strong_vault_var.get())
         }
         _save_settings(data)
         if data["autostart"]:
@@ -1569,6 +2125,71 @@ def open_settings_ui_global(parent=None):
     ttk.Button(win, text="Save", command=save_settings).pack(pady=10)
     ttk.Button(win, text="View Logs", command=lambda: open_diagnostics_window(win)).pack(pady=6)
 
+def open_macros_ui(parent=None):
+    macros = _macros_load()
+    win = tk.Toplevel(parent) if parent else tk.Tk()
+    win.title("Macros")
+    win.geometry("480x360")
+    lst = tk.Listbox(win)
+    lst.pack(fill='both', expand=True)
+    for k in macros.keys():
+        lst.insert('end', k)
+    steps_txt = tk.Text(win, height=6)
+    steps_txt.pack(fill='x')
+    def show_steps(evt=None):
+        sel = lst.curselection()
+        if not sel:
+            return
+        name = lst.get(sel[0])
+        steps = macros.get(_normalize_name(name), [])
+        steps_txt.delete('1.0', 'end')
+        steps_txt.insert('1.0', "\n".join(steps))
+    lst.bind('<<ListboxSelect>>', show_steps)
+    def run_sel():
+        sel = lst.curselection()
+        if not sel:
+            return
+        name = lst.get(sel[0])
+        steps = macros.get(_normalize_name(name), [])
+        speak(f"Running macro {name}")
+        def run_steps():
+            for s in steps:
+                try:
+                    execute_command(s)
+                    time.sleep(0.8)
+                except Exception:
+                    pass
+        threading.Thread(target=run_steps, daemon=True).start()
+    def delete_sel():
+        sel = lst.curselection()
+        if not sel:
+            return
+        name = lst.get(sel[0])
+        m = _macros_load()
+        if m.pop(_normalize_name(name), None) is not None and _macros_save(m):
+            speak("Macro deleted")
+            lst.delete(sel[0])
+            steps_txt.delete('1.0', 'end')
+    ttk.Button(win, text="Run", command=run_sel).pack(side='left', padx=8, pady=6)
+    ttk.Button(win, text="Delete", command=delete_sel).pack(side='left', padx=8, pady=6)
+    name_var = tk.StringVar()
+    steps_var = tk.StringVar()
+    ttk.Label(win, text="Name").pack(pady=4)
+    ttk.Entry(win, textvariable=name_var).pack(fill='x', padx=8)
+    ttk.Label(win, text="Steps (semicolon-separated)").pack(pady=4)
+    ttk.Entry(win, textvariable=steps_var).pack(fill='x', padx=8)
+    def save_new():
+        name = name_var.get().strip()
+        steps = [s.strip() for s in steps_var.get().split(';') if s.strip()]
+        if not name or not steps:
+            return
+        m = _macros_load()
+        m[_normalize_name(name)] = steps
+        if _macros_save(m):
+            speak("Macro saved")
+            lst.insert('end', name)
+    ttk.Button(win, text="Save", command=save_new).pack(pady=6)
+
 def open_diagnostics_window(parent=None):
     try:
         lp = os.path.join(APPDATA_DIR, "sentinel.log")
@@ -1580,10 +2201,104 @@ def open_diagnostics_window(parent=None):
         lv = tk.Toplevel(parent) if parent else tk.Tk()
         lv.title("Diagnostics")
         lv.geometry("620x420")
-        txt = tk.Text(lv, wrap='none')
+        frm = ttk.Frame(lv)
+        frm.pack(fill='both', expand=True)
+        txt = tk.Text(frm, wrap='none', height=14)
         txt.insert('1.0', text or "No logs.")
         txt.configure(state='disabled')
-        txt.pack(fill='both', expand=True)
+        txt.pack(fill='x')
+        ttk.Label(frm, text="Mic level").pack(pady=6)
+        level_var = tk.DoubleVar(value=0.0)
+        bar = ttk.Progressbar(frm, orient='horizontal', mode='determinate', maximum=1.0, variable=level_var)
+        bar.pack(fill='x', padx=10)
+
+        def update_level():
+            try:
+                pa = pyaudio.PyAudio()
+                stream = pa.open(format=pyaudio.paInt16, channels=1, rate=16000, input=True, frames_per_buffer=512)
+                while True:
+                    data = stream.read(512, exception_on_overflow=False)
+                    samples = np.frombuffer(data, dtype=np.int16)
+                    amp = float(np.mean(np.abs(samples))) / 32768.0
+                    level_var.set(min(1.0, amp * 8.0))
+                    time.sleep(0.05)
+            except Exception:
+                level_var.set(0.0)
+        threading.Thread(target=update_level, daemon=True).start()
+        # health statuses
+        health = []
+        health.append("OpenAI: OK" if os.getenv("OPEN_AI_API_KEY") else "OpenAI: Missing")
+        health.append("Porcupine: OK" if ACCESS_KEY else "Porcupine: Missing")
+        try:
+            import socket
+            socket.create_connection(("8.8.8.8", 53), timeout=2)
+            health.append("Network: OK")
+        except Exception:
+            health.append("Network: Unavailable")
+        ttk.Label(frm, text=" | ".join(health)).pack(pady=6)
     except Exception:
         if messagebox:
             messagebox.showerror("Diagnostics", "Unable to open logs.")
+NOTES_PATH = os.path.join(APPDATA_DIR, "notes.json")
+
+def _notes_add(text):
+    ensure_appdata_dir()
+    notes = []
+    try:
+        if os.path.exists(NOTES_PATH):
+            with open(NOTES_PATH, "r", encoding="utf-8") as f:
+                notes = json.load(f)
+    except Exception:
+        notes = []
+    notes.append(text)
+    try:
+        with open(NOTES_PATH, "w", encoding="utf-8") as f:
+            json.dump(notes, f, indent=2)
+        return True
+    except Exception:
+        return False
+
+def _notes_list():
+    try:
+        if os.path.exists(NOTES_PATH):
+            with open(NOTES_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        return []
+    return []
+
+def _notes_forget(idx):
+    try:
+        if os.path.exists(NOTES_PATH):
+            with open(NOTES_PATH, "r", encoding="utf-8") as f:
+                notes = json.load(f)
+            if 1 <= idx <= len(notes):
+                notes.pop(idx-1)
+                with open(NOTES_PATH, "w", encoding="utf-8") as f:
+                    json.dump(notes, f, indent=2)
+                return True
+    except Exception:
+        return False
+    return False
+def ensure_vosk_model():
+    model_dir = os.path.join(APPDATA_DIR, "vosk-model")
+    if os.path.isdir(model_dir) and os.listdir(model_dir):
+        return True
+    try:
+        import urllib.request, zipfile, io
+        url = os.getenv("VOSK_DL") or "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
+        data = urllib.request.urlopen(url, timeout=30).read()
+        z = zipfile.ZipFile(io.BytesIO(data))
+        target = model_dir
+        os.makedirs(target, exist_ok=True)
+        for m in z.namelist():
+            if m.endswith('/'):
+                continue
+            rel = m.split('/', 1)[1] if '/' in m else m
+            dest = os.path.join(target, rel)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with z.open(m) as src, open(dest, 'wb') as out:
+                out.write(src.read())
+        return True
+    except Exception:
+        return False
