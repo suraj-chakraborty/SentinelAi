@@ -1,6 +1,7 @@
 #
 # sentinel_ai_fixed.py
 import os
+import sys
 import time
 import wave
 import threading
@@ -46,17 +47,115 @@ except Exception:
     _tray_available = False
 
 load_dotenv()
+# Also load from AppData if exists (for packaged EXE)
+APPDATA_DIR = os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "SentinelAi")
+env_path = os.path.join(APPDATA_DIR, ".env")
+if os.path.exists(env_path):
+    load_dotenv(env_path, override=True)
+
+def ensure_env_setup(force=False):
+    """Checks for required API keys and shows a wizard if they are missing."""
+    required = {
+        "PVPORCUPINE_PRIVATE_KEY": "Picovoice Access Key",
+        "GEMINI_API_KEY": "Gemini API Key",
+        "OPENROUTER_API_KEY": "OpenRouter API Key (Optional)"
+    }
+    
+    # Only block if critical keys are missing
+    critical = ["PVPORCUPINE_PRIVATE_KEY", "GEMINI_API_KEY"]
+    missing_critical = [k for k in critical if not os.getenv(k)]
+    
+    if not missing_critical and not force:
+        return
+
+    # Show Wizard
+    root = tk.Tk()
+    root.title("SentinelAI | First Run Setup")
+    root.geometry("450x350")
+    root.configure(bg="#1e293b")
+    
+    # Style
+    style = ttk.Style()
+    style.theme_use('clam')
+    style.configure("TLabel", background="#1e293b", foreground="#f1f5f9", font=("Inter", 10))
+    style.configure("Header.TLabel", font=("Inter", 14, "bold"), foreground="#22d3ee")
+    
+    ttk.Label(root, text="Welcome to SentinelAI", style="Header.TLabel").pack(pady=20)
+    ttk.Label(root, text="Please provide your API keys to continue.\nThese will be stored securely in your AppData folder.", justify="center").pack(pady=10)
+
+    entries = {}
+    for key, label in required.items():
+        frame = ttk.Frame(root, style="TFrame")
+        frame.pack(fill="x", padx=40, pady=10)
+        ttk.Label(frame, text=label).pack(anchor="w")
+        entry = ttk.Entry(frame, width=40, show="*" if "KEY" in key else "")
+        entry.insert(0, os.getenv(key, ""))
+        entry.pack(pady=5)
+        entries[key] = entry
+
+    def save_and_close():
+        os.makedirs(APPDATA_DIR, exist_ok=True)
+        with open(env_path, "w") as f:
+            for key, entry in entries.items():
+                val = entry.get().strip()
+                if val:
+                    f.write(f"{key}={val}\n")
+                    os.environ[key] = val
+        
+        # Refresh global configuration with new keys
+        refresh_config()
+                
+        root.destroy()
+
+    ttk.Button(root, text="Save & Start Sentinel", command=save_and_close).pack(pady=30)
+    
+    root.protocol("WM_DELETE_WINDOW", lambda: os._exit(0)) # Exit if closed without saving
+    root.mainloop()
 
 # ---------- Configuration ----------
-ACCESS_KEY = os.getenv("PVPORCUPINE_PRIVATE_KEY")  # picovoice key
-PORCUPINE_KEYWORD_PATH = "./assets/sounds/Hey-robert_en_windows_v3_0_0.ppn"
-REFERENCE_WAV = "reference.wav"
-OWNER_EMBED_PATH = "owner_embed.npy"
-COMMAND_WAV = "command.wav"
-LIVENESS_WAV = "liveness.wav"
+wake_thread = None
+wake_stop_event = threading.Event()
+
+# refresh_config and start_wake_listener moved below listen_for_wake_word_loop to avoid NameError
+
+# App registry paths
+APPDATA_DIR = os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "SentinelAi")
+
+ACCESS_KEY = None
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, 'frozen', False):
+    BASE_DIR = sys._MEIPASS
+
+PORCUPINE_KEYWORD_PATH = os.path.join(BASE_DIR, "assets", "sounds", "Hey-robert_en_windows_v3_0_0.ppn")
+def _porcupine_model_path():
+    candidates = []
+    if getattr(sys, 'frozen', False):
+        candidates.append(os.path.join(BASE_DIR, "pvporcupine", "lib", "common", "porcupine_params.pv"))
+        candidates.append(os.path.join(BASE_DIR, "pvporcupine", "resources", "porcupine_params.pv"))
+    try:
+        import pvporcupine as _pv
+        pkg_base = os.path.dirname(_pv.__file__)
+        candidates.append(os.path.join(pkg_base, "lib", "common", "porcupine_params.pv"))
+        candidates.append(os.path.join(pkg_base, "resources", "porcupine_params.pv"))
+    except Exception:
+        pass
+    for p in candidates:
+        if p and os.path.exists(p):
+            return p
+    return None
+REFERENCE_WAV = os.path.join(APPDATA_DIR, "reference.wav")
+OWNER_EMBED_PATH = os.path.join(APPDATA_DIR, "owner_embed.npy")
+COMMAND_WAV = os.path.join(APPDATA_DIR, "command.wav")
+LIVENESS_WAV = os.path.join(APPDATA_DIR, "liveness.wav")
+
+sentinel_orchestrator = None
+porcupine_status = "Waiting..."
+# refresh_config() # Initial load - MOVED TO main() to avoid NameError during startup
 
 # status queue for GUI updates
 status_queue = Queue()
+tray_icon = None
+tray_lock = threading.Lock()
 
 agent_active = False
 pending_step = None
@@ -64,7 +163,6 @@ next_agent_capture_time = 0
 entertainment_active = False
 
 # App registry paths
-APPDATA_DIR = os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "SentinelAi")
 APPS_REGISTRY_PATH = os.path.join(APPDATA_DIR, "apps_registry.json")
 apps_index = {}
 _mru = {}
@@ -74,6 +172,7 @@ wake_stop_event = threading.Event()
 wake_thread = None
 root_window = None
 listening_blocked_until = 0
+mic_level_var = None
 recording_overlay = None
 recording_overlay_var = None
 ALIASES = {
@@ -293,8 +392,19 @@ def _verify_master(conn, master):
     salt, mh = _get_master_record(conn)
     if not salt or not mh:
         _set_master_record(conn, master)
+        # Update orchestrator master key if available
+        if sentinel_orchestrator:
+            key = _pbkdf(master, salt)
+            sentinel_orchestrator.set_master_key(key)
         return True
-    return hmac.compare_digest(_pbkdf(master, salt), mh)
+    
+    key = _pbkdf(master, salt)
+    if hmac.compare_digest(key, mh):
+        # Update orchestrator master key if available
+        if sentinel_orchestrator:
+            sentinel_orchestrator.set_master_key(key)
+        return True
+    return False
 
 def _prompt_master(parent=None):
     try:
@@ -580,59 +690,87 @@ def _make_tray_image():
     return img
 
 def start_tray():
+    global tray_icon
     if not _tray_available:
         return
-    def tray_start(icon, item):
-        start_agent()
-    def tray_stop(icon, item):
-        stop_agent()
-    def tray_toggle_ent(icon, item):
-        global entertainment_active
-        entertainment_active = not entertainment_active
-        speak("Entertainment " + ("enabled" if entertainment_active else "disabled"))
-    def tray_record(icon, item):
-        try:
-            status_queue.put("Recording command...")
+    
+    with tray_lock:
+        if tray_icon is not None:
+            return
+
+        def tray_start(icon, item):
+            start_agent()
+            return 0
+        def tray_stop(icon, item):
+            stop_agent()
+            return 0
+        def tray_toggle_ent(icon, item):
+            global entertainment_active
+            entertainment_active = not entertainment_active
+            speak("Entertainment " + ("enabled" if entertainment_active else "disabled"))
+            return 0
+        def tray_record(icon, item):
             try:
-                winsound.Beep(800, 200)
-            except Exception:
-                pass
-            show_recording_overlay()
-            fn, had = record_until_silence(COMMAND_WAV, on_amp=update_recording_overlay)
-            close_recording_overlay()
-            if not had:
-                status_queue.put("No speech detected.")
-                return
-            text = transcribe_wav(fn)
-            if text:
-                status_queue.put(f"Command: {text}")
+                status_queue.put("Recording command...")
                 try:
-                    speak(f"You said: {text}")
+                    winsound.Beep(800, 200)
                 except Exception:
                     pass
-                execute_command(text)
-            else:
-                status_queue.put("Transcription empty.")
-                speak("Sorry, I couldn't understand.")
-        except Exception:
-            pass
-    def tray_settings(icon, item):
+                show_recording_overlay()
+                fn, had = record_until_silence(COMMAND_WAV, on_amp=update_recording_overlay)
+                close_recording_overlay()
+                if not had:
+                    status_queue.put("No speech detected.")
+                    return 0
+                text = transcribe_wav(fn)
+                if text:
+                    status_queue.put(f"Command: {text}")
+                    try:
+                        speak(f"You said: {text}")
+                    except Exception:
+                        pass
+                    execute_command(text)
+                else:
+                    status_queue.put("Transcription empty.")
+                    speak("Sorry, I couldn't understand.")
+            except Exception:
+                pass
+            return 0
+        def tray_settings(icon, item):
+            try:
+                open_settings_ui_global()
+            except Exception:
+                pass
+            return 0
+        def tray_quit(icon, item):
+            icon.stop()
+            os._exit(0)
+            return 0
+        
+        menu = pystray.Menu(
+            pystray.MenuItem('Start Agent', tray_start),
+            pystray.MenuItem('Stop Agent', tray_stop),
+            pystray.MenuItem('Record Command', tray_record),
+            pystray.MenuItem('Toggle Entertainment', tray_toggle_ent),
+            pystray.MenuItem('Settings', tray_settings),
+            pystray.MenuItem('Quit', tray_quit)
+        )
+        tray_icon = pystray.Icon('SentinelAI', _make_tray_image(), 'SentinelAI', menu)
+        threading.Thread(target=tray_icon.run, daemon=True).start()
+
+def start_alert_check_loop():
+    """Periodically checks for system alerts and reminders."""
+    if not sentinel_orchestrator:
+        return
+    while True:
         try:
-            open_settings_ui_global()
+            alerts = sentinel_orchestrator.check_periodic_alerts()
+            for alert in alerts:
+                speak(alert)
+                status_queue.put(f"Alert: {alert}")
         except Exception:
             pass
-    def tray_quit(icon, item):
-        os._exit(0)
-    menu = pystray.Menu(
-        pystray.MenuItem('Start Agent', tray_start),
-        pystray.MenuItem('Stop Agent', tray_stop),
-        pystray.MenuItem('Record Command', tray_record),
-        pystray.MenuItem('Toggle Entertainment', tray_toggle_ent),
-        pystray.MenuItem('Settings', tray_settings),
-        pystray.MenuItem('Quit', tray_quit)
-    )
-    icon = pystray.Icon('SentinelAI', _make_tray_image(), 'SentinelAI', menu)
-    threading.Thread(target=icon.run, daemon=True).start()
+        time.sleep(60)  # check every minute
 
 def start_agent():
     # Turn on the step-by-step helper. It will wait for steps and ask for confirmation.
@@ -641,6 +779,8 @@ def start_agent():
     pending_step = None
     status_queue.put("Agent active. Describe the first step.")
     speak("Agent started. Describe the first step.")
+    # Start alert checking
+    threading.Thread(target=start_alert_check_loop, daemon=True).start()
 
 def stop_agent():
     # Turn off the step-by-step helper.
@@ -770,7 +910,7 @@ def compute_embedding(filepath):
 # Thread-safe TTS (non-blocking)
 _tts_lock = threading.Lock()
 _tts_disabled = False
-def speak(text):
+def speak(text, emotion=None):
     global _tts_disabled
     def _beep():
         try:
@@ -787,11 +927,24 @@ def speak(text):
     if _tts_disabled:
         threading.Thread(target=_beep, daemon=True).start()
         return
+    
     def _s():
         try:
             with _tts_lock:
                 pythoncom.CoInitialize()
                 engine = pyttsx3.init()
+                
+                # Emotional Tone Logic
+                rate = engine.getProperty('rate')
+                volume = engine.getProperty('volume')
+                
+                if emotion == "Stressed/Excited":
+                    engine.setProperty('rate', rate + 50) # Speak faster
+                    engine.setProperty('volume', volume + 0.2) # Speak louder
+                elif emotion == "Calm/Sad":
+                    engine.setProperty('rate', rate - 30) # Speak slower
+                    engine.setProperty('volume', volume - 0.2) # Speak softer
+                
                 engine.say(str(text))
                 engine.runAndWait()
                 pythoncom.CoUninitialize()
@@ -1117,13 +1270,13 @@ def interpret_command(command):
     if entertainment_active:
         # In entertainment mode, respond conversationally using OpenAI
         from openai import OpenAI
-        key = os.getenv("OPEN_AI_API_KEY")
+        key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPEN_AI_API_KEY")
         if not key:
-            return "No OpenAI key configured."
+            return "No OpenRouter key configured."
         client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=key)
         try:
             resp = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model="google/gemini-2.0-flash-exp:free", # use a cheap/free model
                 messages=[
                     {"role":"system","content":"You are a friendly, concise, kid-safe desktop companion named SentinelAI. Keep replies short unless asked to expand."},
                     {"role":"user","content":command}
@@ -1131,19 +1284,20 @@ def interpret_command(command):
                 max_tokens=120
             )
             return resp.choices[0].message.content.strip()
-        except Exception:
-            return "Chat error."
+        except Exception as e:
+            return f"Chat error: {str(e)[:40]}"
+    
     from openai import OpenAI
-    key = os.getenv("OPEN_AI_API_KEY")
+    key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPEN_AI_API_KEY")
     if not key:
-        return "No OpenAI key configured."
+        return "No OpenRouter key configured."
     client = OpenAI(
         base_url="https://openrouter.ai/api/v1",
         api_key=key,)
     prompt = f"You are a helpful desktop assistant. Convert the command into a short action summary. Command: {command}"
     try:
         resp = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="google/gemini-2.0-flash-exp:free",
             messages=[
                 {"role":"system","content":"You are a helpful desktop assistant."},
                 {"role":"user","content":prompt}
@@ -1151,18 +1305,9 @@ def interpret_command(command):
             max_tokens=120
         )
         return resp.choices[0].message.content.strip()
-    except Exception:
-        import openai
-        openai.api_key = key
-        resp = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[
-                {"role":"system","content":"You are a helpful desktop assistant."},
-                {"role":"user","content":prompt}
-            ],
-            max_tokens=120
-        )
-        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        # Fallback to older SDK call or error
+        return f"AI error: {str(e)[:40]}"
 
 # Execute a handful of commands (keeps your original behaviors)
 def execute_command(command):
@@ -1639,6 +1784,15 @@ def execute_command(command):
                     speak(os.path.basename(fp) + " size " + str(int(sz/1024/1024)) + " megabytes")
         except Exception:
             speak("Unable to scan Downloads")
+    # New modular command execution logic
+    elif sentinel_orchestrator:
+        try:
+            # Let the orchestrator handle more advanced tasks
+            resp = sentinel_orchestrator.run_command(command)
+            if resp:
+                speak(resp)
+        except Exception as e:
+            speak(f"Error executing advanced command: {e}")
     else:
         if lc in ("stop listening", "pause listening", "do not listen"):
             global listening_blocked_until
@@ -1686,22 +1840,24 @@ def execute_command(command):
 # ---------- Wake-word listener (runs in background thread) ----------
 def listen_for_wake_word_loop(session_duration=3600):
     # Background loop:
+    global next_agent_capture_time, porcupine_status
     # 1) Wait for wake word (or timed agent capture)
     # 2) Check voice liveness (if needed)
     # 3) Record short command and execute it
     """Listens for Porcupine wake word and then handles auth + command."""
     session_valid_until = 0
+    sens = 0.6
+    kw = ["hey computer"]
     if not ACCESS_KEY:
         status_queue.put("Porcupine key missing. Wake word disabled.")
+        porcupine_status = "Missing Key"
         return
     try:
-        sens = 0.6
         try:
             s = _load_settings()
             sens = float(s.get("wake_sensitivity", 0.6))
         except Exception:
             pass
-        kw = ["hey computer"]
         try:
             s = _load_settings()
             raw = s.get("wake_keywords") or s.get("wake_keyword")
@@ -1709,16 +1865,83 @@ def listen_for_wake_word_loop(session_duration=3600):
                 kw = [k.strip() for k in str(raw).split(',') if k.strip()]
         except Exception:
             pass
-        porcupine = pvporcupine.create(
-            access_key=ACCESS_KEY,
-            keyword_paths=[PORCUPINE_KEYWORD_PATH] if os.path.exists(PORCUPINE_KEYWORD_PATH) else None,
-            keywords=kw if not os.path.exists(PORCUPINE_KEYWORD_PATH) else None,
-            sensitivities=[sens] if len(kw) <= 1 else [sens] * len(kw)
-        )
+
+        porcupine = None
+        model_path = _porcupine_model_path()
+        if os.path.exists(PORCUPINE_KEYWORD_PATH):
+            print(f"[Porcupine] Found keyword file: {PORCUPINE_KEYWORD_PATH}")
+            try:
+                if model_path:
+                    porcupine = pvporcupine.create(
+                        access_key=ACCESS_KEY,
+                        keyword_paths=[PORCUPINE_KEYWORD_PATH],
+                        sensitivities=[sens],
+                        model_path=model_path
+                    )
+                else:
+                    porcupine = pvporcupine.create(
+                        access_key=ACCESS_KEY,
+                        keyword_paths=[PORCUPINE_KEYWORD_PATH],
+                        sensitivities=[sens]
+                    )
+                print(f"[Porcupine] Loaded custom keyword file successfully.")
+            except Exception as e:
+                print(f"[Porcupine] Failed to load custom keyword file: {e}")
+                porcupine = None
+        
+        if porcupine is None:
+            print(f"[Porcupine] Using default keywords: {kw}")
+            print(f"[Porcupine] Sensitivity: {sens}")
+            if model_path:
+                porcupine = pvporcupine.create(
+                    access_key=ACCESS_KEY,
+                    keywords=kw,
+                    sensitivities=[sens] if len(kw) <= 1 else [sens] * len(kw),
+                    model_path=model_path
+                )
+            else:
+                porcupine = pvporcupine.create(
+                    access_key=ACCESS_KEY,
+                    keywords=kw,
+                    sensitivities=[sens] if len(kw) <= 1 else [sens] * len(kw)
+                )
+        
+        porcupine_status = "OK"
     except Exception as e:
-        print("[Porcupine init error]", e)
-        status_queue.put("Porcupine init failed.")
-        return
+        err_msg = str(e)
+        print("[Porcupine init error]", err_msg)
+        if "Invalid access_key" in err_msg:
+            status_queue.put("Porcupine key invalid.")
+            porcupine_status = "Invalid Key"
+        elif "Version mismatch" in err_msg:
+            status_queue.put("Porcupine version mismatch.")
+            porcupine_status = "Version Error"
+        else:
+            fallback_ok = False
+            if "keyword" in err_msg.lower() or "model" in err_msg.lower():
+                try:
+                    if model_path:
+                        porcupine = pvporcupine.create(
+                            access_key=ACCESS_KEY,
+                            keywords=["computer"],
+                            sensitivities=[sens],
+                            model_path=model_path
+                        )
+                    else:
+                        porcupine = pvporcupine.create(
+                            access_key=ACCESS_KEY,
+                            keywords=["computer"],
+                            sensitivities=[sens]
+                        )
+                    porcupine_status = "OK"
+                    status_queue.put("Porcupine fallback: computer")
+                    fallback_ok = True
+                except Exception as e2:
+                    err_msg = str(e2)
+            if not fallback_ok:
+                status_queue.put(f"Porcupine failed: {err_msg[:20]}")
+                porcupine_status = "Failed"
+                return
 
     pa = pyaudio.PyAudio()  # open the microphone for reading
     stream = pa.open(format=pyaudio.paInt16,
@@ -1779,9 +2002,22 @@ def listen_for_wake_word_loop(session_duration=3600):
                     speak("Sorry, I couldn't understand the command.")
                     status_queue.put("Transcription empty.")
                 else:
+                    # Emotion Analysis
+                    emotion = "Neutral"
+                    try:
+                        from sentinel.modules.emotion import EmotionModule
+                        emotion_module = EmotionModule()
+                        emotion = emotion_module.analyze_audio_emotion(fn)
+                        suggestion = emotion_module.suggest_action_based_on_emotion(emotion)
+                        if suggestion:
+                            speak(suggestion, emotion=emotion)
+                            status_queue.put(f"Emotion detected: {emotion}")
+                    except Exception:
+                        pass
+
                     status_queue.put(f"Command: {cmd_text}")
                     try:
-                        speak(f"You said: {cmd_text}")
+                        speak(f"You said: {cmd_text}", emotion=emotion)
                     except Exception:
                         pass
                     execute_command(cmd_text)
@@ -1824,6 +2060,60 @@ def restart_wake_listener():
         pass
     start_wake_listener()
 
+def refresh_config():
+    """Refreshes configuration from environment variables and restarts services."""
+    global ACCESS_KEY, sentinel_orchestrator, wake_thread
+    
+    # Reload from AppData .env to be sure
+    if os.path.exists(env_path):
+        load_dotenv(env_path, override=True)
+        
+    ACCESS_KEY = os.getenv("PVPORCUPINE_PRIVATE_KEY")
+    
+    # Initialize/Refresh orchestrator
+    if os.getenv("GEMINI_API_KEY"):
+        try:
+            from sentinel.core.orchestrator import SentinelOrchestrator
+            if sentinel_orchestrator is None:
+                sentinel_orchestrator = SentinelOrchestrator(llm_callback=lambda p: gemini_generate(p))
+        except Exception:
+            pass
+
+    # Restart Wake Word Listener if it's not running
+    if ACCESS_KEY:
+        start_wake_listener()
+
+def update_mic_level():
+    """Continuously updates the mic level variable for the GUI."""
+    global mic_level_var
+    if mic_level_var is None:
+        return
+
+    pa = pyaudio.PyAudio()
+    try:
+        stream = pa.open(format=pyaudio.paInt16, channels=1, rate=16000, input=True, frames_per_buffer=512)
+        while True:
+            try:
+                data = stream.read(512, exception_on_overflow=False)
+                samples = np.frombuffer(data, dtype=np.int16)
+                amp = float(np.mean(np.abs(samples))) / 32768.0
+                if mic_level_var:
+                    mic_level_var.set(amp)
+            except Exception:
+                if mic_level_var:
+                    mic_level_var.set(0.0)
+                break
+            time.sleep(0.05)
+    except Exception:
+        if mic_level_var:
+            mic_level_var.set(0.0)
+    finally:
+        try:
+            stream.close()
+            pa.terminate()
+        except Exception:
+            pass
+
 # ---------- GUI ----------
 # def start_gui():
 
@@ -1857,7 +2147,7 @@ def restart_wake_listener():
 def start_gui():
     # Builds a small window with useful buttons and status messages.
     root = tk.Tk()
-    global root_window
+    global root_window, mic_level_var
     root_window = root
     try:
         style = ttk.Style()
@@ -1875,13 +2165,24 @@ def start_gui():
 
     # Diagnostics row: shows whether keys and driver are present
     diag_items = []
-    diag_items.append("OpenAI: OK" if os.getenv("OPEN_AI_API_KEY") else "OpenAI: Missing")
-    diag_items.append("Porcupine: OK" if os.getenv("PVPORCUPINE_PRIVATE_KEY") else "Porcupine: Missing")
+    diag_items.append("OpenRouter: OK" if (os.getenv("OPENROUTER_API_KEY") or os.getenv("OPEN_AI_API_KEY")) else "OpenRouter: Missing")
+    diag_items.append(f"Porcupine: {porcupine_status}")
+    diag_items.append("Gemini: OK" if os.getenv("GEMINI_API_KEY") else "Gemini: Missing")
     driver_path = os.path.join(os.path.dirname(__file__), "chromedriver-win64", "chromedriver.exe")
     diag_items.append("Driver: OK" if os.path.exists(driver_path) else "Driver: Missing")
     
     diag_label = tk.Label(root, text=" | ".join(diag_items), font=("Arial", 9))
     diag_label.pack(pady=6)
+
+    # Mic level indicator
+    mic_level_var = tk.DoubleVar(value=0.0)
+    mic_label = tk.Label(root, text="Mic Level:", font=("Arial", 9))
+    mic_label.pack()
+    mic_bar = ttk.Progressbar(root, orient='horizontal', mode='determinate', maximum=0.2, variable=mic_level_var)
+    mic_bar.pack(fill='x', padx=20, pady=2)
+
+    # Start a thread to update the mic level
+    threading.Thread(target=update_mic_level, daemon=True).start()
 
     register_btn = ttk.Button(
         root,
@@ -1967,7 +2268,9 @@ def start_gui():
             _save_settings(data)
             if data["autostart"]:
                 ensure_autostart()
-            messagebox.showinfo("Settings", "Saved. Some changes apply next start.")
+            # Restart listener to apply sensitivity and keyword changes
+            restart_wake_listener()
+            messagebox.showinfo("Settings", "Saved. Wake word settings applied.")
             win.destroy()
 
         ttk.Button(win, text="Save", command=save_settings).pack(pady=10)
@@ -1978,6 +2281,12 @@ def start_gui():
         command=lambda: open_settings_ui_global(root)
     )
     settings_btn.pack(pady=6)
+
+    def re_run_setup():
+        ensure_env_setup(force=True)
+        refresh_config()
+
+    ttk.Button(root, text="Edit API Keys", command=re_run_setup).pack(pady=6)
 
  
 
@@ -2059,6 +2368,9 @@ def start_gui():
 # ---------- Main ----------
 def main():
     # Program start:
+    ensure_appdata_dir()
+    ensure_env_setup()
+    refresh_config()  # Load configuration and initialize orchestrator
     # 1) Make sure we have the owner's voice saved
     # 2) Start listening in the background
     # 3) Show the small dashboard
@@ -2076,8 +2388,7 @@ def main():
     else:
         start_tray()
 
-if __name__ == "__main__":
-    main()  # run the program when we start this file
+pass
 def open_settings_ui_global(parent=None):
     s = _load_settings()
     win = tk.Toplevel(parent) if parent else tk.Tk()
@@ -2302,3 +2613,15 @@ def ensure_vosk_model():
         return True
     except Exception:
         return False
+
+if __name__ == "__main__":
+    import sys
+    if "--install-deps" in sys.argv:
+        try:
+            print("Installing Playwright browsers...")
+            subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"])
+            sys.exit(0)
+        except Exception as e:
+            print(f"Error installing dependencies: {e}")
+            sys.exit(1)
+    main()
