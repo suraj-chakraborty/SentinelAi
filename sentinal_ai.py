@@ -1491,7 +1491,7 @@ def register_reference_if_missing():
             return False
         trim_wav_silence(REFERENCE_WAV)
         stats = _audio_signal_stats(REFERENCE_WAV)
-        if stats["rms"] < 0.015 or stats["voiced_ratio"] < 0.25:
+        if stats["rms"] < 0.012 or stats["voiced_ratio"] < 0.20:
             speak("Voice registration failed. Please speak clearly.")
             status_queue.put("Voice registration too quiet or unclear.")
             return False
@@ -1540,7 +1540,7 @@ def manual_register_voice():
             return
             
         stats = _audio_signal_stats(REFERENCE_WAV)
-        if stats["rms"] < 0.015 or stats["voiced_ratio"] < 0.25:
+        if stats["rms"] < 0.012 or stats["voiced_ratio"] < 0.20:
             speak("Voice update failed. Audio quality too low.")
             status_queue.put("Voice update failed: poor audio.")
             return

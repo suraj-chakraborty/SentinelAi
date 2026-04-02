@@ -93,7 +93,7 @@ class SentinelOrchestrator:
 
         # ── Sci-Fi Modules ────────────────────────────────────────────────
         self.robotics = self._init_module("RoboticsModule", RoboticsModule)
-        self.bci = self._init_module("BCIModule", BCIModule)
+        self.bci = self._init_module("BCIModule", BCIModule, self)
         self.quantum = self._init_module("QuantumModule", QuantumModule)
         self.proxy_shield = None
         
