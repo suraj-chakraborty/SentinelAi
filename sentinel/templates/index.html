@@ -3,160 +3,736 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SentinelAI | Intelligence Dashboard</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/1.6.2/axios.min.js"></script>
+    <title>SentinelAI — Intelligence Dashboard</title>
+    <meta name="description" content="SentinelAI advanced personal AI assistant — real-time monitoring and command interface">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
     <style>
-        body { background-color: #0f172a; color: #f1f5f9; font-family: 'Inter', sans-serif; }
-        .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.1); }
-        .neon-border { box-shadow: 0 0 15px rgba(34, 211, 238, 0.2); border: 1px solid rgba(34, 211, 238, 0.4); }
-        .glow-text { text-shadow: 0 0 8px rgba(34, 211, 238, 0.5); }
+        /* ─── Design Tokens ─────────────────────────────────────────── */
+        :root {
+            --bg:           #080c14;
+            --surface:      #0d1420;
+            --surface-2:    #111827;
+            --border:       rgba(255,255,255,0.07);
+            --border-glow:  rgba(34,211,238,0.3);
+            --cyan:         #22d3ee;
+            --cyan-dim:     rgba(34,211,238,0.12);
+            --purple:       #a78bfa;
+            --purple-dim:   rgba(167,139,250,0.12);
+            --green:        #4ade80;
+            --red:          #f87171;
+            --amber:        #fbbf24;
+            --text:         #f1f5f9;
+            --text-dim:     #64748b;
+            --text-mid:     #94a3b8;
+            --radius:       16px;
+            --radius-sm:    10px;
+            --glow-cyan:    0 0 20px rgba(34,211,238,0.15);
+            --glow-purple:  0 0 20px rgba(167,139,250,0.15);
+        }
+
+        /* ─── Reset & Base ──────────────────────────────────────────── */
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+            line-height: 1.6;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* ─── Ambient background ────────────────────────────────────── */
+        body::before {
+            content: '';
+            position: fixed;
+            top: -30%;
+            left: -20%;
+            width: 60vw;
+            height: 60vw;
+            background: radial-gradient(ellipse, rgba(34,211,238,0.04), transparent 60%);
+            pointer-events: none;
+            z-index: 0;
+        }
+        body::after {
+            content: '';
+            position: fixed;
+            bottom: -20%;
+            right: -10%;
+            width: 50vw;
+            height: 50vw;
+            background: radial-gradient(ellipse, rgba(167,139,250,0.05), transparent 60%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* ─── Layout ────────────────────────────────────────────────── */
+        .app { position: relative; z-index: 1; max-width: 1400px; margin: 0 auto; padding: 24px; }
+
+        /* ─── Glass card ────────────────────────────────────────────── */
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 24px;
+            backdrop-filter: blur(12px);
+            transition: border-color 0.3s, box-shadow 0.3s;
+        }
+        .card:hover { border-color: var(--border-glow); box-shadow: var(--glow-cyan); }
+        .card.purple:hover { border-color: rgba(167,139,250,0.3); box-shadow: var(--glow-purple); }
+
+        /* ─── Header ────────────────────────────────────────────────── */
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 28px;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+        .logo { display: flex; align-items: center; gap: 12px; }
+        .logo-icon {
+            width: 44px; height: 44px;
+            background: linear-gradient(135deg, var(--cyan), var(--purple));
+            border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 20px;
+            box-shadow: 0 0 24px rgba(34,211,238,0.3);
+            animation: pulse-glow 3s ease-in-out infinite;
+        }
+        @keyframes pulse-glow {
+            0%,100% { box-shadow: 0 0 24px rgba(34,211,238,0.3); }
+            50%      { box-shadow: 0 0 40px rgba(34,211,238,0.5); }
+        }
+        .logo h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
+        .logo h1 span { color: var(--cyan); }
+        .logo p { font-size: 12px; color: var(--text-dim); margin-top: 1px; }
+
+        .header-right { display: flex; align-items: center; gap: 12px; }
+        .status-pill {
+            display: flex; align-items: center; gap: 8px;
+            background: var(--surface-2); border: 1px solid var(--border);
+            border-radius: 999px; padding: 8px 16px; font-size: 13px;
+            color: var(--text-mid);
+        }
+        .pulse-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: var(--green);
+            animation: pulse-dot 2s ease-in-out infinite;
+        }
+        .pulse-dot.inactive { background: var(--red); animation: none; }
+        @keyframes pulse-dot {
+            0%,100% { opacity: 1; transform: scale(1); }
+            50%      { opacity: 0.5; transform: scale(1.3); }
+        }
+
+        /* ─── Stats row ─────────────────────────────────────────────── */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .stat-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 20px;
+            transition: all 0.3s;
+        }
+        .stat-card:hover { transform: translateY(-2px); box-shadow: var(--glow-cyan); border-color: var(--border-glow); }
+        .stat-label {
+            font-size: 11px; font-weight: 600; text-transform: uppercase;
+            letter-spacing: 0.08em; color: var(--text-dim); margin-bottom: 8px;
+        }
+        .stat-value { font-size: 24px; font-weight: 700; color: var(--cyan); font-family: 'JetBrains Mono', monospace; }
+        .stat-value.ok  { color: var(--green); }
+        .stat-value.warn { color: var(--amber); }
+        .stat-value.err  { color: var(--red); }
+        .stat-sub { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+
+        /* ─── Main grid ─────────────────────────────────────────────── */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 1fr 360px;
+            gap: 20px;
+            align-items: start;
+        }
+        @media (max-width: 900px) { .main-grid { grid-template-columns: 1fr; } }
+
+        /* ─── Conversation / Command Center ─────────────────────────── */
+        .command-center { display: flex; flex-direction: column; gap: 16px; }
+
+        .chat-history {
+            background: var(--surface-2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            height: 360px;
+            overflow-y: auto;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            scroll-behavior: smooth;
+        }
+        .chat-history::-webkit-scrollbar { width: 4px; }
+        .chat-history::-webkit-scrollbar-track { background: transparent; }
+        .chat-history::-webkit-scrollbar-thumb { background: var(--border-glow); border-radius: 4px; }
+
+        .chat-msg { display: flex; gap: 10px; animation: fade-up 0.3s ease; }
+        @keyframes fade-up {
+            from { opacity: 0; transform: translateY(8px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        .chat-msg.user { flex-direction: row-reverse; }
+        .chat-avatar {
+            width: 32px; height: 32px; border-radius: 10px; flex-shrink: 0;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 15px; font-weight: 700;
+        }
+        .chat-avatar.sentinel { background: linear-gradient(135deg, var(--cyan), #0ea5e9); color: #000; }
+        .chat-avatar.user-av  { background: linear-gradient(135deg, var(--purple), #7c3aed); color: #fff; }
+        .chat-bubble {
+            max-width: 80%;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 10px 14px;
+            font-size: 13.5px;
+            line-height: 1.5;
+            color: var(--text-mid);
+        }
+        .chat-msg.user .chat-bubble {
+            background: var(--purple-dim);
+            border-color: rgba(167,139,250,0.2);
+            color: var(--text);
+        }
+        .chat-bubble strong { color: var(--cyan); display: block; font-size: 11px; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
+        .chat-msg.user .chat-bubble strong { color: var(--purple); }
+
+        /* Typing indicator */
+        .typing { display: flex; align-items: center; gap: 4px; padding: 12px 14px; }
+        .typing-dot { width: 6px; height: 6px; background: var(--cyan); border-radius: 50%; animation: typing 1.2s ease-in-out infinite; }
+        .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes typing { 0%,80%,100% { transform: scale(0.6); opacity: 0.4; } 40% { transform: scale(1); opacity: 1; } }
+
+        /* ─── Command input ─────────────────────────────────────────── */
+        .input-row {
+            display: flex; gap: 10px; align-items: flex-end;
+        }
+        .input-wrap { position: relative; flex: 1; }
+        #command-input {
+            width: 100%;
+            background: var(--surface-2);
+            border: 1.5px solid var(--border);
+            border-radius: var(--radius-sm);
+            padding: 14px 18px;
+            font-size: 14px;
+            color: var(--text);
+            font-family: inherit;
+            outline: none;
+            transition: border-color 0.3s, box-shadow 0.3s;
+            resize: none;
+            min-height: 52px;
+            max-height: 140px;
+        }
+        #command-input:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(34,211,238,0.08); }
+        #command-input::placeholder { color: var(--text-dim); }
+
+        .btn {
+            cursor: pointer; border: none; border-radius: var(--radius-sm);
+            font-family: inherit; font-weight: 600; font-size: 14px;
+            padding: 14px 20px; transition: all 0.2s; display: flex; align-items: center; gap: 6px;
+        }
+        .btn-primary { background: var(--cyan); color: #000; }
+        .btn-primary:hover { background: #67e8f9; transform: translateY(-1px); box-shadow: 0 4px 20px rgba(34,211,238,0.35); }
+        .btn-primary:active { transform: translateY(0); }
+        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .btn-ghost { background: var(--surface); border: 1px solid var(--border); color: var(--text-mid); padding: 14px; }
+        .btn-ghost:hover { border-color: var(--border-glow); color: var(--cyan); background: var(--cyan-dim); }
+
+        /* ─── Quick actions ─────────────────────────────────────────── */
+        .quick-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+        .quick-btn {
+            background: var(--surface-2); border: 1px solid var(--border);
+            border-radius: 999px; padding: 6px 14px; font-size: 12px;
+            color: var(--text-mid); cursor: pointer; transition: all 0.2s;
+            font-family: inherit;
+        }
+        .quick-btn:hover { border-color: var(--border-glow); color: var(--cyan); background: var(--cyan-dim); transform: translateY(-1px); }
+
+        /* ─── Right sidebar ─────────────────────────────────────────── */
+        .sidebar { display: flex; flex-direction: column; gap: 16px; }
+
+        /* Intelligence feed */
+        .feed-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+        .feed-title { font-size: 15px; font-weight: 600; }
+        .feed-badge {
+            background: var(--cyan-dim); color: var(--cyan);
+            border: 1px solid rgba(34,211,238,0.2);
+            border-radius: 999px; font-size: 11px; font-weight: 600;
+            padding: 2px 8px;
+        }
+        #intel-feed { display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto; }
+        #intel-feed::-webkit-scrollbar { width: 3px; }
+        #intel-feed::-webkit-scrollbar-thumb { background: var(--border-glow); }
+
+        .feed-item {
+            background: var(--surface-2); border: 1px solid var(--border);
+            border-radius: var(--radius-sm); padding: 10px 12px;
+            animation: fade-up 0.3s ease;
+            border-left: 3px solid var(--border);
+        }
+        .feed-item.alert  { border-left-color: var(--red); background: rgba(248,113,113,0.05); }
+        .feed-item.info   { border-left-color: var(--cyan); }
+        .feed-item.user   { border-left-color: var(--purple); }
+        .feed-item-type   { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); margin-bottom: 3px; }
+        .feed-item.alert .feed-item-type  { color: var(--red); }
+        .feed-item.info .feed-item-type   { color: var(--cyan); }
+        .feed-item.user .feed-item-type   { color: var(--purple); }
+        .feed-item-text   { font-size: 12.5px; color: var(--text-mid); line-height: 1.4; }
+
+        /* ─── Module status grid ────────────────────────────────────── */
+        .modules-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 16px; }
+        .module-pill {
+            display: flex; align-items: center; gap: 8px;
+            background: var(--surface-2); border: 1px solid var(--border);
+            border-radius: 8px; padding: 10px 12px; font-size: 12px;
+        }
+        .module-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+        .module-dot.on  { background: var(--green); box-shadow: 0 0 6px var(--green); }
+        .module-dot.off { background: var(--text-dim); }
+        .module-name { color: var(--text-mid); flex: 1; }
+
+        /* ─── Agent control ─────────────────────────────────────────── */
+        .agent-panel { margin-top: 16px; }
+        .agent-status {
+            display: flex; align-items: center; justify-content: space-between;
+            background: var(--surface-2); border: 1px solid var(--border);
+            border-radius: var(--radius-sm); padding: 14px 16px;
+        }
+        .agent-label { font-size: 13px; font-weight: 600; }
+        .agent-sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+        .toggle {
+            width: 44px; height: 24px; border-radius: 12px;
+            background: var(--surface); border: 1.5px solid var(--border);
+            cursor: pointer; position: relative; transition: all 0.3s;
+        }
+        .toggle.active { background: var(--cyan); border-color: var(--cyan); }
+        .toggle::after {
+            content: ''; position: absolute; top: 3px; left: 3px;
+            width: 16px; height: 16px; border-radius: 50%;
+            background: var(--text-dim); transition: all 0.3s;
+        }
+        .toggle.active::after { background: #000; transform: translateX(20px); }
+
+        /* ─── Waveform ──────────────────────────────────────────────── */
+        .waveform-bar {
+            display: flex; align-items: center; gap: 3px; height: 28px;
+            margin-top: 10px;
+        }
+        .waveform-bar .bar {
+            width: 3px; background: var(--cyan); border-radius: 2px;
+            opacity: 0.3; transition: height 0.1s ease, opacity 0.1s;
+        }
+        .waveform-bar.active .bar {
+            opacity: 0.8;
+            animation: wave 1s ease-in-out infinite;
+        }
+        .waveform-bar .bar:nth-child(odd) { animation-delay: 0.1s !important; }
+        @keyframes wave {
+            0%,100% { height: 4px; } 50% { height: 22px; }
+        }
+
+        /* ─── Footer ────────────────────────────────────────────────── */
+        footer {
+            margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--border);
+            display: flex; justify-content: space-between; align-items: center;
+            font-size: 11px; color: var(--text-dim); flex-wrap: wrap; gap: 8px;
+        }
+        .footer-links { display: flex; gap: 16px; }
+        .footer-links a { color: var(--text-dim); text-decoration: none; transition: color 0.2s; }
+        .footer-links a:hover { color: var(--cyan); }
     </style>
 </head>
-<body class="p-8">
-    <div class="max-w-6xl mx-auto">
-        <!-- Header -->
-        <header class="flex justify-between items-center mb-12">
-            <div>
-                <h1 class="text-4xl font-bold glow-text tracking-tighter text-cyan-400">SENTINEL<span class="text-white">AI</span></h1>
-                <p class="text-slate-400">World-Class Assistant Platform</p>
-            </div>
-            <div class="flex gap-4">
-                <div class="glass p-3 rounded-xl px-6 flex items-center gap-3">
-                    <div class="w-3 h-3 rounded-full bg-green-500 animate-pulse"></div>
-                    <span id="system-status">System Active</span>
-                </div>
-            </div>
-        </header>
+<body>
+<div class="app">
 
-        <!-- Stats Grid -->
-        <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-12">
-            <div class="glass p-6 rounded-2xl neon-border">
-                <p class="text-slate-400 text-sm mb-1 uppercase tracking-wider font-semibold">Voice Core (Porcupine)</p>
-                <h2 id="porcupine-status" class="text-2xl font-bold {{ 'text-cyan-400' if stats.porcupine_status == 'Active' else 'text-red-400' }}">{{ stats.porcupine_status }}</h2>
-            </div>
-            <div class="glass p-6 rounded-2xl">
-                <p class="text-slate-400 text-sm mb-1 uppercase tracking-wider font-semibold">Vision Core (Gemini)</p>
-                <h2 id="gemini-status" class="text-2xl font-bold {{ 'text-cyan-400' if stats.gemini_status == 'Active' else 'text-red-400' }}">{{ stats.gemini_status }}</h2>
-            </div>
-            <div class="glass p-6 rounded-2xl">
-                <p class="text-slate-400 text-sm mb-1 uppercase tracking-wider font-semibold">Ollama Local AI</p>
-                <h2 class="text-2xl font-bold text-cyan-400">{{ stats.ollama_status }}</h2>
-            </div>
-            <div class="glass p-6 rounded-2xl">
-                <p class="text-slate-400 text-sm mb-1 uppercase tracking-wider font-semibold">Hardware Stats</p>
-                <div class="flex gap-4">
-                    <span id="cpu-stat" class="text-xl font-bold">{{ stats.cpu_temp or 'N/A' }}°C CPU</span>
-                    <span id="gpu-stat" class="text-xl font-bold">{{ stats.gpu_temp or 'N/A' }}°C GPU</span>
-                </div>
+    <!-- ─── Header ─────────────────────────────────────────────────── -->
+    <header>
+        <div class="logo">
+            <div class="logo-icon">⬡</div>
+            <div>
+                <h1><span>SENTINEL</span>AI</h1>
+                <p>World-Class Personal AI Assistant</p>
             </div>
         </div>
-
-        <!-- Main Content -->
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <!-- Command Center -->
-            <div class="lg:col-span-2 space-y-6">
-                <div class="glass p-8 rounded-3xl border-2 border-slate-700/50">
-                    <h3 class="text-xl font-bold mb-6 flex items-center gap-3">
-                        <svg class="w-6 h-6 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
-                        Command Center
-                    </h3>
-                    <div class="relative">
-                        <input id="command-input" type="text" placeholder="What can I help you with today?" class="w-full bg-slate-900/50 border-2 border-slate-700 rounded-2xl p-4 pl-6 focus:border-cyan-400 focus:outline-none transition-all text-lg">
-                        <button onclick="sendCommand()" class="absolute right-3 top-2 bottom-2 bg-cyan-500 hover:bg-cyan-400 text-slate-900 font-bold px-6 rounded-xl transition-colors">Execute</button>
-                    </div>
-                    <div id="response-box" class="mt-8 hidden animate-fade-in">
-                        <p class="text-slate-400 text-sm mb-2 uppercase tracking-widest font-bold">Sentinel's Response</p>
-                        <div class="bg-slate-900/80 rounded-2xl p-6 border border-slate-700">
-                            <p id="response-text" class="text-lg leading-relaxed"></p>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Features Info -->
-                <div class="grid grid-cols-2 gap-4">
-                    <div class="glass p-4 rounded-xl text-sm border-l-4 border-cyan-500">
-                        <p class="font-bold text-cyan-400">Autonomous Mode</p>
-                        <p class="text-slate-400">Self-correcting code & task decomposition enabled.</p>
-                    </div>
-                    <div class="glass p-4 rounded-xl text-sm border-l-4 border-purple-500">
-                        <p class="font-bold text-purple-400">Privacy First</p>
-                        <p class="text-slate-400">Local RAG & Ollama fallback active.</p>
-                    </div>
-                </div>
+        <div class="header-right">
+            <div class="status-pill">
+                <div class="pulse-dot" id="system-dot"></div>
+                <span id="system-status">System Active</span>
             </div>
+            <div class="status-pill" id="time-display" style="font-family:'JetBrains Mono',monospace;font-size:12px;"></div>
+        </div>
+    </header>
 
-            <!-- Sidebar / Intelligence Feed -->
-            <div class="space-y-6">
-                <div class="glass p-6 rounded-3xl h-full min-h-[400px]">
-                    <h3 class="text-xl font-bold mb-6 flex items-center gap-3 text-slate-200">
-                        Intelligence Feed
-                    </h3>
-                    <div id="intel-feed" class="space-y-4">
-                        <div class="p-4 bg-slate-800/50 rounded-xl border border-slate-700/50">
-                            <p class="text-xs text-cyan-500 font-bold mb-1">SYSTEM BOOT</p>
-                            <p class="text-sm text-slate-300">SentinelAI World-Class core loaded successfully.</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
+    <!-- ─── Stats row ───────────────────────────────────────────────── -->
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="stat-label">Voice Core</div>
+            <div class="stat-value ok" id="porcupine-status">{{ stats.porcupine_status }}</div>
+            <div class="stat-sub">Porcupine wake word</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Vision Core</div>
+            <div class="stat-value" id="gemini-status">{{ stats.gemini_status }}</div>
+            <div class="stat-sub">Gemini 2.0 Flash</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Local AI</div>
+            <div class="stat-value" id="ollama-status">{{ stats.ollama_status }}</div>
+            <div class="stat-sub">Ollama offline LLM</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">CPU Temp</div>
+            <div class="stat-value" id="cpu-stat">{{ stats.cpu_temp or '—' }}°</div>
+            <div class="stat-sub">Hardware health</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">GPU Temp</div>
+            <div class="stat-value" id="gpu-stat">{{ stats.gpu_temp or '—' }}°</div>
+            <div class="stat-sub">Graphics health</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">Knowledge Base</div>
+            <div class="stat-value ok" id="kb-count">—</div>
+            <div class="stat-sub">Indexed memories</div>
         </div>
     </div>
 
-    <script>
-        async function sendCommand() {
-            const input = document.getElementById('command-input');
-            const command = input.value;
-            if (!command) return;
+    <!-- ─── Main grid ───────────────────────────────────────────────── -->
+    <div class="main-grid">
 
-            const responseBox = document.getElementById('response-box');
-            const responseText = document.getElementById('response-text');
-            
-            // UI Feedback
-            input.disabled = true;
-            input.classList.add('opacity-50');
-            responseBox.classList.remove('hidden');
-            responseText.innerText = "Processing task...";
-            
-            addFeedItem("USER", command);
+        <!-- ─── Command Center ─────────────────────────────────────── -->
+        <div class="command-center">
+            <div class="card" style="padding:0;overflow:hidden;">
+                <div style="padding:20px 24px 0;border-bottom:1px solid var(--border);padding-bottom:16px;">
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <svg width="18" height="18" fill="none" stroke="var(--cyan)" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                        <span style="font-size:15px;font-weight:600;">Command Center</span>
+                        <span id="listening-badge" style="display:none;background:rgba(34,211,238,0.1);border:1px solid rgba(34,211,238,0.3);color:var(--cyan);padding:2px 10px;border-radius:999px;font-size:11px;font-weight:600;margin-left:auto;">● LISTENING</span>
+                    </div>
+                </div>
+                <div class="chat-history" id="chat-history">
+                    <div class="chat-msg">
+                        <div class="chat-avatar sentinel">S</div>
+                        <div class="chat-bubble">
+                            <strong>SentinelAI · System</strong>
+                            All systems online. Neural TTS, Whisper STT, Gemini 2.0, and 16 modules loaded. How can I help you today?
+                        </div>
+                    </div>
+                </div>
+                <div style="padding:20px 24px;border-top:1px solid var(--border);">
+                    <!-- Waveform -->
+                    <div class="waveform-bar" id="waveform" style="margin-bottom:12px;">
+                        <div class="bar" style="height:6px"></div><div class="bar" style="height:12px"></div><div class="bar" style="height:8px"></div><div class="bar" style="height:18px"></div><div class="bar" style="height:6px"></div><div class="bar" style="height:14px"></div><div class="bar" style="height:10px"></div><div class="bar" style="height:20px"></div><div class="bar" style="height:8px"></div><div class="bar" style="height:14px"></div><div class="bar" style="height:6px"></div><div class="bar" style="height:10px"></div>
+                    </div>
+                    <!-- Quick actions -->
+                    <div class="quick-actions" style="margin-bottom:14px;">
+                        <button id="qa-daily-brief" class="quick-btn" onclick="quickSend('daily brief')">📰 Daily Brief</button>
+                        <button id="qa-screen" class="quick-btn" onclick="quickSend('analyze my screen')">👁 Analyze Screen</button>
+                        <button id="qa-habit" class="quick-btn" onclick="quickSend('what are my habits')">🧠 My Habits</button>
+                        <button id="qa-secure" class="quick-btn" onclick="quickSend('security report')">🔒 Security</button>
+                        <button id="qa-agent" class="quick-btn" onclick="quickSend('start agent')">🤖 Start Agent</button>
+                        <button id="qa-battery" class="quick-btn" onclick="quickSend('battery report')">🔋 Battery</button>
+                    </div>
+                    <!-- Input row -->
+                    <div class="input-row">
+                        <div class="input-wrap">
+                            <textarea
+                                id="command-input"
+                                placeholder="Type a command or ask anything..."
+                                rows="1"
+                                onkeydown="handleKey(event)"
+                                oninput="autoResize(this)"
+                            ></textarea>
+                        </div>
+                        <button class="btn btn-ghost" id="clear-btn" onclick="clearChat()" title="Clear chat">
+                            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                        </button>
+                        <button class="btn btn-primary" id="send-btn" onclick="sendCommand()">
+                            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+                            Send
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
 
-            try {
-                const res = await axios.post('/command', { command: command });
-                responseText.innerText = res.data.response;
-                addFeedItem("SENTINEL", res.data.response);
-            } catch (err) {
-                responseText.innerText = "Error communicating with Sentinel core.";
-            } finally {
-                input.disabled = false;
-                input.classList.remove('opacity-50');
-                input.value = "";
+        <!-- ─── Sidebar ─────────────────────────────────────────────── -->
+        <div class="sidebar">
+
+            <!-- Intelligence Feed -->
+            <div class="card purple">
+                <div class="feed-header">
+                    <span class="feed-title">Intelligence Feed</span>
+                    <span class="feed-badge" id="feed-count">0 events</span>
+                </div>
+                <div id="intel-feed">
+                    <div class="feed-item info">
+                        <div class="feed-item-type">System · Boot</div>
+                        <div class="feed-item-text">SentinelAI world-class core loaded. All 16 modules initialized.</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Module Status -->
+            <div class="card">
+                <div style="font-size:15px;font-weight:600;margin-bottom:14px;">Module Status</div>
+                <div class="modules-grid" id="module-grid">
+                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Vision</span></div>
+                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Knowledge</span></div>
+                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Emotion</span></div>
+                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Habits</span></div>
+                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Security</span></div>
+                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">IoT Hub</span></div>
+                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Coding</span></div>
+                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Automation</span></div>
+                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Gesture</span></div>
+                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">File Intel</span></div>
+                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Calendar</span></div>
+                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Web Agent</span></div>
+                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Playwright</span></div>
+                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Agentic AI</span></div>
+                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Daily Brief</span></div>
+                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Ollama</span></div>
+                </div>
+
+                <!-- Agent control -->
+                <div class="agent-panel">
+                    <div class="agent-status">
+                        <div>
+                            <div class="agent-label">Autonomous Agent</div>
+                            <div class="agent-sub" id="agent-sub-text">ReAct engine · Ready</div>
+                        </div>
+                        <div class="toggle" id="agent-toggle" onclick="toggleAgent()" title="Toggle Agent"></div>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- ─── Footer ──────────────────────────────────────────────────── -->
+    <footer>
+        <span>SentinelAI v2.0 · Privacy-First · Local-First AI</span>
+        <div class="footer-links">
+            <a href="#" onclick="quickSend('diagnostics')">Diagnostics</a>
+            <a href="#" onclick="quickSend('open settings')">Settings</a>
+            <a href="https://github.com" target="_blank">GitHub</a>
+        </div>
+    </footer>
+</div>
+
+<!-- ─── Script ──────────────────────────────────────────────────────────── -->
+<script>
+    let feedCount = 0;
+    let agentActive = false;
+    let messageCount = 0;
+
+    // ─── Clock ────────────────────────────────────────────────────────────
+    function updateClock() {
+        const now = new Date();
+        document.getElementById('time-display').textContent =
+            now.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+    }
+    updateClock();
+    setInterval(updateClock, 1000);
+
+    // ─── Send command ─────────────────────────────────────────────────────
+    async function sendCommand() {
+        const input = document.getElementById('command-input');
+        const cmd = input.value.trim();
+        if (!cmd) return;
+
+        const sendBtn = document.getElementById('send-btn');
+        const waveform = document.getElementById('waveform');
+
+        // UI → loading state
+        input.disabled = true;
+        sendBtn.disabled = true;
+        waveform.classList.add('active');
+        document.getElementById('listening-badge').style.display = 'flex';
+
+        // Add user message
+        addChatMessage('user', cmd);
+        input.value = '';
+        autoResize(input);
+
+        // Typing indicator
+        const typingId = addTypingIndicator();
+
+        try {
+            const res = await fetch('/command', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({command: cmd})
+            });
+            const data = await res.json();
+            removeTypingIndicator(typingId);
+            addChatMessage('sentinel', data.response || 'Command executed.');
+            addFeedItem('SENTINEL', data.response || 'Command executed.', 'info');
+        } catch (err) {
+            removeTypingIndicator(typingId);
+            addChatMessage('sentinel', 'Error communicating with Sentinel core. Is the server running?', true);
+            addFeedItem('ERROR', 'Server communication failed.', 'alert');
+        } finally {
+            input.disabled = false;
+            sendBtn.disabled = false;
+            input.focus();
+            waveform.classList.remove('active');
+            document.getElementById('listening-badge').style.display = 'none';
+        }
+    }
+
+    // ─── Chat messages ────────────────────────────────────────────────────
+    function addChatMessage(role, text, isError = false) {
+        const history = document.getElementById('chat-history');
+        const isUser = role === 'user';
+        const div = document.createElement('div');
+        div.className = `chat-msg ${isUser ? 'user' : ''}`;
+        const now = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+        div.innerHTML = `
+            <div class="chat-avatar ${isUser ? 'user-av' : 'sentinel'}">${isUser ? 'U' : 'S'}</div>
+            <div class="chat-bubble${isError ? ' alert' : ''}">
+                <strong>${isUser ? 'You' : 'SentinelAI'} · ${now}</strong>
+                ${escapeHtml(text)}
+            </div>`;
+        history.appendChild(div);
+        history.scrollTop = history.scrollHeight;
+        messageCount++;
+    }
+
+    let typingCounter = 0;
+    function addTypingIndicator() {
+        const id = `typing-${++typingCounter}`;
+        const history = document.getElementById('chat-history');
+        const div = document.createElement('div');
+        div.className = 'chat-msg';
+        div.id = id;
+        div.innerHTML = `
+            <div class="chat-avatar sentinel">S</div>
+            <div class="chat-bubble typing"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div>`;
+        history.appendChild(div);
+        history.scrollTop = history.scrollHeight;
+        return id;
+    }
+    function removeTypingIndicator(id) {
+        const el = document.getElementById(id);
+        if (el) el.remove();
+    }
+
+    // ─── Intelligence feed ────────────────────────────────────────────────
+    function addFeedItem(type, text, kind = 'info') {
+        const feed = document.getElementById('intel-feed');
+        const div = document.createElement('div');
+        div.className = `feed-item ${kind}`;
+        const now = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+        div.innerHTML = `
+            <div class="feed-item-type">${escapeHtml(type)} · ${now}</div>
+            <div class="feed-item-text">${escapeHtml(text.substring(0, 120))}${text.length > 120 ? '…' : ''}</div>`;
+        feed.prepend(div);
+        feedCount++;
+        document.getElementById('feed-count').textContent = `${feedCount} event${feedCount !== 1 ? 's' : ''}`;
+        // Max 30 items
+        while (feed.children.length > 30) feed.removeChild(feed.lastChild);
+    }
+
+    // ─── Quick send ───────────────────────────────────────────────────────
+    function quickSend(cmd) {
+        document.getElementById('command-input').value = cmd;
+        sendCommand();
+    }
+
+    // ─── Agent toggle ─────────────────────────────────────────────────────
+    async function toggleAgent() {
+        const toggle = document.getElementById('agent-toggle');
+        const sub = document.getElementById('agent-sub-text');
+        agentActive = !agentActive;
+        toggle.classList.toggle('active', agentActive);
+        const cmd = agentActive ? 'start agent' : 'stop agent';
+        sub.textContent = agentActive ? 'ReAct engine · Running' : 'ReAct engine · Ready';
+        addFeedItem('AGENT', agentActive ? 'Autonomous agent activated.' : 'Agent stopped.', 'info');
+        try {
+            await fetch('/command', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({command: cmd})});
+        } catch (e) {}
+    }
+
+    // ─── Clear chat ───────────────────────────────────────────────────────
+    function clearChat() {
+        const h = document.getElementById('chat-history');
+        h.innerHTML = '';
+        addChatMessage('sentinel', 'Chat cleared. Ready for new commands.');
+        messageCount = 0;
+    }
+
+    // ─── Key handler ─────────────────────────────────────────────────────
+    function handleKey(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendCommand();
+        }
+    }
+
+    // ─── Auto-resize textarea ─────────────────────────────────────────────
+    function autoResize(el) {
+        el.style.height = 'auto';
+        el.style.height = Math.min(el.scrollHeight, 140) + 'px';
+    }
+
+    // ─── Stats polling ─────────────────────────────────────────────────────
+    async function pollStats() {
+        try {
+            const res = await fetch('/stats');
+            const d = await res.json();
+
+            if (d.cpu !== undefined) {
+                const cpuEl = document.getElementById('cpu-stat');
+                cpuEl.textContent = (d.cpu || '—') + '°';
+                cpuEl.className = 'stat-value ' + (d.cpu > 80 ? 'err' : d.cpu > 65 ? 'warn' : 'ok');
             }
+            if (d.gpu !== undefined) {
+                const gpuEl = document.getElementById('gpu-stat');
+                gpuEl.textContent = (d.gpu || '—') + '°';
+                gpuEl.className = 'stat-value ' + (d.gpu > 80 ? 'err' : d.gpu > 65 ? 'warn' : 'ok');
+            }
+            if (d.alerts && d.alerts.length > 0) {
+                d.alerts.forEach(alert => {
+                    addFeedItem('SECURITY ALERT', alert, 'alert');
+                });
+            }
+            if (d.kb_count !== undefined) {
+                document.getElementById('kb-count').textContent = d.kb_count;
+            }
+        } catch (e) {
+            document.getElementById('system-dot').classList.add('inactive');
+            document.getElementById('system-status').textContent = 'Server Offline';
         }
+    }
+    setInterval(pollStats, 5000);
+    pollStats();
 
-        function addFeedItem(type, msg, isAlert = false) {
-            const feed = document.getElementById('intel-feed');
-            const div = document.createElement('div');
-            div.className = `p-4 ${isAlert ? 'bg-red-900/30 border-red-500/50' : 'bg-slate-800/30 border-slate-700/30'} rounded-xl border text-sm animate-fade-in`;
-            div.innerHTML = `<p class="text-xs ${isAlert ? 'text-red-400' : (type === 'USER' ? 'text-purple-400' : 'text-cyan-400')} font-bold mb-1">${type} AT ${new Date().toLocaleTimeString()}</p>
-                             <p class="${isAlert ? 'text-red-200' : 'text-slate-400'}">${msg.substring(0, 150)}${msg.length > 150 ? '...' : ''}</p>`;
-            feed.prepend(div);
-        }
+    // ─── Utility ─────────────────────────────────────────────────────────
+    function escapeHtml(str) {
+        const d = document.createElement('div');
+        d.appendChild(document.createTextNode(str));
+        return d.innerHTML;
+    }
 
-        // Auto-refresh stats
-        setInterval(async () => {
-            try {
-                const res = await axios.get('/stats');
-                document.getElementById('cpu-stat').innerText = (res.data.cpu || 'N/A') + "°C CPU";
-                document.getElementById('gpu-stat').innerText = (res.data.gpu || 'N/A') + "°C GPU";
-                
-                // Handle Alerts
-                if (res.data.alerts && res.data.alerts.length > 0) {
-                    res.data.alerts.forEach(alert => {
-                        addFeedItem("SECURITY ALERT", alert, true);
-                    });
-                }
-            } catch (err) {}
-        }, 5000);
-    </script>
+    // Focus input on load
+    document.getElementById('command-input').focus();
+</script>
 </body>
 </html>
