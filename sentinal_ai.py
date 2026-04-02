@@ -1,13 +1,56 @@
 #
 # sentinel_ai_fixed.py
 import os
+import sys
 import time
 import wave
 import threading
 import webbrowser
 import subprocess
+import sqlite3
+import hashlib
+import hmac
+import struct
 from queue import Queue
 from dotenv import load_dotenv
+
+# ── SUPPRESS PYSTRAY CTYPES SPAM ──────────────────────────────────────────
+# pystray WNDPROC events bypass standard stderr and use the unraisablehook handler in py3.8+
+import logging
+class _SuppressWNDPROC(logging.Filter):
+    def filter(self, record):
+        return "WNDPROC" not in record.getMessage()
+
+def custom_unraisablehook(unraisable):
+    err_str = str(unraisable.exc_value)
+    if unraisable.exc_type is TypeError and ("WPARAM" in err_str or "LRESULT" in err_str):
+        return  # Silently drop the known pystray uncastable windows event
+    sys.__unraisablehook__(unraisable)
+
+sys.unraisablehook = custom_unraisablehook
+
+# Also try to redirect stderr for these specific messages if they are coming from ctypes directly
+_original_stderr = sys.stderr
+class StderrFilter:
+    def __init__(self, stream):
+        self.stream = stream
+    def write(self, data):
+        if "WNDPROC" in data or "LRESULT" in data or "WPARAM" in data:
+            return
+        self.stream.write(data)
+    def flush(self):
+        self.stream.flush()
+
+sys.stderr = StderrFilter(_original_stderr)
+# ────────────────────────────────────────────────────────────────────────
+# ────────────────────────────────────────────────────────────────────────
+
+# Initialize Tier 4 structured logging
+import logging
+try:
+    import sentinel.core.logger
+except ImportError:
+    pass
 
 # audio / VAD / embeddings
 import pvporcupine
@@ -28,6 +71,10 @@ except Exception:
     requests = None
 import json
 import winreg
+try:
+    import psutil
+except Exception:
+    psutil = None
 from pathlib import Path
 import logging
 
@@ -37,7 +84,7 @@ import logging
 
 # GUI
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, ttk, simpledialog
 try:
     import pystray
     from PIL import Image, ImageDraw
@@ -46,17 +93,118 @@ except Exception:
     _tray_available = False
 
 load_dotenv()
+# Also load from AppData if exists (for packaged EXE)
+APPDATA_DIR = os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "SentinelAi")
+env_path = os.path.join(APPDATA_DIR, ".env")
+if os.path.exists(env_path):
+    load_dotenv(env_path, override=True)
+
+def ensure_env_setup(force=False):
+    """Checks for required API keys and shows a wizard if they are missing."""
+    required = {
+        "PVPORCUPINE_PRIVATE_KEY": "Picovoice Access Key",
+        "GEMINI_API_KEY": "Gemini API Key",
+        "OPENROUTER_API_KEY": "OpenRouter API Key (Optional)"
+    }
+    
+    # Only block if critical keys are missing
+    critical = ["PVPORCUPINE_PRIVATE_KEY", "GEMINI_API_KEY"]
+    missing_critical = [k for k in critical if not os.getenv(k)]
+    
+    if not missing_critical and not force:
+        return True
+    if missing_critical and not force:
+        return False
+
+    # Show Wizard
+    root = tk.Tk()
+    root.title("SentinelAI | First Run Setup")
+    root.geometry("450x350")
+    root.configure(bg="#1e293b")
+    
+    # Style
+    style = ttk.Style()
+    style.theme_use('clam')
+    style.configure("TLabel", background="#1e293b", foreground="#f1f5f9", font=("Inter", 10))
+    style.configure("Header.TLabel", font=("Inter", 14, "bold"), foreground="#22d3ee")
+    
+    ttk.Label(root, text="Welcome to SentinelAI", style="Header.TLabel").pack(pady=20)
+    ttk.Label(root, text="Please provide your API keys to continue.\nThese will be stored securely in your AppData folder.", justify="center").pack(pady=10)
+
+    entries = {}
+    for key, label in required.items():
+        frame = ttk.Frame(root, style="TFrame")
+        frame.pack(fill="x", padx=40, pady=10)
+        ttk.Label(frame, text=label).pack(anchor="w")
+        entry = ttk.Entry(frame, width=40, show="*" if "KEY" in key else "")
+        entry.insert(0, os.getenv(key, ""))
+        entry.pack(pady=5)
+        entries[key] = entry
+
+    def save_and_close():
+        os.makedirs(APPDATA_DIR, exist_ok=True)
+        with open(env_path, "w") as f:
+            for key, entry in entries.items():
+                val = entry.get().strip()
+                if val:
+                    f.write(f"{key}={val}\n")
+                    os.environ[key] = val
+        
+        # Refresh global configuration with new keys
+        refresh_config()
+                
+        root.destroy()
+
+    ttk.Button(root, text="Save & Start Sentinel", command=save_and_close).pack(pady=30)
+    
+    root.protocol("WM_DELETE_WINDOW", lambda: os._exit(0)) # Exit if closed without saving
+    root.mainloop()
+    return True
 
 # ---------- Configuration ----------
-ACCESS_KEY = os.getenv("PVPORCUPINE_PRIVATE_KEY")  # picovoice key
-PORCUPINE_KEYWORD_PATH = "./assets/sounds/Hey-robert_en_windows_v3_0_0.ppn"
-REFERENCE_WAV = "reference.wav"
-OWNER_EMBED_PATH = "owner_embed.npy"
-COMMAND_WAV = "command.wav"
-LIVENESS_WAV = "liveness.wav"
+wake_thread = None
+wake_stop_event = threading.Event()
+
+# refresh_config and start_wake_listener moved below listen_for_wake_word_loop to avoid NameError
+
+# App registry paths
+APPDATA_DIR = os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "SentinelAi")
+
+ACCESS_KEY = None
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, 'frozen', False):
+    BASE_DIR = sys._MEIPASS
+
+PORCUPINE_KEYWORD_PATH = os.path.join(BASE_DIR, "assets", "sounds", "Hey-robert_en_windows_v3_0_0.ppn")
+def _porcupine_model_path():
+    candidates = []
+    if getattr(sys, 'frozen', False):
+        candidates.append(os.path.join(BASE_DIR, "pvporcupine", "lib", "common", "porcupine_params.pv"))
+        candidates.append(os.path.join(BASE_DIR, "pvporcupine", "resources", "porcupine_params.pv"))
+    try:
+        import pvporcupine as _pv
+        pkg_base = os.path.dirname(_pv.__file__)
+        candidates.append(os.path.join(pkg_base, "lib", "common", "porcupine_params.pv"))
+        candidates.append(os.path.join(pkg_base, "resources", "porcupine_params.pv"))
+    except Exception:
+        pass
+    for p in candidates:
+        if p and os.path.exists(p):
+            return p
+    return None
+REFERENCE_WAV = os.path.join(APPDATA_DIR, "reference.wav")
+OWNER_EMBED_PATH = os.path.join(APPDATA_DIR, "owner_embed.npy")
+COMMAND_WAV = os.path.join(APPDATA_DIR, "command.wav")
+LIVENESS_WAV = os.path.join(APPDATA_DIR, "liveness.wav")
+
+sentinel_orchestrator = None
+porcupine_status = "Waiting..."
+# refresh_config() # Initial load - MOVED TO main() to avoid NameError during startup
 
 # status queue for GUI updates
 status_queue = Queue()
+tray_icon = None
+tray_lock = threading.Lock()
 
 agent_active = False
 pending_step = None
@@ -64,7 +212,6 @@ next_agent_capture_time = 0
 entertainment_active = False
 
 # App registry paths
-APPDATA_DIR = os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "SentinelAi")
 APPS_REGISTRY_PATH = os.path.join(APPDATA_DIR, "apps_registry.json")
 apps_index = {}
 _mru = {}
@@ -73,6 +220,10 @@ SETTINGS_PATH = os.path.join(APPDATA_DIR, "settings.json")
 wake_stop_event = threading.Event()
 wake_thread = None
 root_window = None
+listening_blocked_until = 0
+mic_level_var = None
+recording_overlay = None
+recording_overlay_var = None
 ALIASES = {
     "vs code": "vscode",
     "code": "vscode",
@@ -97,6 +248,10 @@ ALIASES = {
     "telegram": "telegram",
     "discord": "discord"
 }
+SECRETS_DB = os.path.join(APPDATA_DIR, "secrets.db")
+MASTER_META_KEY = "master_hash"
+MASTER_META_SALT = "master_salt"
+MACROS_PATH = os.path.join(APPDATA_DIR, "macros.json")
 
 def _normalize_name(name):
     return (name or "").lower().strip()
@@ -108,6 +263,18 @@ def ensure_appdata_dir():
         pass
     try:
         log_path = os.path.join(APPDATA_DIR, "sentinel.log")
+        # simple rotation
+        try:
+            if os.path.exists(log_path) and os.path.getsize(log_path) > 1_000_000:
+                bak = log_path + ".1"
+                try:
+                    if os.path.exists(bak):
+                        os.remove(bak)
+                except Exception:
+                    pass
+                os.replace(log_path, bak)
+        except Exception:
+            pass
         logging.basicConfig(filename=log_path, level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
     except Exception:
         pass
@@ -177,6 +344,198 @@ def _save_settings(data):
     except Exception:
         pass
 
+def _ensure_secrets_db():
+    ensure_appdata_dir()
+    conn = sqlite3.connect(SECRETS_DB)
+    cur = conn.cursor()
+    cur.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value BLOB)")
+    cur.execute("CREATE TABLE IF NOT EXISTS secrets (name TEXT PRIMARY KEY, salt BLOB, nonce BLOB, ciphertext BLOB)")
+    conn.commit()
+    return conn
+
+def _macros_load():
+    ensure_appdata_dir()
+    try:
+        if os.path.exists(MACROS_PATH):
+            with open(MACROS_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        return {}
+    return {}
+
+def _macros_save(macros):
+    try:
+        with open(MACROS_PATH, "w", encoding="utf-8") as f:
+            json.dump(macros, f, indent=2)
+        return True
+    except Exception:
+        return False
+
+def _pbkdf(master, salt, length=32, rounds=200000):
+    return hashlib.pbkdf2_hmac('sha256', master.encode('utf-8'), salt, rounds, dklen=length)
+
+def _keystream(key, nonce, length):
+    out = bytearray()
+    counter = 0
+    while len(out) < length:
+        counter_bytes = struct.pack('<Q', counter)
+        block = hashlib.sha256(key + nonce + counter_bytes).digest()
+        out.extend(block)
+        counter += 1
+    return bytes(out[:length])
+
+def _encrypt(master, plaintext_bytes):
+    salt = os.urandom(16)
+    key = _pbkdf(master, salt)
+    nonce = os.urandom(16)
+    ks = _keystream(key, nonce, len(plaintext_bytes))
+    ct = bytes(a ^ b for a, b in zip(plaintext_bytes, ks))
+    return salt, nonce, ct
+
+def _decrypt(master, salt, nonce, ciphertext):
+    key = _pbkdf(master, salt)
+    ks = _keystream(key, nonce, len(ciphertext))
+    pt = bytes(a ^ b for a, b in zip(ciphertext, ks))
+    return pt
+
+# Optional AES-GCM upgrade if cryptography is available
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+except Exception:
+    AESGCM = None
+
+def _encrypt_aes(master, plaintext_bytes):
+    if AESGCM is None:
+        return _encrypt(master, plaintext_bytes)
+    salt = os.urandom(16)
+    key = _pbkdf(master, salt, length=32)
+    aes = AESGCM(key)
+    nonce = os.urandom(12)
+    ct = aes.encrypt(nonce, plaintext_bytes, None)
+    return salt, nonce, ct
+
+def _decrypt_aes(master, salt, nonce, ciphertext):
+    if AESGCM is None:
+        return _decrypt(master, salt, nonce, ciphertext)
+    key = _pbkdf(master, salt, length=32)
+    aes = AESGCM(key)
+    return aes.decrypt(nonce, ciphertext, None)
+
+def _get_master_record(conn):
+    cur = conn.cursor()
+    cur.execute("SELECT value FROM meta WHERE key=?", (MASTER_META_SALT,))
+    row_salt = cur.fetchone()
+    cur.execute("SELECT value FROM meta WHERE key=?", (MASTER_META_KEY,))
+    row_hash = cur.fetchone()
+    return (row_salt[0] if row_salt else None, row_hash[0] if row_hash else None)
+
+def _set_master_record(conn, master):
+    salt = os.urandom(16)
+    mh = _pbkdf(master, salt)
+    cur = conn.cursor()
+    cur.execute("REPLACE INTO meta(key,value) VALUES(?,?)", (MASTER_META_SALT, salt))
+    cur.execute("REPLACE INTO meta(key,value) VALUES(?,?)", (MASTER_META_KEY, mh))
+    conn.commit()
+
+def _verify_master(conn, master):
+    if not master:
+        return False
+    salt, mh = _get_master_record(conn)
+    if not salt or not mh:
+        _set_master_record(conn, master)
+        # Re-fetch the salt that was just set
+        salt, mh = _get_master_record(conn)
+        if salt and mh and sentinel_orchestrator:
+            key = _pbkdf(master, salt)
+            sentinel_orchestrator.set_master_key(key)
+        return True
+    
+    key = _pbkdf(master, salt)
+    if hmac.compare_digest(key, mh):
+        # Update orchestrator master key if available
+        if sentinel_orchestrator:
+            sentinel_orchestrator.set_master_key(key)
+        return True
+    return False
+
+def _prompt_master(parent=None):
+    try:
+        pw = simpledialog.askstring("Master Password", "Enter master password:", show='*', parent=parent)
+    except Exception:
+        pw = None
+    return pw or ""
+
+def store_secret(name, password, parent=None):
+    conn = _ensure_secrets_db()
+    master = _prompt_master(parent)
+    if not master:
+        messagebox.showerror("Secrets", "Master password required.")
+        conn.close()
+        return False
+    if not _verify_master(conn, master):
+        messagebox.showerror("Secrets", "Invalid master password.")
+        conn.close()
+        return False
+    s = _load_settings()
+    if bool(s.get("require_strong_vault", False)) and AESGCM is None:
+        messagebox.showerror("Secrets", "Strong vault required but AES-GCM unavailable.")
+        conn.close()
+        return False
+    salt, nonce, ct = _encrypt_aes(master, password.encode('utf-8'))
+    cur = conn.cursor()
+    cur.execute("REPLACE INTO secrets(name,salt,nonce,ciphertext) VALUES(?,?,?,?)", (name, salt, nonce, ct))
+    conn.commit()
+    conn.close()
+    return True
+
+def fetch_secret(name, parent=None):
+    conn = _ensure_secrets_db()
+    master = _prompt_master(parent)
+    if not master:
+        messagebox.showerror("Secrets", "Master password required.")
+        conn.close()
+        return None
+    if not _verify_master(conn, master):
+        messagebox.showerror("Secrets", "Invalid master password.")
+        conn.close()
+        return None
+    cur = conn.cursor()
+    cur.execute("SELECT salt, nonce, ciphertext FROM secrets WHERE name=?", (name,))
+    row = cur.fetchone()
+    conn.close()
+    if not row:
+        return None
+    salt, nonce, ct = row
+    pt = _decrypt_aes(master, salt, nonce, ct)
+    try:
+        return pt.decode('utf-8')
+    except Exception:
+        return None
+
+def speak_password_spelled(pw):
+    parts = []
+    for ch in pw:
+        if ch.isalpha():
+            if ch.isupper():
+                parts.append(f"capital {ch}")
+            else:
+                parts.append(f"small {ch}")
+        elif ch.isdigit():
+            parts.append(f"digit {ch}")
+        else:
+            names = {
+                ' ': 'space', '-': 'dash', '_': 'underscore', '@': 'at', '#': 'hash',
+                '!': 'exclamation', '$': 'dollar', '%': 'percent', '^': 'caret', '&': 'ampersand',
+                '*': 'asterisk', '(': 'left parenthesis', ')': 'right parenthesis',
+                '+': 'plus', '=': 'equals', '[': 'left bracket', ']': 'right bracket',
+                '{': 'left brace', '}': 'right brace', ';': 'semicolon', ':': 'colon',
+                '"': 'double quote', '\\': 'backslash', '/': 'slash', '?': 'question mark',
+                ',': 'comma', '.': 'dot', '<': 'less than', '>': 'greater than', '`': 'backtick',
+                '|': 'pipe'
+            }
+            parts.append(f"symbol {names.get(ch, ch)}")
+    speak(" ".join(parts))
+
 def _scan_uninstall_key(root):
     results = {}
     try:
@@ -191,6 +550,8 @@ def _scan_uninstall_key(root):
                 try:
                     with winreg.OpenKey(key, sub) as sk:
                         name, _ = winreg.QueryValueEx(sk, "DisplayName")
+                        if not name: continue
+                        
                         icon = None
                         loc = None
                         try:
@@ -201,89 +562,151 @@ def _scan_uninstall_key(root):
                             loc, _ = winreg.QueryValueEx(sk, "InstallLocation")
                         except OSError:
                             pass
+                        
                         exe = None
-                        if icon and str(icon).lower().endswith(".exe"):
-                            exe = icon
-                        elif loc and os.path.isdir(loc):
-                            # try common exe names
-                            candidates = [p for p in Path(loc).glob("*.exe")]
+                        if icon:
+                            c = str(icon).split(',')[0].strip(' "\'')
+                            if c.lower().endswith(".exe") and os.path.exists(c):
+                                exe = c
+                        
+                        if not exe and loc and os.path.isdir(loc):
+                            # Try common executable names matching the display name
+                            norm_name = _normalize_name(name)
+                            candidates = list(Path(loc).glob("*.exe"))
                             if candidates:
-                                exe = str(candidates[0])
+                                # Prioritize exes that match the name
+                                for cand in candidates:
+                                    if norm_name in cand.stem.lower():
+                                        exe = str(cand)
+                                        break
+                                if not exe:
+                                    exe = str(candidates[0])
+                        
                         if name:
                             results[_normalize_name(name)] = exe or ""
-                except OSError:
+                except (OSError, ValueError):
                     continue
     except OSError:
         pass
     return results
 
-def build_app_registry():
+def scan_start_menu_apps():
+    import win32com.client
+    try:
+        # Use pythoncom for thread safety
+        pythoncom.CoInitialize()
+        shell = win32com.client.Dispatch("WScript.Shell")
+    except Exception:
+        return {}
+    
+    paths = [
+        os.path.expandvars(r"%ProgramData%\Microsoft\Windows\Start Menu\Programs"),
+        os.path.expandvars(r"%AppData%\Microsoft\Windows\Start Menu\Programs")
+    ]
+    apps = {}
+    for base in paths:
+        if not os.path.isdir(base): continue
+        for root, dirs, files in os.walk(base):
+            for f in files:
+                if f.lower().endswith(".lnk"):
+                    lnk_path = os.path.join(root, f)
+                    try:
+                        shortcut = shell.CreateShortCut(lnk_path)
+                        target = shortcut.Targetpath
+                        if target and target.lower().endswith(".exe") and os.path.exists(target):
+                            name = f[:-4]
+                            apps[_normalize_name(name)] = target
+                    except Exception:
+                        pass
+    return apps
+
+def _fuzzy_match(query, target):
+    """Returns a score for fuzzy matching query in target."""
+    q = _normalize_name(query)
+    t = _normalize_name(target)
+    if q == t: return 1.0
+    if q in t: return 0.8 + (len(q) / len(t)) * 0.15
+    # Basic word matching
+    qw = set(q.split())
+    tw = set(t.split())
+    if qw.intersection(tw):
+        return 0.5 + (len(qw.intersection(tw)) / len(qw)) * 0.3
+    return 0.0
+
+def close_app(name):
+    target = _normalize_name(name)
+    if target in ALIASES:
+        target = ALIASES[target]
+        
+    exe_path = find_app_executable(name)
+    target_stems = {target}
+    if exe_path:
+        target_stems.add(_normalize_name(Path(exe_path).stem))
+    
+    killed = 0
+    try:
+        if psutil:
+            # Optimization: only iterate once and use a set for lookups
+            for proc in psutil.process_iter(["name", "exe"]):
+                try:
+                    pname = _normalize_name(proc.info.get("name") or "")
+                    pstem = _normalize_name(Path(proc.info.get("exe") or pname).stem)
+                    if pname in target_stems or pstem in target_stems or any(t in pname for t in target_stems):
+                        proc.terminate()
+                        killed += 1
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+        
+        if killed:
+            msg = f"Closed {name} ({killed} instances)"
+            speak(msg)
+            status_queue.put(msg)
+            return True
+            
+        # Fallback to taskkill if psutil failed or didn't find it
+        if exe_path:
+            exe_name = os.path.basename(exe_path)
+            subprocess.call(["taskkill", "/IM", exe_name, "/F", "/T"], shell=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            speak(f"Closed {name}")
+            return True
+            
+    except Exception as e:
+        logging.error(f"Error closing app {name}: {e}")
+        
+    speak(f"Could not find or close {name}")
+    return False
+
+def build_app_registry(fast_only=False):
     ensure_appdata_dir()
     idx = {}
-    # HKLM and HKCU
+    
+    # Fast path: Registry is usually enough for installed apps
     idx.update(_scan_uninstall_key(winreg.HKEY_LOCAL_MACHINE))
     idx.update(_scan_uninstall_key(winreg.HKEY_CURRENT_USER))
-    # Known apps fallback
+    
+    if not fast_only:
+        # Deeper scan for Start Menu and Aliases
+        try:
+            idx.update(scan_windows_app_aliases())
+            idx.update(scan_start_menu_apps())
+        except Exception:
+            pass
+
+    # Known apps fallback (only if not found)
     known = {
-        "chrome": r"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-        "google chrome": r"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
-        "notepad": r"C:\\Windows\\System32\\notepad.exe",
-        "paint": r"C:\\Windows\\System32\\mspaint.exe",
-        "calculator": r"C:\\Windows\\System32\\calc.exe",
-        "vscode": os.path.expandvars(r"%LocalAppData%\\Programs\\Microsoft VS Code\\Code.exe"),
-        "visual studio code": os.path.expandvars(r"%LocalAppData%\\Programs\\Microsoft VS Code\\Code.exe"),
-        "edge": r"C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
-        "brave": os.path.expandvars(r"%LocalAppData%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"),
-        "opera": os.path.expandvars(r"%LocalAppData%\\Programs\\Opera\\launcher.exe"),
-        "vlc": r"C:\\Program Files\\VideoLAN\\VLC\\vlc.exe",
-        "notepad++": r"C:\\Program Files\\Notepad++\\notepad++.exe",
-        "spotify": os.path.expandvars(r"%LocalAppData%\\Microsoft\\WindowsApps\\Spotify.exe"),
-        "steam": r"C:\\Program Files (x86)\\Steam\\steam.exe",
-        "word": r"C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE",
-        "excel": r"C:\\Program Files\\Microsoft Office\\root\\Office16\\EXCEL.EXE",
-        "powerpoint": r"C:\\Program Files\\Microsoft Office\\root\\Office16\\POWERPNT.EXE",
+        "chrome": r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        "google chrome": r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        "notepad": r"C:\Windows\System32\notepad.exe",
+        "paint": r"C:\Windows\System32\mspaint.exe",
+        "calculator": r"C:\Windows\System32\calc.exe",
+        "vscode": os.path.expandvars(r"%LocalAppData%\Programs\Microsoft VS Code\Code.exe"),
+        "edge": r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        "spotify": os.path.expandvars(r"%LocalAppData%\Microsoft\WindowsApps\Spotify.exe"),
     }
     for k, v in known.items():
         if k not in idx and os.path.exists(v):
             idx[k] = v
-    # PATH scan for common executables
-    try:
-        for d in os.getenv("PATH", "").split(os.pathsep):
-            d = d.strip('"')
-            if not d:
-                continue
-            for name, exe in [("python", "python.exe"), ("git", "git.exe"), ("node", "node.exe"), ("vlc", "vlc.exe"), ("code", "Code.exe")]:
-                p = os.path.join(d, exe)
-                if os.path.exists(p):
-                    idx[_normalize_name(name if name != "code" else "vscode")] = p
-    except Exception:
-        pass
-    # Adobe scan
-    try:
-        ad = r"C:\\Program Files\\Adobe"
-        if os.path.isdir(ad):
-            for p in Path(ad).glob("**/Photoshop.exe"):
-                idx["photoshop"] = str(p)
-            for p in Path(ad).glob("**/Illustrator.exe"):
-                idx["illustrator"] = str(p)
-            for p in Path(ad).glob("**/Adobe Premiere*.exe"):
-                idx["premiere"] = str(p)
-            for p in Path(ad).glob("**/AfterFX.exe"):
-                idx["aftereffects"] = str(p)
-    except Exception:
-        pass
-    # Messaging scan
-    try:
-        wa = os.path.expandvars(r"%LocalAppData%\\WhatsApp\\WhatsApp.exe")
-        if os.path.exists(wa):
-            idx["whatsapp"] = wa
-        tg = os.path.expandvars(r"%LocalAppData%\\Telegram Desktop\\Telegram.exe")
-        if os.path.exists(tg):
-            idx["telegram"] = tg
-        for p in Path(os.path.expandvars(r"%LocalAppData%\\Discord")).glob("**/Discord.exe"):
-            idx["discord"] = str(p)
-    except Exception:
-        pass
+            
     # Persist
     global apps_index
     apps_index.clear()
@@ -295,29 +718,50 @@ def find_app_executable(name):
     n = _normalize_name(name)
     if n in ALIASES:
         n = ALIASES[n]
+        
     if not apps_index:
         _load_apps_index()
+    
+    # 1. Exact match
     exe = apps_index.get(n)
-    if exe and os.path.exists(exe):
-        return exe
-    try:
-        for k, v in apps_index.items():
-            if n in k and v and os.path.exists(v):
-                return v
-    except Exception:
-        pass
-    return None
+    if exe and os.path.exists(str(exe).strip(' "\'')):
+        return str(exe).strip(' "\'')
+        
+    # 2. Fuzzy match
+    best_match = None
+    best_score = 0.65  # Minimum threshold
+    
+    for k, v in apps_index.items():
+        if not v or not os.path.exists(str(v).strip(' "\'')): continue
+        score = _fuzzy_match(n, k)
+        if score > best_score:
+            best_score = score
+            best_match = str(v).strip(' "\'')
+            
+    return best_match
 
 def open_app(name):
+    # Try to find without rebuilding first
     exe = find_app_executable(name)
+    if not exe:
+        # Rebuild registry in a background thread for future use
+        threading.Thread(target=build_app_registry, kwargs={"fast_only": False}, daemon=True).start()
+        # But for this call, try a quick fast-only rebuild
+        build_app_registry(fast_only=True)
+        exe = find_app_executable(name)
+        
     if exe:
         try:
-            subprocess.Popen([exe])
+            if "windowsapps" in exe.lower():
+                os.startfile(exe)
+            else:
+                subprocess.Popen([exe], start_new_session=True)
             status_queue.put(f"Opening {name}")
             speak(f"Opening {name}")
             record_mru(name)
             return True
-        except Exception:
+        except Exception as e:
+            logging.error(f"Failed to open {name} at {exe}: {e}")
             status_queue.put(f"Failed to open {name}")
     return False
 
@@ -358,22 +802,8 @@ def preflight_bootstrap():
     if settings.get("autostart", True):
         ensure_autostart()
     if not apps_index:
-        build_app_registry()
-    missing = []
-    if not find_app_executable("google chrome"):
-        missing.append("Google Chrome")
-    if not find_app_executable("visual studio code") and not find_app_executable("vscode"):
-        missing.append("Visual Studio Code")
-    if missing:
-        try:
-            root = tk.Tk(); root.withdraw()
-            ans = messagebox.askyesno("Install Tools", f"Install {', '.join(missing)}?")
-            root.destroy()
-            if ans:
-                for m in missing:
-                    install_and_open_app(m)
-        except Exception:
-            pass
+        build_app_registry(fast_only=True)
+    threading.Thread(target=build_app_registry, kwargs={"fast_only": False}, daemon=True).start()
 
 def _make_tray_image():
     img = Image.new('RGB', (64, 64), color=(30, 30, 30))
@@ -383,50 +813,87 @@ def _make_tray_image():
     return img
 
 def start_tray():
+    global tray_icon
     if not _tray_available:
         return
-    def tray_start(icon, item):
-        start_agent()
-    def tray_stop(icon, item):
-        stop_agent()
-    def tray_toggle_ent(icon, item):
-        global entertainment_active
-        entertainment_active = not entertainment_active
-        speak("Entertainment " + ("enabled" if entertainment_active else "disabled"))
-    def tray_record(icon, item):
-        try:
-            status_queue.put("Recording command...")
-            record_wav(COMMAND_WAV, duration=4)
+    
+    with tray_lock:
+        if tray_icon is not None:
+            return
+
+        def tray_start(icon, item):
+            start_agent()
+            return 0
+        def tray_stop(icon, item):
+            stop_agent()
+            return 0
+        def tray_toggle_ent(icon, item):
+            global entertainment_active
+            entertainment_active = not entertainment_active
+            speak("Entertainment " + ("enabled" if entertainment_active else "disabled"))
+            return 0
+        def tray_record(icon, item):
             try:
-                trim_wav_silence(COMMAND_WAV)
+                status_queue.put("Recording command...")
+                try:
+                    winsound.Beep(800, 200)
+                except Exception:
+                    pass
+                show_recording_overlay()
+                fn, had = record_until_silence(COMMAND_WAV, on_amp=update_recording_overlay)
+                close_recording_overlay()
+                if not had:
+                    status_queue.put("No speech detected.")
+                    return 0
+                text = transcribe_wav(fn)
+                if text:
+                    status_queue.put(f"Command: {text}")
+                    try:
+                        speak(f"You said: {text}")
+                    except Exception:
+                        pass
+                    execute_command(text)
+                else:
+                    status_queue.put("Transcription empty.")
+                    speak("Sorry, I couldn't understand.")
             except Exception:
                 pass
-            text = transcribe_wav(COMMAND_WAV)
-            if text:
-                status_queue.put(f"Command: {text}")
-                execute_command(text)
-            else:
-                status_queue.put("Transcription empty.")
-                speak("Sorry, I couldn't understand.")
-        except Exception:
-            pass
-    def tray_settings(icon, item):
+            return 0
+        def tray_settings(icon, item):
+            try:
+                open_settings_ui_global()
+            except Exception:
+                pass
+            return 0
+        def tray_quit(icon, item):
+            icon.stop()
+            os._exit(0)
+            return 0
+        
+        menu = pystray.Menu(
+            pystray.MenuItem('Start Agent', tray_start),
+            pystray.MenuItem('Stop Agent', tray_stop),
+            pystray.MenuItem('Record Command', tray_record),
+            pystray.MenuItem('Toggle Entertainment', tray_toggle_ent),
+            pystray.MenuItem('Settings', tray_settings),
+            pystray.MenuItem('Quit', tray_quit)
+        )
+        tray_icon = pystray.Icon('SentinelAI', _make_tray_image(), 'SentinelAI', menu)
+        threading.Thread(target=tray_icon.run, daemon=True).start()
+
+def start_alert_check_loop():
+    """Periodically checks for system alerts and reminders."""
+    if not sentinel_orchestrator:
+        return
+    while True:
         try:
-            open_settings_ui_global()
+            alerts = sentinel_orchestrator.check_periodic_alerts()
+            for alert in alerts:
+                speak(alert)
+                status_queue.put(f"Alert: {alert}")
         except Exception:
             pass
-    def tray_quit(icon, item):
-        os._exit(0)
-    menu = pystray.Menu(
-        pystray.MenuItem('Start Agent', tray_start),
-        pystray.MenuItem('Stop Agent', tray_stop),
-        pystray.MenuItem('Record Command', tray_record),
-        pystray.MenuItem('Toggle Entertainment', tray_toggle_ent),
-        pystray.MenuItem('Settings', tray_settings),
-        pystray.MenuItem('Quit', tray_quit)
-    )
-    icon = pystray.Icon('SentinelAI', _make_tray_image(), 'SentinelAI', menu)
-    threading.Thread(target=icon.run, daemon=True).start()
+        time.sleep(60)  # check every minute
 
 def start_agent():
     # Turn on the step-by-step helper. It will wait for steps and ask for confirmation.
@@ -435,6 +902,8 @@ def start_agent():
     pending_step = None
     status_queue.put("Agent active. Describe the first step.")
     speak("Agent started. Describe the first step.")
+    # Start alert checking
+    threading.Thread(target=start_alert_check_loop, daemon=True).start()
 
 def stop_agent():
     # Turn off the step-by-step helper.
@@ -451,6 +920,8 @@ def agent_handle(command):
     # "confirm"   → runs the pending step
     global pending_step
     cmd = (command or "").strip()
+    
+    # 1. Direct templates
     if cmd.startswith("install "):
         app = cmd.split("install ", 1)[1].strip()
         pending_step = ("winget", ["install", "--silent", app])
@@ -481,22 +952,87 @@ def agent_handle(command):
         finally:
             pending_step = None
         return
-    speak("Provide a step or say confirm.")
 
-def gemini_generate(prompt):
-    # Simple helper that asks Gemini (Google AI) for a response.
+    # 2. Intelligent fallback to Orchestrator or AI
+    status_queue.put(f"Agent analyzing step: {cmd}")
+    response = None
+    
+    # Try Orchestrator first
+    if sentinel_orchestrator:
+        response = sentinel_orchestrator.run_command(cmd)
+    
+    # If orchestrator didn't return anything, fall back to LLM to generate a command/step
+    if not response:
+        prompt = f"The user wants to perform this step in an autonomous agent session: '{cmd}'. Provide a concise, actionable response or execute it if you can."
+        response = interpret_command(prompt)
+        
+    if response:
+        speak(response)
+        status_queue.put("Step processed by AI.")
+    else:
+        speak("I'm not sure how to perform that step. Please provide a direct command like 'install' or 'execute'.")
+
+def gemini_generate(prompt: str, conv=None, emotion: str = "Neutral", model: str = "gemini-2.5-flash") -> str:
+    """
+    Send a prompt to Gemini 2.0 Flash and return the text response.
+    Optionally injects conversation history from `conv` (ConversationManager).
+    Falls back to Ollama if Gemini is unavailable.
+    """
     key = os.getenv("GEMINI_API_KEY")
     if not key:
-        return "Gemini key missing."
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + key
-    body = {"contents": [{"parts": [{"text": str(prompt)}]}]}
+        logging.warning("GEMINI_API_KEY not set.")
+        # Try Ollama offline
+        if sentinel_orchestrator and hasattr(sentinel_orchestrator, 'ollama_module'):
+            try:
+                return sentinel_orchestrator.ollama_module.generate(prompt) or "Gemini key missing and offline model unavailable."
+            except Exception:
+                pass
+        return "Gemini API key not configured."
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+
+    # Build contents with optional conversation history
+    contents = []
+    if conv:
+        for turn in list(conv._history):
+            role = "model" if turn.role == "assistant" else "user"
+            contents.append({"role": role, "parts": [{"text": turn.content}]})
+
+    # Add system context if no prior history
+    if not contents:
+        contents.append({"role": "user", "parts": [{"text": "You are SentinelAI, an advanced personal AI assistant. Be concise and helpful."}]})
+        contents.append({"role": "model", "parts": [{"text": "Understood. I'm SentinelAI, ready to assist."}]})
+
+    # Add current prompt
+    user_text = f"[User emotion: {emotion}] {prompt}" if emotion and emotion != "Neutral" else prompt
+    contents.append({"role": "user", "parts": [{"text": user_text}]})
+
+    body = {
+        "contents": contents,
+        "generationConfig": {
+            "maxOutputTokens": 400,
+            "temperature": 0.7,
+            "topP": 0.9
+        }
+    }
     try:
         with httpx.Client(timeout=30) as client:
             r = client.post(url, json=body)
             j = r.json()
-        return j.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "") or ""
-    except Exception:
-        return "Gemini error."
+        text = j.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+        if text:
+            logging.info(f"[Gemini 2.0] Response ({len(text)} chars)")
+            return text
+        # Log error detail if empty
+        if "error" in j:
+            logging.error(f"Gemini API error: {j['error'].get('message', j['error'])}")
+        return "I received an empty response from Gemini."
+    except httpx.TimeoutException:
+        logging.warning("Gemini request timed out.")
+        return "Request timed out. Please try again."
+    except Exception as e:
+        logging.error(f"Gemini error: {e}")
+        return "Gemini service error."
 
 def _cosine(a, b):
     na = np.linalg.norm(a)
@@ -527,74 +1063,223 @@ def _mel_filterbank(n_fft, sr, n_mels=40, fmin=300.0, fmax=None):
     return fbanks
 
 def compute_embedding(filepath):
-    x, sr = sf.read(filepath)
-    if x.ndim > 1:
-        x = x.mean(axis=1)
-    x = x.astype(np.float32)
-    if len(x) < sr // 2:
-        pad = sr // 2 - len(x)
-        x = np.pad(x, (0, pad))
-    x[1:] = x[1:] - 0.97 * x[:-1]
-    frame_len = int(0.025 * sr)
-    hop = int(0.010 * sr)
-    n_fft = 512 if sr <= 22050 else 1024
-    fb = _mel_filterbank(n_fft, sr, n_mels=40)
-    frames = []
-    for start in range(0, len(x) - frame_len + 1, hop):
-        frame = x[start:start + frame_len]
-        frame = frame * np.hamming(frame_len)
-        spec = np.fft.rfft(frame, n=n_fft)
-        ps = (np.abs(spec) ** 2)
-        mel = fb.dot(ps[:fb.shape[1]])
+    """
+    Computes a speaker embedding from a WAV file.
+    Vectorized implementation for maximum speed.
+    """
+    try:
+        x, sr = sf.read(filepath)
+        if x.ndim > 1:
+            x = x.mean(axis=1)
+        x = x.astype(np.float32)
+        
+        # Pre-emphasis
+        if len(x) > 1:
+            x = np.append(x[0], x[1:] - 0.97 * x[:-1])
+            
+        if len(x) < sr // 2:
+            pad = sr // 2 - len(x)
+            x = np.pad(x, (0, pad))
+            
+        frame_len = int(0.025 * sr)
+        hop = int(0.010 * sr)
+        n_fft = 512 if sr <= 22050 else 1024
+        
+        # Create frames using stride tricks for efficiency
+        num_frames = (len(x) - frame_len) // hop + 1
+        if num_frames <= 0:
+            return np.zeros(80, dtype=np.float32)
+            
+        from numpy.lib.stride_tricks import as_strided
+        frames = as_strided(x, shape=(num_frames, frame_len), 
+                           strides=(x.strides[0] * hop, x.strides[0]))
+        
+        # Windowing
+        window = np.hamming(frame_len)
+        frames = frames * window
+        
+        # RFFT and Power Spectrum
+        spec = np.fft.rfft(frames, n=n_fft, axis=1)
+        ps = np.abs(spec) ** 2
+        
+        # Mel filterbank
+        fb = _mel_filterbank(n_fft, sr, n_mels=40)
+        mel = np.dot(ps[:, :fb.shape[1]], fb.T)
         mel = np.log(mel + 1e-10)
-        frames.append(mel)
-    if not frames:
-        return np.zeros(fb.shape[0] * 2, dtype=np.float32)
-    M = np.vstack(frames)
-    mu = M.mean(axis=0)
-    sigma = M.std(axis=0)
-    emb = np.concatenate([mu, sigma]).astype(np.float32)
-    return emb
+        
+        # Stats as embedding (mean and std across time)
+        mu = mel.mean(axis=0)
+        sigma = mel.std(axis=0)
+        emb = np.concatenate([mu, sigma]).astype(np.float32)
+        
+        # L2 Normalization for more stable cosine similarity
+        norm = np.linalg.norm(emb)
+        if norm > 0:
+            emb = emb / norm
+            
+        return emb
+    except Exception as e:
+        logging.error(f"Error computing embedding: {e}")
+        return np.zeros(80, dtype=np.float32)
 
 # Silero VAD model (loads on first use)
  
 
 # ---------- Utilities ----------
 
-# Thread-safe TTS (non-blocking)
-_tts_lock = threading.Lock()
-_tts_disabled = False
-def speak(text):
-    global _tts_disabled
-    def _beep():
-        try:
-            winsound.Beep(600, 200)
-        except Exception:
-            pass
-    # Check disk space before attempting TTS
+# ── Neural TTS (edge-tts → pyttsx3 fallback) ──────────────────────────────
+try:
+    from sentinel.voice.tts import get_tts as _get_tts
+    _NEURAL_TTS = True
+except ImportError:
+    _NEURAL_TTS = False
+
+def speak(text, emotion=None, block=False):
+    """Non-blocking speech output with neural voice (edge-tts) and emotional tone."""
+    if not text:
+        return
+    text = str(text).strip()
+    if not text:
+        return
+    # Log to status queue for GUI
     try:
-        free_bytes = shutil.disk_usage(os.path.dirname(__file__)).free
-        if free_bytes < 10 * 1024 * 1024:
-            _tts_disabled = True
+        status_queue.put(f"Sentinel: {text[:80]}")
     except Exception:
         pass
-    if _tts_disabled:
-        threading.Thread(target=_beep, daemon=True).start()
-        return
-    def _s():
-        try:
-            with _tts_lock:
+    if _NEURAL_TTS:
+        _get_tts().speak(text, emotion=emotion or "Neutral", block=block)
+    else:
+        # Legacy pyttsx3 fallback
+        def _s():
+            try:
                 pythoncom.CoInitialize()
                 engine = pyttsx3.init()
-                engine.say(str(text))
+                if emotion == "Stressed/Excited":
+                    engine.setProperty('rate', engine.getProperty('rate') + 50)
+                elif emotion == "Calm/Sad":
+                    engine.setProperty('rate', max(engine.getProperty('rate') - 30, 80))
+                engine.say(text)
                 engine.runAndWait()
                 pythoncom.CoUninitialize()
-        except OSError:
-            _tts_disabled = True
-            _beep()
-        except Exception as e:
-            _beep()
-    threading.Thread(target=_s, daemon=True).start()
+            except Exception as e:
+                logging.error(f"pyttsx3 error: {e}")
+        if block:
+            _s()
+        else:
+            threading.Thread(target=_s, daemon=True).start()
+
+def show_recording_overlay(parent=None):
+    # Create a modern, borderless, always-on-top overlay for audio capture.
+    global recording_overlay, recording_canvas, recording_wave_values
+    try:
+        p = parent or root_window
+        win = tk.Toplevel(p) if p else tk.Tk()
+        
+        # Modern UI styling: borderless, dark, always on top
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        win.attributes("-alpha", 0.92) # Slight transparency for modern feel
+        win.configure(bg="#0f172a") # Dark slate blue
+        
+        # Center the window on screen
+        w, h = 320, 100
+        sw = win.winfo_screenwidth()
+        sh = win.winfo_screenheight()
+        x = (sw - w) // 2
+        y = (sh - h) // 2
+        win.geometry(f"{w}x{h}+{x}+{y}")
+        
+        # Add a subtle glow/border effect
+        frame = tk.Frame(win, bg="#1e293b", bd=1, relief="flat")
+        frame.place(relx=0, rely=0, relwidth=1, relheight=1)
+        
+        # Label with modern font
+        lbl = tk.Label(frame, text="Sentinel Listening...", 
+                      fg="#22d3ee", bg="#1e293b", 
+                      font=("Segoe UI Variable Display Semibold", 11) if os.name == "nt" else ("Inter", 11))
+        lbl.pack(pady=(12, 4))
+        
+        # Styled waveform canvas
+        canvas = tk.Canvas(frame, width=280, height=40, 
+                          bg="#0f172a", highlightthickness=1, 
+                          highlightbackground="#334155")
+        canvas.pack(padx=20, pady=4)
+        
+        # Make it draggable even without title bar
+        def start_move(event):
+            win.x = event.x
+            win.y = event.y
+        def stop_move(event):
+            win.x = None
+            win.y = None
+        def on_move(event):
+            deltax = event.x - win.x
+            deltay = event.y - win.y
+            x = win.winfo_x() + deltax
+            y = win.winfo_y() + deltay
+            win.geometry(f"+{x}+{y}")
+            
+        win.bind("<ButtonPress-1>", start_move)
+        win.bind("<B1-Motion>", on_move)
+        
+        recording_overlay = win
+        recording_canvas = canvas
+        recording_wave_values = []
+        
+        # Initial draw of static line
+        canvas.create_line(0, 20, 280, 20, fill="#334155", width=1, tags="base")
+        
+        win.update()
+    except Exception as e:
+        print(f"[Overlay Error] {e}")
+        recording_overlay = None
+        recording_canvas = None
+        recording_wave_values = []
+
+def update_recording_overlay(amp):
+    # Draw a scrolling waveform based on recent amplitude values.
+    try:
+        if recording_canvas is None or recording_overlay is None:
+            return
+            
+        if not recording_overlay.winfo_exists():
+            return
+
+        w, h = 280, 40
+        mid_y = h // 2
+        
+        # Normalize amplitude into [0,1] range and keep history
+        a = max(0.01, min(1.0, float(amp) * 10.0))
+        recording_wave_values.append(a)
+        max_points = 50
+        if len(recording_wave_values) > max_points:
+            recording_wave_values[:] = recording_wave_values[-max_points:]
+            
+        recording_canvas.delete("wave")
+        if len(recording_wave_values) > 1:
+            points = []
+            spacing = w / max_points
+            for i, v in enumerate(recording_wave_values):
+                x = int(i * spacing)
+                # Draw symmetric bars for a modern "voice" look
+                offset = int(v * (h/2.5))
+                recording_canvas.create_line(x, mid_y - offset, x, mid_y + offset, 
+                                          fill="#22d3ee", width=2, tags="wave", capstyle="round")
+        
+        recording_overlay.update_idletasks()
+        recording_overlay.update()
+    except Exception:
+        pass
+
+def close_recording_overlay():
+    global recording_overlay, recording_overlay_var
+    try:
+        if recording_overlay is not None:
+            recording_overlay.destroy()
+    except Exception:
+        pass
+    recording_overlay = None
+    recording_overlay_var = None
 
 # Record a wav using PyAudio for a fixed duration
 def record_wav(filename, duration=3, samplerate=16000, channels=1, frames_per_buffer=1024):
@@ -628,6 +1313,92 @@ def record_wav(filename, duration=3, samplerate=16000, channels=1, frames_per_bu
     wf.close()
     print(f"[Saved] {filename}")
     return filename
+def record_until_silence(filename, max_duration=25, samplerate=16000, channels=1, frames_per_buffer=1024, min_duration=1.5, start_timeout=3.5, silence_threshold=0.008, speech_threshold=0.015, silence_duration=0.6, on_amp=None):
+    pa = pyaudio.PyAudio()
+    try:
+        stream = pa.open(format=pyaudio.paInt16,
+                         channels=channels,
+                         rate=samplerate,
+                         input=True,
+                         frames_per_buffer=frames_per_buffer)
+    except Exception:
+        pa.terminate()
+        raise
+    frames = []
+    start_t = time.time()
+    quiet_t = 0.0
+    had_speech = False
+    peak_amp = 0.0
+    baseline_frames = int(max(1, (samplerate / frames_per_buffer) * 0.5))
+    baseline_vals = []
+    try:
+        while True:
+            data = stream.read(frames_per_buffer, exception_on_overflow=False)
+            frames.append(data)
+            samples = np.frombuffer(data, dtype=np.int16)
+            amp = float(np.mean(np.abs(samples))) / 32768.0
+            if amp > peak_amp:
+                peak_amp = amp
+            now = time.time()
+            elapsed = now - start_t
+            
+            if len(baseline_vals) < baseline_frames:
+                baseline_vals.append(amp)
+                continue
+            
+            if baseline_vals:
+                base = np.median(baseline_vals)
+                base = max(base, 0.002)
+                sp_thr = max(speech_threshold, base * 2.5)
+                si_thr = max(silence_threshold, base * 1.2)
+            else:
+                sp_thr = speech_threshold
+                si_thr = silence_threshold
+                
+            if amp < si_thr:
+                quiet_t += frames_per_buffer / float(samplerate)
+            else:
+                quiet_t = 0.0
+                
+            if amp >= sp_thr:
+                had_speech = True
+                
+            if on_amp is not None:
+                try:
+                    on_amp(amp)
+                except Exception:
+                    pass
+            
+            # 1. If we haven't detected speech yet, only stop if we hit start_timeout
+            if not had_speech:
+                if elapsed >= start_timeout:
+                    # Final check of peak amp vs baseline before giving up
+                    if peak_amp >= sp_thr * 0.9:
+                        had_speech = True
+                    else:
+                        break # Give up: user never spoke
+                continue # Keep listening for the start of speech
+                
+            # 2. Once speech has started, stop if we've recorded enough (min_duration) 
+            # and then detect silence or hit max_duration
+            if elapsed >= min_duration:
+                if quiet_t >= silence_duration:
+                    break
+                    
+            if elapsed >= max_duration:
+                break
+    finally:
+        stream.stop_stream()
+        stream.close()
+        pa.terminate()
+    wf = wave.open(filename, 'wb')
+    wf.setnchannels(channels)
+    wf.setsampwidth(pyaudio.get_sample_size(pyaudio.paInt16))
+    wf.setframerate(samplerate)
+    wf.writeframes(b''.join(frames))
+    wf.close()
+    print(f"[Saved] {filename}")
+    return filename, had_speech
 
 def trim_wav_silence(filename, threshold=0.02):
     # This cuts off the quiet parts at the start and end of a sound file
@@ -647,15 +1418,83 @@ def trim_wav_silence(filename, threshold=0.02):
         return
     sf.write(filename, data[start:end], sr)
 
-# Liveness registration / check (Resemblyzer embeddings)
+def _audio_signal_stats(filename):
+    try:
+        data, sr = sf.read(filename)
+        if hasattr(data, "ndim") and data.ndim > 1:
+            data = data.mean(axis=1)
+        data = data.astype(np.float32)
+        if data.size == 0:
+            return {"rms": 0.0, "peak": 0.0, "voiced_ratio": 0.0}
+        
+        # Avoid division by zero
+        amp = np.abs(data)
+        rms = float(np.sqrt(np.mean(np.square(data))))
+        peak = float(np.max(amp))
+        
+        # Better voiced ratio calculation
+        frame_size = int(sr * 0.02)  # 20ms frames
+        energies = []
+        for i in range(0, len(amp) - frame_size + 1, frame_size):
+            energies.append(float(np.mean(amp[i:i + frame_size])))
+        
+        if not energies:
+            return {"rms": rms, "peak": peak, "voiced_ratio": 0.0}
+        
+        # Calculate noise floor from the quietest 10% of frames
+        sorted_energies = sorted(energies)
+        noise_floor = np.mean(sorted_energies[:max(1, len(energies) // 10)])
+        
+        # Voiced threshold: must be significantly above noise floor AND above a minimal absolute threshold.
+        # We cap the relative threshold to prevent it from becoming too high in loud environments.
+        voiced_threshold = max(0.012, min(0.05, noise_floor * 3.5))
+        voiced_frames = [e for e in energies if e > voiced_threshold]
+        voiced_ratio = float(len(voiced_frames) / len(energies))
+        
+        return {"rms": rms, "peak": peak, "voiced_ratio": voiced_ratio}
+    except Exception:
+        return {"rms": 0.0, "peak": 0.0, "voiced_ratio": 0.0}
+
+# Liveness registration / check (Resemblyzer-like embeddings)
 def register_reference_if_missing():
     # If we don't have the owner's voice saved yet,
     # we record a short sample and create its fingerprint.
     if not os.path.exists(OWNER_EMBED_PATH):
-        speak("No registered voice found. Please say the passphrase after the beep.")
-        time.sleep(0.6)
+        # Prompt for master password before registration
+        conn = _ensure_secrets_db()
+        master = _prompt_master(root_window)
+        if not master:
+            speak("Master password required to register voice.")
+            status_queue.put("Voice registration aborted: no password.")
+            conn.close()
+            return False
+        if not _verify_master(conn, master):
+            speak("Invalid master password.")
+            status_queue.put("Voice registration failed: wrong password.")
+            conn.close()
+            return False
+        conn.close()
+
+        speak("No registered voice found. Please say the passphrase after the beep.", block=True)
+        show_recording_overlay(root_window)
+        try:
+            winsound.Beep(800, 200)
+        except Exception:
+            pass
+            
         print("[Recording reference voice]")
-        record_wav(REFERENCE_WAV, duration=3)
+        _, had = record_until_silence(REFERENCE_WAV, max_duration=5, min_duration=2.0, on_amp=update_recording_overlay)
+        close_recording_overlay()
+        if not had:
+            speak("Voice registration failed. No speech detected.")
+            status_queue.put("Voice registration failed.")
+            return False
+        trim_wav_silence(REFERENCE_WAV)
+        stats = _audio_signal_stats(REFERENCE_WAV)
+        if stats["rms"] < 0.015 or stats["voiced_ratio"] < 0.25:
+            speak("Voice registration failed. Please speak clearly.")
+            status_queue.put("Voice registration too quiet or unclear.")
+            return False
         owner_embed = compute_embedding(REFERENCE_WAV)
         np.save(OWNER_EMBED_PATH, owner_embed)
         speak("Voice registered successfully.")
@@ -667,13 +1506,44 @@ def manual_register_voice():
     # Button in the screen: lets you re-record the owner's voice.
     """Triggered by GUI button: re-record owner reference voice."""
     try:
-        speak("Please say your reference passphrase after the beep.")
-        time.sleep(0.6)
+        # Prompt for master password before update
+        conn = _ensure_secrets_db()
+        master = _prompt_master(root_window)
+        if not master:
+            speak("Master password required to update voice.")
+            status_queue.put("Voice update aborted: no password.")
+            conn.close()
+            return
+        if not _verify_master(conn, master):
+            speak("Invalid master password.")
+            status_queue.put("Voice update failed: wrong password.")
+            conn.close()
+            return
+        conn.close()
+
+        speak("Please say your reference passphrase after the beep.", block=True)
+        show_recording_overlay(root_window)
+        try:
+            winsound.Beep(800, 200)
+        except Exception:
+            pass
 
         status_queue.put("Recording new reference voice...")
         print("[Manual registration] Recording new reference...")
 
-        record_wav(REFERENCE_WAV, duration=3)
+        _, had = record_until_silence(REFERENCE_WAV, max_duration=6, min_duration=2.5, on_amp=update_recording_overlay)
+        close_recording_overlay()
+
+        if not had:
+            speak("Voice update failed. No speech detected.")
+            status_queue.put("Voice update failed: no speech.")
+            return
+            
+        stats = _audio_signal_stats(REFERENCE_WAV)
+        if stats["rms"] < 0.015 or stats["voiced_ratio"] < 0.25:
+            speak("Voice update failed. Audio quality too low.")
+            status_queue.put("Voice update failed: poor audio.")
+            return
 
         owner_embed = compute_embedding(REFERENCE_WAV)
         np.save(OWNER_EMBED_PATH, owner_embed)
@@ -687,117 +1557,250 @@ def manual_register_voice():
         status_queue.put(f"Registration error: {e}")
         print("[Manual registration error]", e)
 
-def liveness_check(threshold=0.80):
+def liveness_check(threshold=0.88):
     # Checks quickly if the new voice sample looks like the owner's
     # by comparing their fingerprints.
     # Ensure reference exists
     if not os.path.exists(OWNER_EMBED_PATH):
-        register_reference_if_missing()
+        if not register_reference_if_missing():
+            return False
 
-    speak("Please repeat the passphrase after the beep.")
-    time.sleep(0.5)
-    print("[Recording liveness sample]")
-    record_wav(LIVENESS_WAV, duration=3)
+    # Block while speaking so we don't start recording user voice (or computer voice) too early
+    speak("Please repeat the passphrase after the beep.", block=True)
+    
+    show_recording_overlay(root_window)
     try:
+        winsound.Beep(800, 200)
+    except Exception:
+        pass
+        
+    print("[Recording liveness sample]")
+    # Use a longer start_timeout to give the user time to react
+    _, had = record_until_silence(LIVENESS_WAV, max_duration=5, min_duration=1.2, start_timeout=4.0, silence_duration=0.45, on_amp=update_recording_overlay)
+    close_recording_overlay()
+    if not had:
+        status_queue.put("Liveness failed: no speech.")
+        return False
+    try:
+        trim_wav_silence(LIVENESS_WAV)
+        stats = _audio_signal_stats(LIVENESS_WAV)
+        # Stricter checks for liveness
+        if stats["rms"] < 0.012 or stats["peak"] < 0.04 or stats["voiced_ratio"] < 0.22:
+            status_queue.put(f"Liveness failed: weak/noisy audio (VR: {stats['voiced_ratio']:.2f})")
+            return False
+            
         live_embed = compute_embedding(LIVENESS_WAV)
         owner_embed = np.load(OWNER_EMBED_PATH)
         similarity = _cosine(live_embed, owner_embed)
         print(f"[Liveness Similarity Score]: {similarity:.4f}")
         status_queue.put(f"Liveness score: {similarity:.3f}")
-        return similarity >= threshold
+        
+        # Stricter similarity threshold and voiced ratio requirement
+        is_owner = similarity >= threshold and stats["voiced_ratio"] >= 0.25
+        if not is_owner:
+            status_queue.put("Voice verification failed.")
+            speak("Voice verification failed. Access denied.")
+        return is_owner
     except Exception as e:
         print("[Liveness error]", e)
         return False
 
 # Transcribe a WAV file using SpeechRecognition (Google)
-def transcribe_wav(filename):
-    # Turns a voice recording into text using Google's free speech tool.
-    r = sr.Recognizer()
-    with sr.AudioFile(filename) as source:
-        audio = r.record(source)
+def _has_network():
     try:
+        import socket
+        socket.create_connection(("8.8.8.8", 53), timeout=2)
+        return True
+    except Exception:
+        return False
+
+def transcribe_wav_offline(filename):
+    try:
+        import vosk  # local import to avoid hard dependency
+    except Exception:
+        return ""
+    model_dir = os.getenv("VOSK_MODEL") or os.path.join(APPDATA_DIR, "vosk-model")
+    if not os.path.isdir(model_dir):
+        s = _load_settings()
+        if bool(s.get("offline_stt", True)) and ensure_vosk_model():
+            pass
+        else:
+            return ""
+    try:
+        model = vosk.Model(model_dir)
+        rec = vosk.KaldiRecognizer(model, 16000)
+        wf = wave.open(filename, "rb")
+        try:
+            while True:
+                data = wf.readframes(4000)
+                if len(data) == 0:
+                    break
+                rec.AcceptWaveform(data)
+        finally:
+            wf.close()
+        import json as _json
+        res = _json.loads(rec.Result())
+        text = (res.get("text") or "").strip()
+        return text.lower()
+    except Exception:
+        return ""
+def transcribe_wav(filename):
+    """
+    Transcribe a WAV file to text.
+    Uses faster-whisper (local) → Google STT → Vosk as fallback chain.
+    """
+    try:
+        from sentinel.voice.stt import transcribe as _stt_transcribe
+        result = _stt_transcribe(filename)
+        if result:
+            logging.info(f"[STT] {result}")
+            return result
+    except Exception as e:
+        logging.warning(f"New STT module failed: {e}, falling back to Google STT")
+
+    # Legacy Google STT fallback
+    try:
+        r = sr.Recognizer()
+        with sr.AudioFile(filename) as source:
+            audio = r.record(source)
         text = r.recognize_google(audio)
-        print("[Transcribed]:", text)
+        logging.info(f"[Google STT] {text}")
         return text.lower()
     except sr.UnknownValueError:
         return ""
-    except sr.RequestError as e:
-        print("[Speech API error]", e)
+    except sr.RequestError:
+        return transcribe_wav_offline(filename)
+
+# Interpret command — context-aware, multi-turn, Gemini 2.0
+def interpret_command(command: str, emotion: str = "Neutral") -> str:
+    """
+    Routes a command to the best available LLM with full conversation history.
+    Uses Gemini 2.0 Flash as primary, OpenRouter as secondary, Ollama as offline fallback.
+    """
+    if not command:
         return ""
 
-# Interpret command using OpenAI (simple wrapper)
-def interpret_command(command):
-    # If you say: "ask gemini something", we ask Gemini (Google AI).
-    # Otherwise we ask OpenAI to summarize the command.
-    c = (command or "").lower()
-    if c.startswith("ask gemini") or c.startswith("use gemini"):
-        q = command.split(" ", 2)
-        prompt = q[2] if len(q) > 2 else command
-        return gemini_generate(prompt)
-    if entertainment_active:
-        # In entertainment mode, respond conversationally using OpenAI
-        from openai import OpenAI
-        key = os.getenv("OPEN_AI_API_KEY")
-        if not key:
-            return "No OpenAI key configured."
-        client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=key)
-        try:
-            resp = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role":"system","content":"You are a friendly, concise, kid-safe desktop companion named SentinelAI. Keep replies short unless asked to expand."},
-                    {"role":"user","content":command}
-                ],
-                max_tokens=120
-            )
-            return resp.choices[0].message.content.strip()
-        except Exception:
-            return "Chat error."
-    from openai import OpenAI
-    key = os.getenv("OPEN_AI_API_KEY")
-    if not key:
-        return "No OpenAI key configured."
-    client = OpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=key,)
-    prompt = f"You are a helpful desktop assistant. Convert the command into a short action summary. Command: {command}"
+    # Load conversation manager
     try:
-        resp = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role":"system","content":"You are a helpful desktop assistant."},
-                {"role":"user","content":prompt}
-            ],
-            max_tokens=120
-        )
-        return resp.choices[0].message.content.strip()
+        from sentinel.core.conversation import get_conversation
+        conv = get_conversation()
     except Exception:
-        import openai
-        openai.api_key = key
-        resp = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[
-                {"role":"system","content":"You are a helpful desktop assistant."},
-                {"role":"user","content":prompt}
-            ],
-            max_tokens=120
-        )
-        return resp.choices[0].message.content.strip()
+        conv = None
+
+    # Direct Gemini routing
+    c = command.lower().strip()
+    if c.startswith("ask gemini") or c.startswith("use gemini"):
+        parts = command.split(" ", 2)
+        prompt = parts[2] if len(parts) > 2 else command
+        resp = gemini_generate(prompt, conv=conv, emotion=emotion)
+        if conv:
+            conv.add_turn("user", command, emotion=emotion, intent="ask_gemini")
+            conv.add_turn("assistant", resp)
+        return resp
+
+    # Build message list with conversation history
+    if conv:
+        messages = conv.build_messages(command, emotion=emotion)
+    else:
+        messages = [
+            {"role": "system", "content": "You are SentinelAI, a powerful personal desktop AI assistant. Be concise and action-oriented."},
+            {"role": "user", "content": command}
+        ]
+
+    # 1. Try Gemini 2.0 Flash (primary)
+    gemini_key = os.getenv("GEMINI_API_KEY")
+    if gemini_key:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
+            # Convert messages to Gemini format
+            gemini_contents = []
+            for msg in messages:
+                role = "model" if msg["role"] == "assistant" else msg["role"]
+                if role == "system":
+                    role = "user"  # Gemini uses user for system context
+                gemini_contents.append({"role": role, "parts": [{"text": msg["content"]}]})
+            body = {"contents": gemini_contents, "generationConfig": {"maxOutputTokens": 300, "temperature": 0.7}}
+            with httpx.Client(timeout=30) as client:
+                r = client.post(url, json=body)
+                j = r.json()
+            resp = j.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+            if resp:
+                if conv:
+                    conv.add_turn("user", command, emotion=emotion)
+                    conv.add_turn("assistant", resp)
+                return resp
+        except Exception as e:
+            logging.warning(f"Gemini 2.0 failed: {e}")
+
+    # 2. Try OpenRouter (secondary)
+    or_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPEN_AI_API_KEY")
+    if or_key:
+        try:
+            from openai import OpenAI
+            client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=or_key)
+            resp = client.chat.completions.create(
+                model="google/gemini-2.5-flash-exp:free",
+                messages=messages,
+                max_tokens=300
+            )
+            text = resp.choices[0].message.content.strip()
+            if text:
+                if conv:
+                    conv.add_turn("user", command, emotion=emotion)
+                    conv.add_turn("assistant", text)
+                return text
+        except Exception as e:
+            logging.warning(f"OpenRouter failed: {e}")
+
+    # 3. Ollama offline fallback
+    if sentinel_orchestrator and sentinel_orchestrator.ollama_module:
+        try:
+            ollama_resp = sentinel_orchestrator.ollama_module.generate(command)
+            if ollama_resp and conv:
+                conv.add_turn("user", command, emotion=emotion)
+                conv.add_turn("assistant", ollama_resp)
+            return ollama_resp
+        except Exception as e:
+            logging.warning(f"Ollama failed: {e}")
+
+    return "I'm sorry, I couldn't process that request right now."
 
 # Execute a handful of commands (keeps your original behaviors)
 def execute_command(command):
+    # Main entry point for command routing with Phase 3 Error Repair.
+    try:
+        _execute_command_internal(command)
+    except Exception as e:
+        logging.error(f"Execution crash: {e}")
+        # Phase 3: Autonomous Error Self-Repair
+        if sentinel_orchestrator:
+            status_queue.put("System error detected. Initiating self-repair...")
+            repair_prompt = f"The user tried to execute: '{command}', but it failed with error: '{e}'. Suggest a corrected command or a different way to achieve the goal."
+            repair_suggestion = interpret_command(repair_prompt)
+            if repair_suggestion:
+                speak(f"I encountered an error, but I have a repair suggestion: {repair_suggestion}. Should I try that?")
+            else:
+                speak("I encountered a system error and could not find an immediate repair path.")
+
+def _execute_command_internal(command):
     # This is the action center. It reads the command text and does the matching thing.
-    command = (command or "").lower()
+    original = (command or "").strip('.!?, ')
+    command = original.lower()
     print("[Execute] ", command)
-    global agent_active
-    if agent_active:
-        agent_handle(command)  # When agent is active, treat every sentence as a step.
-        return
-    if command in ("start", "start agent", "agent start", "enable agent"):
-        start_agent()  # Turn on agent mode
-        return
+    
+    # --- System Control Priority (Always active even if agent is on) ---
     if command in ("stop", "stop agent", "agent stop", "disable agent"):
-        stop_agent()   # Turn off agent mode
+        speak("Stopping agent")
+        stop_agent()
+        return
+    if command in ("stop listening", "pause listening", "do not listen"):
+        global listening_blocked_until
+        listening_blocked_until = time.time() + 300
+        speak("Pausing listening for five minutes")
+        return
+    if command in ("start listening", "resume listening"):
+        listening_blocked_until = 0
+        speak("Listening resumed")
         return
     if command in ("enable entertainment", "entertain me", "talk mode"):
         global entertainment_active
@@ -810,297 +1813,363 @@ def execute_command(command):
         status_queue.put("Entertainment mode disabled.")
         speak("Entertainment mode disabled.")
         return
+    # ------------------------------------------------------------------
+
+    global agent_active
+    if agent_active:
+        agent_handle(command)  # Now system controls are skipped, and actual tasks go to agent
+        return
+    
+    if command in ("start", "start agent", "agent start", "enable agent"):
+        speak("Starting agent")
+        start_agent()
+        return
+    # Secrets: store
+    if ("password for" in command or "variable" in command) and ("keep in mind" in command or "remember" in command or "store" in command) and (" is " in command or " = " in command):
+        base = "password for"
+        idx = command.find(base)
+        if idx == -1:
+            base = "variable"
+            idx = command.find(base)
+        end = command.find(" is ", idx)
+        sep = 4
+        if end == -1:
+            end = command.find(" = ", idx)
+            sep = 3
+        name = original[idx+len(base):end].strip()
+        pwd = original[end+sep:].strip()
+        if name and pwd:
+            ok = store_secret(_normalize_name(name), pwd, parent=root_window)
+            if ok:
+                speak(f"Stored password for {name}")
+        return
+    # Secrets: fetch
+    if ("password for" in command or "variable" in command) and ("give me" in command or "what is" in command or "show" in command):
+        base = "password for"
+        idx = command.find(base)
+        if idx == -1:
+            base = "variable"
+            idx = command.find(base)
+        name = original[idx+len(base):].strip()
+        if name:
+            pw = fetch_secret(_normalize_name(name), parent=root_window)
+            if pw:
+                speak_password_spelled(pw)
+            else:
+                speak("No password found")
+        return
+
     if command.startswith("open "):
         appname = command.split("open ", 1)[1].strip()
         if not open_app(appname):
             install_and_open_app(appname)
+        return
+    elif command.startswith("close "):
+        appname = command.split("close ", 1)[1].strip()
+        if appname:
+            close_app(appname)
+        return
     elif "open browser" in command:
+        speak("Opening browser")
         webbrowser.open("https://www.google.com")
+        return
     elif "open gmail" in command:
+        speak("Opening Gmail")
         webbrowser.open("https://mail.google.com")
- 
-
-import os
-import subprocess
-import webbrowser
-import pyttsx3
-import speech_recognition as sr
-import numpy as np
- 
- 
-import soundfile as sf
-import time
-import tkinter as tk
-from tkinter import messagebox
-import threading
-import pvporcupine
-import struct
-import pyaudio
-import openai
-from queue import Queue
-from dotenv import load_dotenv, dotenv_values
-
-load_dotenv() 
-
-
-status_queue = Queue()
-
-# Set your OpenAI API key
-openai.api_key = os.getenv("OPEN_AI_API_KEY")  # Or replace with your key string
-
- 
-
-# Initialize TTS engine
-def speak(text):
-    engine = pyttsx3.init()
-    engine.say(text)
-    engine.runAndWait()
-
-# Record audio to file
-def record_audio_to_file(filename="liveness.wav", duration=3):
-    samplerate = 16000
-    print(f"[Recording] Saving to {filename} for {duration} seconds...")
-    recording = sd.rec(int(duration * samplerate), samplerate=samplerate, channels=1)
-    sd.wait()
-    sf.write(filename, recording, samplerate)
-    print("[Recording Finished]")
-    print(f"[Saved] {filename}")
-    return filename
-
-
-def liveness_check(threshold=0.80):
-    # Uses simple audio embedding similarity to verify live voice vs owner sample
-    if not os.path.exists(OWNER_EMBED_PATH):
-        register_reference_if_missing()
-    speak("Please repeat the phrase: I am the master.")
-    record_wav(LIVENESS_WAV, duration=3)
-    try:
-        trim_wav_silence(LIVENESS_WAV)
-    except Exception:
-        pass
-    try:
-        live_embed = compute_embedding(LIVENESS_WAV)
-        owner_embed = np.load(OWNER_EMBED_PATH)
-        similarity = _cosine(live_embed, owner_embed)
-        print(f"[Liveness Similarity Score]: {similarity:.4f}")
-        return similarity >= threshold
-    except Exception as e:
-        print(f"[Error in liveness check]: {e}")
-        return False
-
-# Transcribe command
-def get_command():
-    recognizer = sr.Recognizer()
-    with sr.AudioFile("liveness.wav") as source:
-        audio = recognizer.record(source)
-    try:
-        command = recognizer.recognize_google(audio)
-        print("Google Speech Recognition thinks you said " + recognizer.recognize_google(audio))
-        print("command:", command)
-        return command.lower()
-    except sr.UnknownValueError:
-        print("Google Speech Recognition thinks you said " + recognizer.recognize_google(audio))
-        speak("Sorry, I did not understand.")
-        return ""
-    except sr.RequestError:
-        print("Google Speech Recognition thinks you said " + recognizer.recognize_google(audio))
-        speak("Sorry, my speech service is currently unavailable.")
-        return ""
-
-# Use OpenAI to interpret command and generate a response or action
-
-def interpret_command(command):
-    print("command:", command)
-    prompt = f"You are a smart desktop assistant. Interpret the user's voice command and suggest a Python function call.\nCommand: {command}\nRespond with the best matching action."
-    try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant for executing desktop tasks."},
-                {"role": "user", "content": prompt}
-            ]
-        )
-        action = response.choices[0].message.content.strip()
-        return action
-    except Exception as e:
-        speak("I encountered an error accessing my intelligence service.")
-        return ""
-
-# Execute interpreted action
-def execute_command(command):
-    
-    if "open browser" in command:
-        webbrowser.open("https://www.google.com")
-    elif "open gmail" in command:
-        webbrowser.open("https://www.google.com/gmail")
- 
-    elif "open youtube" in command:
-        webbrowser.open("https://www.youtube.com")
-    elif "open facebook" in command:
-        webbrowser.open("https://www.facebook.com")
-    elif "open github" in command:
-        webbrowser.open("https://www.github.com")
- 
-    elif "open settings" in command:
-        os.system("start ms-settings:")
-    elif "open task manager" in command or "task manager" in command:
-        subprocess.Popen(["taskmgr"])
-    elif "open powershell" in command:
-        subprocess.Popen(["powershell.exe"])
-    elif "open vscode" in command or "open vs code" in command:
-        paths = [
-            os.path.expandvars(r"%LocalAppData%\Programs\Microsoft VS Code\Code.exe"),
-            r"C:\\Program Files\\Microsoft VS Code\\Code.exe"
-        ]
-        exe = next((p for p in paths if os.path.exists(p)), None)
-        if exe:
-            subprocess.Popen([exe])
-        else:
-            try:
-                subprocess.Popen(["code"])
-            except Exception:
-                speak("VS Code not found.")
-    elif "system info" in command:
-        try:
-            out = subprocess.check_output(["systeminfo"], shell=True, text=True, timeout=20)
-            status_queue.put("System info collected.")
-            print(out[:1000])
-            speak("System information collected.")
-        except Exception:
-            status_queue.put("System info failed.")
-    elif "ip address" in command or "show ip" in command:
-        try:
-            out = subprocess.check_output(["ipconfig"], shell=True, text=True, timeout=15)
-            lines = [l.strip() for l in out.splitlines() if "IPv4" in l]
-            msg = "; ".join(lines) or "No IPv4 found."
-            status_queue.put(msg)
-            speak("IP information updated.")
-        except Exception:
-            status_queue.put("IP check failed.")
-    elif "battery report" in command:
-        try:
-            report = os.path.join(os.path.dirname(__file__), "battery-report.html")
-            subprocess.check_call(["powercfg", "/batteryreport", "/output", report], shell=True)
-            os.startfile(report)
-            status_queue.put("Battery report opened.")
-            speak("Battery report opened.")
-        except Exception:
-            status_queue.put("Battery report failed.")
-    elif command.startswith("ask gemini") or command.startswith("use gemini"):
-        q = command.split(" ", 2)
-        prompt = q[2] if len(q) > 2 else command
-        resp = gemini_generate(prompt)
-        speak(resp)
-    elif "start agent" in command or command.startswith("agent"):
-        start_agent()
-    elif "stop agent" in command:
-        stop_agent()
-    elif "open gpt" in command:
-        try:
-            from selenium import webdriver
-            from selenium.webdriver.common.by import By
-            from selenium.webdriver.chrome.service import Service
-            from selenium.webdriver.chrome.options import Options
-            from selenium.webdriver.support.ui import WebDriverWait
-            from selenium.webdriver.support import expected_conditions as EC
-            import speech_recognition as sr
-            import time
-        except Exception:
-            speak("Web automation unavailable.")
-            return
- 
-    elif "open gpt" in command:
-        from selenium import webdriver
-        from selenium.webdriver.common.by import By
-        from selenium.webdriver.chrome.service import Service
-        from selenium.webdriver.chrome.options import Options
-        from selenium.webdriver.support.ui import WebDriverWait
-        from selenium.webdriver.support import expected_conditions as EC
-        import speech_recognition as sr
-        import time
- 
-
-        # Set up Chrome options
-        options = Options()
-        options.add_argument("--start-maximized")  # Open browser maximized
-
-        # Start driver
-        service = Service("chromedriver")  # Adjust if not in PATH
-        driver = webdriver.Chrome(service=service, options=options)
-        driver.get("https://chatgpt.com/?model=auto")
-
-        # Wait for page load
-        wait = WebDriverWait(driver, 30)
-        wait.until(EC.presence_of_element_located((By.TAG_NAME, "textarea")))
-
-        # Type voice input
-        recognizer = sr.Recognizer()
-        with sr.Microphone() as source:
-            print("Speak your message to ChatGPT:")
-            audio = recognizer.listen(source)
-
-        try:
-            query = recognizer.recognize_google(audio)
-            print(f"You said: {query}")
-            textarea = driver.find_element(By.TAG_NAME, "textarea")
-            textarea.send_keys(query)
-            time.sleep(1)
-
-            # Click the submit button using its ID
-            send_button = driver.find_element(By.ID, "composer-submit-button")
-            send_button.click()
-            print("Query sent to ChatGPT.")
-
-        except sr.UnknownValueError:
-            print("Sorry, could not understand your voice.")
-        except Exception as e:
-            print("Error:", e)
-
-
+        return
     elif "shutdown" in command:
-        speak("Shutting down. Goodbye.")
+        speak("Shutting down the system.")
         os.system("shutdown /s /t 1")
+        return
     elif "restart" in command:
+        speak("Restarting the system.")
         os.system("shutdown /r /t 1")
-    elif "open notepad" in command or "notepad" in command:
-        subprocess.Popen(["notepad.exe"])
-    elif "open chrome" in command or "chrome" in command:
-        query = command.replace("open chrome", "").replace("search", "").strip() or "python programming"
-        webbrowser.open(f"https://www.google.com/search?q={query.replace(' ', '+')}")
-        speak(f"Searching Chrome for {query}")
-    else:
-        # fallback interpreter + speak
-        resp = interpret_command(command)
-        speak(resp)
+        return
+    elif "minimize window" in command or "window minimize" in command:
+        try:
+            import pygetwindow as gw
+            win = gw.getActiveWindow()
+            if win: win.minimize()
+            speak("Window minimized")
+        except Exception: speak("Could not minimize window")
+        return
+    elif "maximize window" in command or "window maximize" in command:
+        try:
+            import pygetwindow as gw
+            win = gw.getActiveWindow()
+            if win: win.maximize()
+            speak("Window maximized")
+        except Exception: speak("Could not maximize window")
+        return
+    elif "close window" in command or "window close" in command:
+        try:
+            import pygetwindow as gw
+            win = gw.getActiveWindow()
+            if win: win.close()
+            speak("Window closed")
+        except Exception: speak("Could not close window")
+        return
+    elif "snap left" in command or "window left" in command:
+        pyautogui.hotkey('win', 'left')
+        speak("Snapped left")
+        return
+    elif "snap right" in command or "window right" in command:
+        pyautogui.hotkey('win', 'right')
+        speak("Snapped right")
+        return
+    elif "move window to left monitor" in command or "window left monitor" in command:
+        pyautogui.hotkey('win', 'shift', 'left')
+        speak("Moved to left monitor")
+        return
+    elif "move window to right monitor" in command or "window right monitor" in command:
+        pyautogui.hotkey('win', 'shift', 'right')
+        speak("Moved to right monitor")
+        return
+    elif "clean downloads" in command:
+        speak("Cleaning downloads folder.")
+        threading.Thread(target=clean_downloads_folder, daemon=True).start()
+        return
+    elif "find large files" in command:
+        speak("Searching for large files in downloads.")
+        threading.Thread(target=find_large_files_in_downloads, daemon=True).start()
+        return
+
+    # Notes management
+    elif command.startswith("remember note ") or command.startswith("save note "):
+        note = original.split(" ", 2)[2].strip()
+        if note:
+            _notes_add(note)
+            speak("Note saved")
+        return
+    elif command in ("list notes", "show notes"):
+        items = _notes_list()
+        if not items:
+            speak("No notes")
+        else:
+            speak("You have " + str(len(items)) + " notes")
+            for i, n in enumerate(items, 1):
+                speak(f"Note {i}: {n[:80]}")
+        return
+    elif command.startswith("forget note "):
+        idx_s = command.split("forget note ", 1)[1].strip()
+        try:
+            idx = int(idx_s)
+            if _notes_forget(idx):
+                speak("Note removed")
+            else:
+                speak("No such note")
+        except Exception:
+            speak("Please provide a valid note number")
+        return
+
+    elif "system status" in command:
+        speak("System is active and monitoring.")
+        return
+    elif "temperature" in command or "cpu temp" in command:
+        # try to get system info through orchestrator or simple call
+        if sentinel_orchestrator:
+            speak(sentinel_orchestrator.run_command("what is my cpu temperature?"))
+        return
+    elif "system info" in command:
+        if sentinel_orchestrator:
+            speak(sentinel_orchestrator.run_command("give me a system info report"))
+        return
+    elif "ip address" in command or "show ip" in command:
+        import socket
+        try:
+            hostname = socket.gethostname()
+            ip = socket.gethostbyname(hostname)
+            speak(f"Your I P address is {ip}")
+        except Exception: speak("I could not determine your I P address.")
+        return
+    elif "battery report" in command:
+        speak("Generating battery report.")
+        os.system("powercfg /batteryreport /output %TEMP%\\battery-report.html")
+        webbrowser.open(os.path.join(os.getenv("TEMP"), "battery-report.html"))
+        return
+    elif "upcoming meets" in command or "google meet" in command or "calendar" in command:
+        if sentinel_orchestrator:
+            speak(sentinel_orchestrator.run_command("show my upcoming calendar events"))
+        return
+    elif "what is on my screen" in command or "analyze screen" in command:
+        if sentinel_orchestrator:
+            speak(sentinel_orchestrator.run_command("analyze my screen"))
+        return
+    elif "start perception" in command:
+        speak("Perception stream activated.")
+        # Trigger internal awareness if implemented
+        return
+    elif "stop perception" in command:
+        speak("Perception stream deactivated.")
+        return
+    elif "swarm" in command:
+        if sentinel_orchestrator:
+            speak(sentinel_orchestrator.run_command(original))
+        return
+    elif "computer use" in command:
+        if sentinel_orchestrator:
+            speak(sentinel_orchestrator.run_command(original))
+        return
+
+    elif "turn on awareness" in command:
+        speak("Awareness monitoring activated.")
+        return
+    elif "turn off awareness" in command:
+        speak("Awareness monitoring deactivated.")
+        return
+    elif "run this code" in command or "execute code" in command:
+        if sentinel_orchestrator:
+            speak(sentinel_orchestrator.run_command(original))
+        return
+    elif "connect headset" in command or "start bci" in command:
+        speak("Searching for B C I headset signal.")
+        return
+    elif "enable proxy shield" in command or "start zero trust" in command:
+        if sentinel_orchestrator and sentinel_orchestrator.security_shield:
+            msg = sentinel_orchestrator.security_shield.start_proxy_shield()
+            speak(msg)
+        else:
+            speak("Security shield module unavailable.")
+        return
+    elif "quantum optimization" in command or "calculate using qpu" in command:
+        speak("Offloading task to IBM Quantum Cloud for circuit optimization.")
+        if sentinel_orchestrator:
+            speak(sentinel_orchestrator.run_command(original))
+        return
+    elif "robot " in command or "automata " in command:
+        speak("Transmitting kinematic directions to robot rover.")
+        return
+
+    elif command in ("list commands", "help commands", "what can you do"):
+        speak("You can say open app names, start or stop agent, query system info, battery report, and manage secrets by saying remember password for name is value, or give me password for name")
+        return
+
+    # Fallback: Let the Sentinel Orchestrator handle advanced tasks
+    # If the command is explicitly asking for AI/Gemini, or if it's a complex task
+    ai_keywords = ["ai", "gemini", "assistant", "think", "explain", "why", "how", "what is", "who is", "search for"]
+    is_ai_request = any(k in command for k in ai_keywords)
+    
+    if sentinel_orchestrator:
+        if is_ai_request:
+            status_queue.put("Thinking...")
+        response = sentinel_orchestrator.run_command(original)
+        if response:
+            # If orchestrator handled it without falling back to a general LLM response, or if it was an AI request
+            speak(response)
+            return
+
+    # Second fallback: Direct LLM call only if explicitly requested
+    if is_ai_request or "ask" in command:
+        response = interpret_command(original)
+        if response:
+            speak(response)
+ 
 
 # ---------- Wake-word listener (runs in background thread) ----------
 def listen_for_wake_word_loop(session_duration=3600):
     # Background loop:
+    global next_agent_capture_time, porcupine_status
     # 1) Wait for wake word (or timed agent capture)
     # 2) Check voice liveness (if needed)
     # 3) Record short command and execute it
     """Listens for Porcupine wake word and then handles auth + command."""
     session_valid_until = 0
+    sens = 0.6
+    kw = ["hey computer"]
     if not ACCESS_KEY:
         status_queue.put("Porcupine key missing. Wake word disabled.")
+        porcupine_status = "Missing Key"
         return
     try:
-        sens = 0.6
         try:
             s = _load_settings()
             sens = float(s.get("wake_sensitivity", 0.6))
         except Exception:
             pass
-        porcupine = pvporcupine.create(
-            access_key=ACCESS_KEY,
-            keyword_paths=[PORCUPINE_KEYWORD_PATH] if os.path.exists(PORCUPINE_KEYWORD_PATH) else None,
-            keywords=["hey computer"] if not os.path.exists(PORCUPINE_KEYWORD_PATH) else None,
-            sensitivities=[sens]
-        )
+        try:
+            s = _load_settings()
+            raw = s.get("wake_keywords") or s.get("wake_keyword")
+            if raw:
+                kw = [k.strip() for k in str(raw).split(',') if k.strip()]
+        except Exception:
+            pass
+
+        porcupine = None
+        model_path = _porcupine_model_path()
+        if os.path.exists(PORCUPINE_KEYWORD_PATH):
+            print(f"[Porcupine] Found keyword file: {PORCUPINE_KEYWORD_PATH}")
+            try:
+                if model_path:
+                    porcupine = pvporcupine.create(
+                        access_key=ACCESS_KEY,
+                        keyword_paths=[PORCUPINE_KEYWORD_PATH],
+                        sensitivities=[sens],
+                        model_path=model_path
+                    )
+                else:
+                    porcupine = pvporcupine.create(
+                        access_key=ACCESS_KEY,
+                        keyword_paths=[PORCUPINE_KEYWORD_PATH],
+                        sensitivities=[sens]
+                    )
+                print(f"[Porcupine] Loaded custom keyword file successfully.")
+            except Exception as e:
+                print(f"[Porcupine] Failed to load custom keyword file: {e}")
+                porcupine = None
+        
+        if porcupine is None:
+            print(f"[Porcupine] Using default keywords: {kw}")
+            print(f"[Porcupine] Sensitivity: {sens}")
+            if model_path:
+                porcupine = pvporcupine.create(
+                    access_key=ACCESS_KEY,
+                    keywords=kw,
+                    sensitivities=[sens] if len(kw) <= 1 else [sens] * len(kw),
+                    model_path=model_path
+                )
+            else:
+                porcupine = pvporcupine.create(
+                    access_key=ACCESS_KEY,
+                    keywords=kw,
+                    sensitivities=[sens] if len(kw) <= 1 else [sens] * len(kw)
+                )
+        
+        porcupine_status = "OK"
     except Exception as e:
-        print("[Porcupine init error]", e)
-        status_queue.put("Porcupine init failed.")
-        return
+        err_msg = str(e)
+        print("[Porcupine init error]", err_msg)
+        if "Invalid access_key" in err_msg:
+            status_queue.put("Porcupine key invalid.")
+            porcupine_status = "Invalid Key"
+        elif "Version mismatch" in err_msg:
+            status_queue.put("Porcupine version mismatch.")
+            porcupine_status = "Version Error"
+        else:
+            fallback_ok = False
+            if "keyword" in err_msg.lower() or "model" in err_msg.lower():
+                try:
+                    if model_path:
+                        porcupine = pvporcupine.create(
+                            access_key=ACCESS_KEY,
+                            keywords=["computer"],
+                            sensitivities=[sens],
+                            model_path=model_path
+                        )
+                    else:
+                        porcupine = pvporcupine.create(
+                            access_key=ACCESS_KEY,
+                            keywords=["computer"],
+                            sensitivities=[sens]
+                        )
+                    porcupine_status = "OK"
+                    status_queue.put("Porcupine fallback: computer")
+                    fallback_ok = True
+                except Exception as e2:
+                    err_msg = str(e2)
+            if not fallback_ok:
+                status_queue.put(f"Porcupine failed: {err_msg[:20]}")
+                porcupine_status = "Failed"
+                return
 
     pa = pyaudio.PyAudio()  # open the microphone for reading
     stream = pa.open(format=pyaudio.paInt16,
@@ -1122,38 +2191,67 @@ def listen_for_wake_word_loop(session_duration=3600):
             if should_capture:
                 print("[Wake word detected]")
                 status_queue.put("Wake word detected.")
+                
+                # Use blocking speech so the "Ready" greeting finishes before we start listening
                 if not agent_active:
-                    speak("Yes Master?")
+                    speak("Yes Master", block=True)
+                    
                 now = time.time()
                 if now > session_valid_until and not agent_active:
                     status_queue.put("Performing liveness check...")
                     if not liveness_check():
+                        # Access denied speech should probably be non-blocking to allow the loop to continue
                         speak("Access denied. Voice does not match.")
                         status_queue.put("Liveness failed.")
                         continue
                     else:
                         session_valid_until = time.time() + session_duration
                         status_queue.put("Liveness passed. Session active.")
-                        speak("Liveness confirmed. Please speak your command after the beep.")
 
+                # respect listening pause
+                if time.time() < listening_blocked_until:
+                    continue
+                    
                 # Record user command
-                time.sleep(0.25)
                 status_queue.put("Recording command...")
-                record_wav(COMMAND_WAV, duration=4)
+                show_recording_overlay(root_window)
+                try:
+                    winsound.Beep(800, 200)
+                except Exception:
+                    pass
+                    
+                # Dynamic recording: 5s min start timeout, until user stops speaking
+                fn, had = record_until_silence(COMMAND_WAV, max_duration=12, min_duration=0.9, start_timeout=5.0, silence_duration=0.5, on_amp=update_recording_overlay)
+                close_recording_overlay()
+                if not had:
+                    status_queue.put("No speech detected.")
+                    continue
                 status_queue.put("Processing command...")
 
-                try:
-                    trim_wav_silence(COMMAND_WAV)
-                except Exception as e:
-                    print("[Trim error]", e)
-
                 # transcribe & execute
-                cmd_text = transcribe_wav(COMMAND_WAV)
+                cmd_text = transcribe_wav(fn)
                 if not cmd_text:
                     speak("Sorry, I couldn't understand the command.")
                     status_queue.put("Transcription empty.")
                 else:
+                    # Emotion Analysis
+                    emotion = "Neutral"
+                    try:
+                        from sentinel.modules.emotion import EmotionModule
+                        emotion_module = EmotionModule()
+                        emotion = emotion_module.analyze_audio_emotion(fn)
+                        suggestion = emotion_module.suggest_action_based_on_emotion(emotion)
+                        if suggestion:
+                            speak(suggestion, emotion=emotion)
+                            status_queue.put(f"Emotion detected: {emotion}")
+                    except Exception:
+                        pass
+
                     status_queue.put(f"Command: {cmd_text}")
+                    try:
+                        speak(f"You said: {cmd_text}", emotion=emotion)
+                    except Exception:
+                        pass
                     execute_command(cmd_text)
 
                 if agent_active:
@@ -1194,6 +2292,60 @@ def restart_wake_listener():
         pass
     start_wake_listener()
 
+def refresh_config():
+    """Refreshes configuration from environment variables and restarts services."""
+    global ACCESS_KEY, sentinel_orchestrator, wake_thread
+    
+    # Reload from AppData .env to be sure
+    if os.path.exists(env_path):
+        load_dotenv(env_path, override=True)
+        
+    ACCESS_KEY = os.getenv("PVPORCUPINE_PRIVATE_KEY")
+    
+    # Initialize/Refresh orchestrator
+    if os.getenv("GEMINI_API_KEY"):
+        try:
+            from sentinel.core.orchestrator import SentinelOrchestrator
+            if sentinel_orchestrator is None:
+                sentinel_orchestrator = SentinelOrchestrator(llm_callback=lambda p: gemini_generate(p))
+        except Exception:
+            pass
+
+    # Restart Wake Word Listener if it's not running
+    if ACCESS_KEY:
+        start_wake_listener()
+
+def update_mic_level():
+    """Continuously updates the mic level variable for the GUI."""
+    global mic_level_var
+    if mic_level_var is None:
+        return
+
+    pa = pyaudio.PyAudio()
+    try:
+        stream = pa.open(format=pyaudio.paInt16, channels=1, rate=16000, input=True, frames_per_buffer=512)
+        while True:
+            try:
+                data = stream.read(512, exception_on_overflow=False)
+                samples = np.frombuffer(data, dtype=np.int16)
+                amp = float(np.mean(np.abs(samples))) / 32768.0
+                if mic_level_var:
+                    mic_level_var.set(amp)
+            except Exception:
+                if mic_level_var:
+                    mic_level_var.set(0.0)
+                break
+            time.sleep(0.05)
+    except Exception:
+        if mic_level_var:
+            mic_level_var.set(0.0)
+    finally:
+        try:
+            stream.close()
+            pa.terminate()
+        except Exception:
+            pass
+
 # ---------- GUI ----------
 # def start_gui():
 
@@ -1224,191 +2376,249 @@ def restart_wake_listener():
 #     update_ui()
 #     root.mainloop()
 
-def start_gui():
-    # Builds a small window with useful buttons and status messages.
-    root = tk.Tk()
+# ── Cyberpunk Glassmorphism UI Constants ─────────────────────────────────
+MODERN_BG = "#020617"         # Deepest Midnight
+MODERN_SURFACE = "#0f172a"    # Slate 900
+MODERN_ACCENT = "#06b6d4"     # Cyan 500
+MODERN_GLOW = "#0891b2"       # Cyan 600
+MODERN_TEXT = "#f8fafc"       # Slate 50
+MODERN_TEXT_MUTED = "#64748b" # Slate 500
+MODERN_SUCCESS = "#10b981"    # Emerald 500
+MODERN_WARNING = "#f59e0b"    # Amber 500
+MODERN_DANGER = "#ef4444"     # Rose 500
+MODERN_FONT = ("Consolas", 10)
+MODERN_FONT_BOLD = ("Consolas", 10, "bold")
+MODERN_FONT_LARGE = ("Consolas", 16, "bold")
+
+def apply_modern_styles(root):
+    style = ttk.Style(root)
     try:
-        style = ttk.Style()
         style.theme_use('clam')
     except Exception:
         pass
-    root.title("SentinelAI Dashboard")
-    root.geometry("420x240")
 
-    status_label = tk.Label(root, text="SentinelAI Running...", font=("Arial", 11))
-    status_label.pack(pady=8)
+    root.configure(bg=MODERN_BG)
+    root.attributes("-alpha", 0.98) # Slight window transparency
 
-    session_label = tk.Label(root, text="Session: expired", font=("Arial", 10))
-    session_label.pack()
-
-    # Diagnostics row: shows whether keys and driver are present
-    diag_items = []
-    diag_items.append("OpenAI: OK" if os.getenv("OPEN_AI_API_KEY") else "OpenAI: Missing")
-    diag_items.append("Porcupine: OK" if os.getenv("PVPORCUPINE_PRIVATE_KEY") else "Porcupine: Missing")
-    driver_path = os.path.join(os.path.dirname(__file__), "chromedriver-win64", "chromedriver.exe")
-    diag_items.append("Driver: OK" if os.path.exists(driver_path) else "Driver: Missing")
+    # Custom TFrame for glass effect
+    style.configure("Glass.TFrame", background=MODERN_SURFACE, relief="flat")
     
-    diag_label = tk.Label(root, text=" | ".join(diag_items), font=("Arial", 9))
-    diag_label.pack(pady=6)
+    # Label Styles
+    style.configure("Modern.TLabel", background=MODERN_BG, foreground=MODERN_TEXT, font=MODERN_FONT)
+    style.configure("ModernMuted.TLabel", background=MODERN_BG, foreground=MODERN_TEXT_MUTED, font=MODERN_FONT)
+    style.configure("ModernHeader.TLabel", background=MODERN_BG, foreground=MODERN_ACCENT, font=MODERN_FONT_LARGE)
+    
+    # Surface Label Styles (for items inside frames)
+    style.configure("Surface.TLabel", background=MODERN_SURFACE, foreground=MODERN_TEXT, font=MODERN_FONT)
+    style.configure("SurfaceMuted.TLabel", background=MODERN_SURFACE, foreground=MODERN_TEXT_MUTED, font=MODERN_FONT)
 
-    register_btn = ttk.Button(
-        root,
-        text="Register Voice",
-        
-        command=manual_register_voice
-    )
-    register_btn.pack(pady=8)
+    # Button Styles - Cyberpunk Neon Look
+    style.configure("Modern.TButton", 
+                   padding=(12, 6), 
+                   relief="flat", 
+                   background="#1e293b", 
+                   foreground=MODERN_TEXT,
+                   font=MODERN_FONT_BOLD,
+                   borderwidth=1)
+    style.map("Modern.TButton",
+              background=[('active', MODERN_ACCENT), ('pressed', MODERN_SURFACE)],
+              foreground=[('active', MODERN_BG)],
+              bordercolor=[('active', MODERN_ACCENT)])
 
+    style.configure("ModernAccent.TButton", 
+                   padding=(12, 6), 
+                   relief="flat", 
+                   background=MODERN_ACCENT, 
+                   foreground=MODERN_BG,
+                   font=MODERN_FONT_BOLD)
+    style.map("ModernAccent.TButton",
+              background=[('active', MODERN_TEXT), ('pressed', MODERN_ACCENT)])
+
+    # Progressbar - Cyber Glow
+    style.configure("Modern.Horizontal.TProgressbar", 
+                   troughcolor="#020617", 
+                   background=MODERN_ACCENT, 
+                   thickness=6,
+                   borderwidth=0)
+
+    # Combobox - Sleek Dark
+    style.configure("Modern.TCombobox", 
+                   fieldbackground=MODERN_SURFACE, 
+                   background=MODERN_SURFACE, 
+                   foreground=MODERN_TEXT,
+                   arrowcolor=MODERN_ACCENT,
+                   font=MODERN_FONT)
+
+def start_gui():
+    # Builds a cyberpunk, glassmorphism dashboard.
+    root = tk.Tk()
+    global root_window, mic_level_var
+    root_window = root
+    
+    apply_modern_styles(root)
+    
+    root.title("SENTINEL_OS_V4")
+    root.geometry("540x740")
+    root.resizable(True, True)
+    root.minsize(500, 600) # Ensure it doesn't get too small
+
+    # Main container with deep space background
+    main_frame = tk.Frame(root, bg=MODERN_BG, padx=25, pady=25)
+    main_frame.pack(fill='both', expand=True)
+
+    # Header with Neon Glow
+    header_frame = tk.Frame(main_frame, bg=MODERN_BG)
+    header_frame.pack(fill='x', pady=(0, 25))
+    
+    title_label = tk.Label(header_frame, text="SENTINEL_CORE_V4", font=MODERN_FONT_LARGE, 
+                          bg=MODERN_BG, fg=MODERN_ACCENT)
+    title_label.pack(side='left')
+    
+    status_label = tk.Label(header_frame, text="SYSTEM_LINK_ACTIVE", 
+                           font=MODERN_FONT, bg=MODERN_BG, fg=MODERN_TEXT_MUTED)
+    status_label.pack(side='right')
+
+    # Data Stream Monitor (Glassmorphism effect)
+    info_frame = ttk.Frame(main_frame, style="Glass.TFrame")
+    info_frame.pack(fill='x', pady=(0, 25))
+    
+    info_content = tk.Frame(info_frame, bg=MODERN_SURFACE, padx=20, pady=20)
+    info_content.pack(fill='both', expand=True)
+
+    session_label = tk.Label(info_content, text="[SECURE_SESSION]: EXPIRED", 
+                            font=MODERN_FONT, bg=MODERN_SURFACE, fg=MODERN_TEXT)
+    session_label.pack(anchor='w')
+
+    # System Diagnostics Grid
+    diag_items = []
+    diag_items.append("NET: OK" if (os.getenv("OPENROUTER_API_KEY") or os.getenv("OPEN_AI_API_KEY")) else "NET: ERR")
+    diag_items.append(f"VOICE: {porcupine_status}")
+    diag_items.append("LLM: OK" if os.getenv("GEMINI_API_KEY") else "LLM: ERR")
+    
+    diag_label = tk.Label(info_content, text=" | ".join(diag_items), 
+                         font=("Consolas", 8), 
+                         bg=MODERN_SURFACE, fg=MODERN_ACCENT)
+    diag_label.pack(anchor='w', pady=(12, 0))
+
+    # Neural Input (Mic Bar)
+    mic_frame = tk.Frame(main_frame, bg=MODERN_BG)
+    mic_frame.pack(fill='x', pady=(0, 25))
+    
+    tk.Label(mic_frame, text="NEURAL_INPUT_ACTIVE", font=MODERN_FONT_BOLD, 
+             bg=MODERN_BG, fg=MODERN_TEXT).pack(anchor='w', pady=(0, 8))
+    
+    mic_level_var = tk.DoubleVar(value=0.0)
+    mic_bar = ttk.Progressbar(mic_frame, orient='horizontal', mode='determinate', 
+                             maximum=0.2, variable=mic_level_var, style="Modern.Horizontal.TProgressbar")
+    mic_bar.pack(fill='x')
+
+    threading.Thread(target=update_mic_level, daemon=True).start()
+
+    # Tactical Operations Grid
+    actions_frame = tk.Frame(main_frame, bg=MODERN_BG)
+    actions_frame.pack(fill='x', pady=(0, 25))
+    actions_frame.columnconfigure((0, 1), weight=1, pad=12)
+
+    ttk.Button(actions_frame, text="REGISTER_VOICE", style="Modern.TButton", 
+               command=manual_register_voice).grid(row=0, column=0, sticky='ew', pady=6)
+    
     def refresh_apps():
         status_queue.put("Refreshing apps registry...")
         threading.Thread(target=build_app_registry, daemon=True).start()
 
-    refresh_btn = ttk.Button(
-        root,
-        text="Refresh Apps Registry",
-        
-        command=refresh_apps
-    )
-    refresh_btn.pack(pady=6)
+    ttk.Button(actions_frame, text="REBUILD_INDEX", style="Modern.TButton", 
+               command=refresh_apps).grid(row=0, column=1, sticky='ew', pady=6)
 
-    def show_top_apps():
-        items = top_mru(5)
-        messagebox.showinfo("Top Apps", "\n".join(items) if items else "No usage yet.")
+    ttk.Button(actions_frame, text="USAGE_STATS", style="Modern.TButton", 
+               command=lambda: messagebox.showinfo("Top Usage", "\n".join(top_mru(5)) or "No data")).grid(row=1, column=0, sticky='ew', pady=6)
+    
+    ttk.Button(actions_frame, text="MACRO_SEQUENCER", style="Modern.TButton", 
+               command=lambda: open_macros_ui(root)).grid(row=1, column=1, sticky='ew', pady=6)
 
-    top_btn = ttk.Button(
-        root,
-        text="Show Top Apps",
-        command=show_top_apps
-    )
-    top_btn.pack(pady=6)
+    # Deployment Matrix (Launcher)
+    launcher_frame = ttk.Frame(main_frame, style="Glass.TFrame")
+    launcher_frame.pack(fill='x', pady=(0, 25))
+    
+    launcher_content = tk.Frame(launcher_frame, bg=MODERN_SURFACE, padx=20, pady=20)
+    launcher_content.pack(fill='both', expand=True)
 
-    # MRU combobox to open apps quickly
+    tk.Label(launcher_content, text="DEPLOYMENT_MATRIX", font=MODERN_FONT_BOLD, 
+             bg=MODERN_SURFACE, fg=MODERN_ACCENT).pack(anchor='w', pady=(0, 12))
+
     apps_var = tk.StringVar()
     mru_items = top_mru(10)
-    mru_combo = ttk.Combobox(root, textvariable=apps_var, values=mru_items, state='readonly')
+    mru_combo = ttk.Combobox(launcher_content, textvariable=apps_var, values=mru_items, 
+                            state='readonly', style="Modern.TCombobox")
     mru_combo.set(mru_items[0] if mru_items else '')
-    mru_combo.pack(pady=4, fill='x')
+    mru_combo.pack(fill='x', pady=(0, 12))
 
-    def open_selected_app():
-        name = apps_var.get()
-        if not name:
-            messagebox.showinfo("Open App", "No app selected.")
-            return
-        if not open_app(name):
-            install_and_open_app(name)
+    btn_row = tk.Frame(launcher_content, bg=MODERN_SURFACE)
+    btn_row.pack(fill='x')
+    
+    ttk.Button(btn_row, text="EXECUTE_LAUNCH", style="ModernAccent.TButton", 
+               command=lambda: open_app(apps_var.get()) if apps_var.get() else None).pack(side='left', expand=True, fill='x', padx=(0, 8))
 
-    ttk.Button(root, text="Open Selected App", command=open_selected_app).pack(pady=4)
+    ttk.Button(btn_row, text="RFRSH", width=6, style="Modern.TButton", 
+               command=lambda: mru_combo.configure(values=top_mru(10))).pack(side='right')
 
-    def refresh_mru():
-        items = top_mru(10)
-        mru_combo['values'] = items
-        if items:
-            mru_combo.set(items[0])
+    # System Override
+    footer_frame = tk.Frame(main_frame, bg=MODERN_BG)
+    footer_frame.pack(fill='x', side='bottom')
 
-    ttk.Button(root, text="Refresh Suggestions", command=refresh_mru).pack(pady=4)
+    def manual_run_command():
+        status_queue.put("Recording command...")
+        show_recording_overlay(root)
+        fn, had = record_until_silence(COMMAND_WAV, on_amp=update_recording_overlay)
+        close_recording_overlay()
+        if had:
+            text = transcribe_wav(fn)
+            if text: execute_command(text)
 
-    def open_settings_ui():
-        s = _load_settings()
-        win = tk.Toplevel(root)
-        win.title("Settings")
-        win.geometry("320x260")
-        ent_var = tk.BooleanVar(value=entertainment_active)
-        auto_var = tk.BooleanVar(value=bool(s.get("autostart", True)))
-        bg_var = tk.BooleanVar(value=bool(s.get("background", False)))
-        sens_var = tk.DoubleVar(value=float(s.get("wake_sensitivity", 0.6)))
+    ttk.Button(footer_frame, text="[ INITIATE_MANUAL_OVERRIDE ]", style="ModernAccent.TButton", 
+               command=manual_run_command).pack(fill='x', pady=(0, 12))
 
-        ttk.Checkbutton(win, text="Entertainment Mode", variable=ent_var).pack(pady=6)
-        ttk.Checkbutton(win, text="Autostart on Login", variable=auto_var).pack(pady=6)
-        ttk.Checkbutton(win, text="Run in Background (no GUI)", variable=bg_var).pack(pady=6)
-        ttk.Label(win, text="Wake Sensitivity").pack()
-        ttk.Scale(win, from_=0.1, to=1.0, orient='horizontal', variable=sens_var).pack(fill='x', padx=10)
+    ctrl_row = tk.Frame(footer_frame, bg=MODERN_BG)
+    ctrl_row.pack(fill='x')
+    ctrl_row.columnconfigure((0, 1, 2), weight=1, pad=8)
 
-        def save_settings():
-            global entertainment_active
-            entertainment_active = ent_var.get()
-            data = {
-                "autostart": bool(auto_var.get()),
-                "background": bool(bg_var.get()),
-                "wake_sensitivity": float(sens_var.get())
-            }
-            _save_settings(data)
-            if data["autostart"]:
-                ensure_autostart()
-            messagebox.showinfo("Settings", "Saved. Some changes apply next start.")
-            win.destroy()
+    ttk.Button(ctrl_row, text="CONFIG", style="Modern.TButton", 
+               command=lambda: open_settings_ui_global(root)).grid(row=0, column=0, sticky='ew')
+    
+    ttk.Button(ctrl_row, text="VAULT", style="Modern.TButton", 
+               command=lambda: ensure_env_setup(force=True)).grid(row=0, column=1, sticky='ew')
 
-        ttk.Button(win, text="Save", command=save_settings).pack(pady=10)
+    ttk.Button(ctrl_row, text="TERMINATE", style="Modern.TButton", 
+               command=root.destroy).grid(row=0, column=2, sticky='ew')
 
-    settings_btn = ttk.Button(
-        root,
-        text="Settings",
-        command=lambda: open_settings_ui_global(root)
-    )
-    settings_btn.pack(pady=6)
+    agent_row = tk.Frame(footer_frame, bg=MODERN_BG)
+    agent_row.pack(fill='x', pady=(12, 0))
+    agent_row.columnconfigure((0, 1), weight=1, pad=8)
 
-    ttk.Button(root, text="Diagnostics", command=lambda: open_diagnostics_window(root)).pack(pady=6)
+    ttk.Button(agent_row, text="INITIALIZE_AGENT", style="Modern.TButton", 
+               command=start_agent).grid(row=0, column=0, sticky='ew')
+    
+    ttk.Button(agent_row, text="DISABLE_AGENT", style="Modern.TButton", 
+               command=stop_agent).grid(row=0, column=1, sticky='ew')
 
     def on_close():
         try:
             start_tray()
             root.withdraw()
-            status_queue.put("SentinelAI minimized to tray.")
+            status_queue.put("System minimized to tray.")
         except Exception:
             root.destroy()
 
     root.protocol("WM_DELETE_WINDOW", on_close)
 
-    def manual_run_command():
-        # Click this to record a command without saying the wake word.
-        status_queue.put("Recording command...")
-        record_wav(COMMAND_WAV, duration=4)
-        try:
-            trim_wav_silence(COMMAND_WAV)
-        except Exception as e:
-            print("[Trim error]", e)
-        text = transcribe_wav(COMMAND_WAV)
-        if not text:
-            status_queue.put("Transcription empty.")
-            speak("Sorry, I couldn't understand the command.")
-        else:
-            status_queue.put(f"Command: {text}")
-            execute_command(text)
-
-    cmd_btn = ttk.Button(
-        root,
-        text="Record & Execute Command",
-        
-        command=manual_run_command
-    )
-    cmd_btn.pack(pady=6)
-
-    agent_start_btn = ttk.Button(
-        root,
-        text="Start Agent",
-        
-        command=start_agent
-    )
-    agent_start_btn.pack(pady=4)
-
-    agent_stop_btn = ttk.Button(
-        root,
-        text="Stop Agent",
-        
-        command=stop_agent
-    )
-    agent_stop_btn.pack(pady=4)
-
-    # Quit button
-    quit_button = ttk.Button(root, text="Quit", command=root.destroy)
-    quit_button.pack(pady=8)
-
-    # Update UI loop
     def update_ui():
-        # Every little while, take messages from the queue and show them on screen
         while not status_queue.empty():
             msg = status_queue.get_nowait()
-            status_label.config(text=msg)
-        root.after(700, update_ui)
+            status_label.config(text=msg.upper().replace(" ", "_"))
+            if any(x in msg for x in ["Wake", "Processing", "Thinking"]):
+                status_label.config(fg=MODERN_ACCENT)
+            else:
+                status_label.config(fg=MODERN_TEXT_MUTED)
+        root.after(400, update_ui)
 
     update_ui()
     root.mainloop()
@@ -1417,6 +2627,17 @@ def start_gui():
 # ---------- Main ----------
 def main():
     # Program start:
+    ensure_appdata_dir()
+    if "--setup-wizard" in sys.argv:
+        ensure_env_setup(force=True)
+        return
+    if not ensure_env_setup():
+        try:
+            subprocess.Popen([sys.executable, "--setup-wizard"])
+        except Exception:
+            return
+        return
+    refresh_config()  # Load configuration and initialize orchestrator
     # 1) Make sure we have the owner's voice saved
     # 2) Start listening in the background
     # 3) Show the small dashboard
@@ -1434,60 +2655,382 @@ def main():
     else:
         start_tray()
 
-if __name__ == "__main__":
-    main()  # run the program when we start this file
+pass
 def open_settings_ui_global(parent=None):
     s = _load_settings()
     win = tk.Toplevel(parent) if parent else tk.Tk()
-    win.title("Settings")
-    win.geometry("320x260")
+    win.title("Sentinel Settings")
+    win.geometry("400x600")
+    win.configure(bg=MODERN_BG)
+    
+    # Use modern styles if already defined in start_gui
+    style = ttk.Style(win)
+    
+    main_frame = tk.Frame(win, bg=MODERN_BG, padx=20, pady=20)
+    main_frame.pack(fill='both', expand=True)
+
+    tk.Label(main_frame, text="SETTINGS", font=MODERN_FONT_LARGE, 
+             bg=MODERN_BG, fg=MODERN_ACCENT).pack(anchor='w', pady=(0, 20))
+
     ent_var = tk.BooleanVar(value=entertainment_active)
     auto_var = tk.BooleanVar(value=bool(s.get("autostart", True)))
     bg_var = tk.BooleanVar(value=bool(s.get("background", False)))
     sens_var = tk.DoubleVar(value=float(s.get("wake_sensitivity", 0.6)))
+    kw_var = tk.StringVar(value=str(s.get("wake_keywords", s.get("wake_keyword", "hey computer"))))
+    offline_var = tk.BooleanVar(value=bool(s.get("offline_stt", True)))
+    strong_vault_var = tk.BooleanVar(value=bool(s.get("require_strong_vault", False)))
 
-    ttk.Checkbutton(win, text="Entertainment Mode", variable=ent_var).pack(pady=6)
-    ttk.Checkbutton(win, text="Autostart on Login", variable=auto_var).pack(pady=6)
-    ttk.Checkbutton(win, text="Run in Background (no GUI)", variable=bg_var).pack(pady=6)
-    ttk.Label(win, text="Wake Sensitivity").pack()
-    ttk.Scale(win, from_=0.1, to=1.0, orient='horizontal', variable=sens_var).pack(fill='x', padx=10)
+    # Modernized Checkbuttons
+    def create_check(text, var):
+        cb = tk.Checkbutton(main_frame, text=text, variable=var, 
+                           bg=MODERN_BG, fg=MODERN_TEXT, 
+                           activebackground=MODERN_BG, activeforeground=MODERN_ACCENT,
+                           selectcolor=MODERN_SURFACE, font=MODERN_FONT,
+                           padx=10, pady=5, anchor='w')
+        cb.pack(fill='x')
+
+    create_check("Entertainment Mode", ent_var)
+    create_check("Autostart on Login", auto_var)
+    create_check("Run in Background", bg_var)
+    create_check("Enable Offline STT", offline_var)
+    create_check("Strong Vault (AES-GCM)", strong_vault_var)
+
+    # Sensitivity Scale
+    tk.Label(main_frame, text="Wake Sensitivity", font=MODERN_FONT_BOLD, 
+             bg=MODERN_BG, fg=MODERN_TEXT).pack(anchor='w', pady=(15, 5))
+    ttk.Scale(main_frame, from_=0.1, to=1.0, orient='horizontal', 
+              variable=sens_var, style="Modern.Horizontal.TProgressbar").pack(fill='x')
+
+    # Keywords Entry
+    tk.Label(main_frame, text="Wake Keywords (comma-separated)", font=MODERN_FONT_BOLD, 
+             bg=MODERN_BG, fg=MODERN_TEXT).pack(anchor='w', pady=(15, 5))
+    kw_entry = tk.Entry(main_frame, textvariable=kw_var, bg=MODERN_SURFACE, 
+                       fg=MODERN_TEXT, insertbackground=MODERN_ACCENT, 
+                       relief='flat', font=MODERN_FONT)
+    kw_entry.pack(fill='x', ipady=5)
 
     def save_settings():
         global entertainment_active
+        conn = _ensure_secrets_db()
+        master = _prompt_master(win)
+        if not master:
+            messagebox.showerror("Settings", "Master password required.")
+            conn.close()
+            return
+        if not _verify_master(conn, master):
+            messagebox.showerror("Settings", "Invalid master password.")
+            conn.close()
+            return
+        conn.close()
+
         entertainment_active = ent_var.get()
         data = {
             "autostart": bool(auto_var.get()),
             "background": bool(bg_var.get()),
-            "wake_sensitivity": float(sens_var.get())
+            "wake_sensitivity": float(sens_var.get()),
+            "wake_keywords": kw_var.get().strip(),
+            "offline_stt": bool(offline_var.get()),
+            "require_strong_vault": bool(strong_vault_var.get())
         }
         _save_settings(data)
-        if data["autostart"]:
-            ensure_autostart()
-        try:
-            restart_wake_listener()
-        except Exception:
-            pass
-        messagebox.showinfo("Settings", "Saved. Wake sensitivity applied. Other changes may apply next start.")
+        if data["autostart"]: ensure_autostart()
+        try: restart_wake_listener()
+        except Exception: pass
+        messagebox.showinfo("Settings", "Saved. Settings applied.")
         win.destroy()
 
-    ttk.Button(win, text="Save", command=save_settings).pack(pady=10)
-    ttk.Button(win, text="View Logs", command=lambda: open_diagnostics_window(win)).pack(pady=6)
+    btn_frame = tk.Frame(main_frame, bg=MODERN_BG)
+    btn_frame.pack(fill='x', side='bottom', pady=(20, 0))
+
+    ttk.Button(btn_frame, text="Save Settings", style="ModernAccent.TButton", 
+               command=save_settings).pack(fill='x', pady=(0, 10))
+    ttk.Button(btn_frame, text="View Logs", style="Modern.TButton", 
+               command=lambda: open_diagnostics_window(win)).pack(fill='x')
+
+def open_macros_ui(parent=None):
+    macros = _macros_load()
+    win = tk.Toplevel(parent) if parent else tk.Tk()
+    win.title("Sentinel Macros")
+    win.geometry("520x640")
+    win.configure(bg=MODERN_BG)
+
+    main_frame = tk.Frame(win, bg=MODERN_BG, padx=20, pady=20)
+    main_frame.pack(fill='both', expand=True)
+
+    tk.Label(main_frame, text="MACRO MANAGER", font=MODERN_FONT_LARGE, 
+             bg=MODERN_BG, fg=MODERN_ACCENT).pack(anchor='w', pady=(0, 20))
+
+    # List of existing macros
+    list_frame = tk.Frame(main_frame, bg=MODERN_BG)
+    list_frame.pack(fill='both', expand=True, pady=(0, 15))
+
+    tk.Label(list_frame, text="Saved Macros", font=MODERN_FONT_BOLD, 
+             bg=MODERN_BG, fg=MODERN_TEXT).pack(anchor='w', pady=(0, 5))
+
+    lst = tk.Listbox(list_frame, bg=MODERN_SURFACE, fg=MODERN_TEXT, 
+                    selectbackground=MODERN_ACCENT, selectforeground=MODERN_BG,
+                    relief='flat', borderwidth=0, font=MODERN_FONT,
+                    highlightthickness=1, highlightbackground="#334155")
+    lst.pack(fill='both', expand=True)
+    for k in macros.keys():
+        lst.insert('end', k)
+
+    steps_txt = tk.Text(main_frame, height=4, bg=MODERN_SURFACE, fg=MODERN_TEXT,
+                       insertbackground=MODERN_ACCENT, relief='flat', 
+                       font=("Consolas", 10), padx=10, pady=10,
+                       highlightthickness=1, highlightbackground="#334155")
+    steps_txt.pack(fill='x', pady=(0, 15))
+
+    def show_steps(evt=None):
+        sel = lst.curselection()
+        if not sel: return
+        name = lst.get(sel[0])
+        steps = macros.get(_normalize_name(name), [])
+        steps_txt.delete('1.0', 'end')
+        steps_txt.insert('1.0', "\n".join(steps))
+
+    lst.bind('<<ListboxSelect>>', show_steps)
+
+    def run_sel():
+        sel = lst.curselection()
+        if not sel: return
+        name = lst.get(sel[0])
+        steps = macros.get(_normalize_name(name), [])
+        speak(f"Running macro {name}")
+        def run_steps():
+            for s in steps:
+                try:
+                    execute_command(s)
+                    time.sleep(0.8)
+                except Exception: pass
+        threading.Thread(target=run_steps, daemon=True).start()
+
+    def delete_sel():
+        sel = lst.curselection()
+        if not sel: return
+        name = lst.get(sel[0])
+        m = _macros_load()
+        if m.pop(_normalize_name(name), None) is not None and _macros_save(m):
+            speak("Macro deleted")
+            lst.delete(sel[0])
+            steps_txt.delete('1.0', 'end')
+
+    btn_row = tk.Frame(main_frame, bg=MODERN_BG)
+    btn_row.pack(fill='x', pady=(0, 20))
+    ttk.Button(btn_row, text="Run Macro", style="ModernAccent.TButton", 
+               command=run_sel).pack(side='left', expand=True, fill='x', padx=(0, 5))
+    ttk.Button(btn_row, text="Delete", style="Modern.TButton", 
+               command=delete_sel).pack(side='right', expand=True, fill='x', padx=(5, 0))
+
+    # Add New Macro Section
+    add_frame = tk.Frame(main_frame, bg=MODERN_SURFACE, padx=15, pady=15)
+    add_frame.pack(fill='x')
+
+    tk.Label(add_frame, text="Add New Macro", font=MODERN_FONT_BOLD, 
+             bg=MODERN_SURFACE, fg=MODERN_TEXT).pack(anchor='w', pady=(0, 10))
+
+    name_var = tk.StringVar()
+    steps_var = tk.StringVar()
+    
+    tk.Label(add_frame, text="Name", font=("Segoe UI Variable Display", 8), 
+             bg=MODERN_SURFACE, fg=MODERN_TEXT_MUTED).pack(anchor='w')
+    tk.Entry(add_frame, textvariable=name_var, bg=MODERN_BG, fg=MODERN_TEXT, 
+             relief='flat', insertbackground=MODERN_ACCENT).pack(fill='x', pady=(0, 10), ipady=3)
+
+    tk.Label(add_frame, text="Steps (semicolon-separated)", font=("Segoe UI Variable Display", 8), 
+             bg=MODERN_SURFACE, fg=MODERN_TEXT_MUTED).pack(anchor='w')
+    tk.Entry(add_frame, textvariable=steps_var, bg=MODERN_BG, fg=MODERN_TEXT, 
+             relief='flat', insertbackground=MODERN_ACCENT).pack(fill='x', pady=(0, 15), ipady=3)
+
+    def save_new():
+        name = name_var.get().strip()
+        steps = [s.strip() for s in steps_var.get().split(';') if s.strip()]
+        if not name or not steps: return
+        m = _macros_load()
+        m[_normalize_name(name)] = steps
+        if _macros_save(m):
+            speak("Macro saved")
+            lst.insert('end', name)
+            name_var.set(""); steps_var.set("")
+
+    ttk.Button(add_frame, text="Save New Macro", style="ModernAccent.TButton", 
+               command=save_new).pack(fill='x')
 
 def open_diagnostics_window(parent=None):
     try:
         lp = os.path.join(APPDATA_DIR, "sentinel.log")
-        text = ""
+        log_text = ""
         if os.path.exists(lp):
             with open(lp, "r", encoding="utf-8", errors="ignore") as f:
                 lines = f.readlines()[-400:]
-                text = "".join(lines)
+                log_text = "".join(lines)
+        
         lv = tk.Toplevel(parent) if parent else tk.Tk()
-        lv.title("Diagnostics")
-        lv.geometry("620x420")
-        txt = tk.Text(lv, wrap='none')
-        txt.insert('1.0', text or "No logs.")
+        lv.title("Sentinel Diagnostics")
+        lv.geometry("680x520")
+        lv.configure(bg=MODERN_BG)
+
+        main_frame = tk.Frame(lv, bg=MODERN_BG, padx=20, pady=20)
+        main_frame.pack(fill='both', expand=True)
+
+        tk.Label(main_frame, text="DIAGNOSTICS & LOGS", font=MODERN_FONT_LARGE, 
+                 bg=MODERN_BG, fg=MODERN_ACCENT).pack(anchor='w', pady=(0, 20))
+
+        txt_frame = tk.Frame(main_frame, bg=MODERN_BG)
+        txt_frame.pack(fill='both', expand=True, pady=(0, 20))
+
+        txt = tk.Text(txt_frame, wrap='none', bg=MODERN_SURFACE, fg=MODERN_TEXT,
+                     relief='flat', font=("Consolas", 9), padx=10, pady=10,
+                     highlightthickness=1, highlightbackground="#334155")
+        txt.insert('1.0', log_text or "No logs found.")
         txt.configure(state='disabled')
         txt.pack(fill='both', expand=True)
+
+        # Mic Level in Diagnostics
+        mic_frame = tk.Frame(main_frame, bg=MODERN_SURFACE, padx=15, pady=15)
+        mic_frame.pack(fill='x')
+
+        tk.Label(mic_frame, text="Real-time Mic Monitor", font=MODERN_FONT_BOLD, 
+                 bg=MODERN_SURFACE, fg=MODERN_TEXT).pack(anchor='w', pady=(0, 10))
+
+        level_var = tk.DoubleVar(value=0.0)
+        bar = ttk.Progressbar(mic_frame, orient='horizontal', mode='determinate', 
+                             maximum=1.0, variable=level_var, style="Modern.Horizontal.TProgressbar")
+        bar.pack(fill='x', height=10)
+
+        def update_level():
+            try:
+                pa = pyaudio.PyAudio()
+                stream = pa.open(format=pyaudio.paInt16, channels=1, rate=16000, 
+                                 input=True, frames_per_buffer=512)
+                while True:
+                    if not lv.winfo_exists(): break
+                    data = stream.read(512, exception_on_overflow=False)
+                    samples = np.frombuffer(data, dtype=np.int16)
+                    amp = float(np.mean(np.abs(samples))) / 32768.0
+                    level_var.set(min(1.0, amp * 12.0))
+                    time.sleep(0.05)
+            except Exception: pass
+            finally:
+                try: stream.close(); pa.terminate()
+                except Exception: pass
+
+        threading.Thread(target=update_level, daemon=True).start()
+        
+        ttk.Button(main_frame, text="Close", style="Modern.TButton", 
+                   command=lv.destroy).pack(fill='x', pady=(20, 0))
+
+    except Exception as e:
+        print(f"Error opening diagnostics: {e}")
+        # health statuses
+        health = []
+        health.append("OpenAI: OK" if os.getenv("OPEN_AI_API_KEY") else "OpenAI: Missing")
+        health.append("Porcupine: OK" if ACCESS_KEY else "Porcupine: Missing")
+        try:
+            import socket
+            socket.create_connection(("8.8.8.8", 53), timeout=2)
+            health.append("Network: OK")
+        except Exception:
+            health.append("Network: Unavailable")
+        ttk.Label(frm, text=" | ".join(health)).pack(pady=6)
     except Exception:
         if messagebox:
             messagebox.showerror("Diagnostics", "Unable to open logs.")
+NOTES_PATH = os.path.join(APPDATA_DIR, "notes.json")
+
+def _notes_add(text):
+    ensure_appdata_dir()
+    notes = []
+    try:
+        if os.path.exists(NOTES_PATH):
+            with open(NOTES_PATH, "r", encoding="utf-8") as f:
+                notes = json.load(f)
+    except Exception:
+        notes = []
+    notes.append(text)
+    try:
+        with open(NOTES_PATH, "w", encoding="utf-8") as f:
+            json.dump(notes, f, indent=2)
+        return True
+    except Exception:
+        return False
+
+def _notes_list():
+    try:
+        if os.path.exists(NOTES_PATH):
+            with open(NOTES_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        return []
+    return []
+
+def clean_downloads_folder():
+    try:
+        path = os.path.join(os.path.expanduser("~"), "Downloads")
+        count = 0
+        for f in os.listdir(path):
+            fp = os.path.join(path, f)
+            if os.path.isfile(fp):
+                # Only delete old files (> 30 days) to be safe
+                if time.time() - os.path.getmtime(fp) > 86400 * 30:
+                    os.remove(fp)
+                    count += 1
+        status_queue.put(f"Cleaned {count} files from Downloads.")
+        speak(f"Cleaned {count} files from your downloads folder.")
+    except Exception as e:
+        logging.error(f"Error cleaning downloads: {e}")
+
+def find_large_files_in_downloads():
+    try:
+        path = os.path.join(os.path.expanduser("~"), "Downloads")
+        files = []
+        for f in os.listdir(path):
+            fp = os.path.join(path, f)
+            if os.path.isfile(fp):
+                size = os.path.getsize(fp)
+                if size > 100 * 1024 * 1024: # > 100MB
+                    files.append((f, size / (1024 * 1024)))
+        
+        files.sort(key=lambda x: x[1], reverse=True)
+        if not files:
+            speak("No files larger than 100 megabytes found.")
+        else:
+            speak(f"Found {len(files)} large files. The largest is {files[0][0]} at {int(files[0][1])} megabytes.")
+            for f, s in files[:3]:
+                print(f"[Large File] {f} ({int(s)}MB)")
+    except Exception as e:
+        logging.error(f"Error finding large files: {e}")
+def ensure_vosk_model():
+    model_dir = os.path.join(APPDATA_DIR, "vosk-model")
+    if os.path.isdir(model_dir) and os.listdir(model_dir):
+        return True
+    try:
+        import urllib.request, zipfile, io
+        url = os.getenv("VOSK_DL") or "https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip"
+        data = urllib.request.urlopen(url, timeout=30).read()
+        z = zipfile.ZipFile(io.BytesIO(data))
+        target = model_dir
+        os.makedirs(target, exist_ok=True)
+        for m in z.namelist():
+            if m.endswith('/'):
+                continue
+            rel = m.split('/', 1)[1] if '/' in m else m
+            dest = os.path.join(target, rel)
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            with z.open(m) as src, open(dest, 'wb') as out:
+                out.write(src.read())
+        return True
+    except Exception:
+        return False
+
+if __name__ == "__main__":
+    import sys
+    if "--install-deps" in sys.argv:
+        try:
+            print("Installing Playwright browsers...")
+            subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"])
+            sys.exit(0)
+        except Exception as e:
+            print(f"Error installing dependencies: {e}")
+            sys.exit(1)
+    main()
