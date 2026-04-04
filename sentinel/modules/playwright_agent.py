@@ -252,7 +252,7 @@ class PlaywrightAgentModule:
         if not self.gemini_api_key or not _HTTPX_AVAILABLE:
             return None
         try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={self.gemini_api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={self.gemini_api_key}"
             prompt = AGENT_SYSTEM_PROMPT.format(
                 goal=goal,
                 steps="; ".join(steps[-5:]) if steps else "None yet"

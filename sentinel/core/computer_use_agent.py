@@ -272,7 +272,7 @@ class ComputerUseAgent:
         prompt = VISION_PROMPT.format(goal=goal, history=history_str)
 
         try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={self.api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={self.api_key}"
             payload = {
                 "contents": [{
                     "parts": [

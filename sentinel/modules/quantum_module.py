@@ -1,10 +1,11 @@
 """
 sentinel/modules/quantum_module.py
 ────────────────────────────────────
-Sci-Fi Tier 5: Quantum Computing Offloading.
-Builds an OpenQASM 3.0 circuit string representing a high-complexity NP-hard 
-optimization problem. Instead of forcing a massive local SDK download (Qiskit),
-it bundles the string and sends it via HTTP to the IBM Quantum Cloud API.
+Classical / quantum-inspired heuristics for optimization-flavored tasks.
+
+Note: `solve_optimization` uses a local simulated-annealing-style heuristic, not a
+real quantum processor, unless you separately wire IBM Quantum API credentials
+and implement a real submission path. Naming is intentionally stylized.
 """
 
 import os

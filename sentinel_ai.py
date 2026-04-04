@@ -22,10 +22,19 @@ class _SuppressWNDPROC(logging.Filter):
         return "WNDPROC" not in record.getMessage()
 
 def custom_unraisablehook(unraisable):
+    # Silence specific noisy but harmless errors from Windows libraries
     err_str = str(unraisable.exc_value)
-    if unraisable.exc_type is TypeError and ("WPARAM" in err_str or "LRESULT" in err_str):
-        return  # Silently drop the known pystray uncastable windows event
-    sys.__unraisablehook__(unraisable)
+    if unraisable.exc_type is TypeError:
+        # Pystray and some older Windows libs throw unraisable TypeErrors with no message 
+        # or about LRESULT/WPARAM casting during event handling.
+        if not err_str or any(x in err_str for x in ["WPARAM", "LRESULT", "WNDPROC", "HWND"]):
+            return
+            
+    # For actually useful unraisable errors, use the default handler
+    try:
+        sys.__unraisablehook__(unraisable)
+    except Exception:
+        pass
 
 sys.unraisablehook = custom_unraisablehook
 
@@ -35,11 +44,22 @@ class StderrFilter:
     def __init__(self, stream):
         self.stream = stream
     def write(self, data):
-        if "WNDPROC" in data or "LRESULT" in data or "WPARAM" in data:
+        # Even more aggressive filtering for raw terminal output
+        if not data or not data.strip():
             return
+            
+        # Silence persistent noise from Windows event handlers (PyStray, Tkinter, etc.)
+        # Sometimes these come in chunks like 'TypeError:', ': ', or just ':'
+        noise_keywords = ["TypeError", "WNDPROC", "LRESULT", "WPARAM", "HWND"]
+        if any(x in data for x in noise_keywords) or data.strip() == ":":
+            return # Silent drop for these specific known noise-makers
+                
         self.stream.write(data)
     def flush(self):
-        self.stream.flush()
+        try:
+            self.stream.flush()
+        except Exception:
+            pass
 
 sys.stderr = StderrFilter(_original_stderr)
 # ────────────────────────────────────────────────────────────────────────
@@ -203,6 +223,72 @@ porcupine_status = "Waiting..."
 
 # status queue for GUI updates
 status_queue = Queue()
+
+# Global status variables for Brain health
+brain_status = "CONNECTING..."
+brain_status_color = "#94a3b8" # Muted
+local_status = "INIT..."
+local_status_color = "#94a3b8"
+
+def _brain_monitor_loop():
+    """Background thread to monitor LLM connectivity and local service health."""
+    global brain_status, brain_status_color, local_status, local_status_color
+    
+    first_run = True
+    while True:
+        try:
+            # 1. Check Local (Ollama) every minute
+            if sentinel_orchestrator and hasattr(sentinel_orchestrator, 'ollama_module'):
+                ollama = sentinel_orchestrator.ollama_module
+                if ollama.is_available():
+                    local_status = "ONLINE"
+                    local_status_color = "#22c55e" # Green
+                elif getattr(ollama, 'is_installing', False):
+                    local_status = "INSTALLING..."
+                    local_status_color = "#f59e0b" # Orange
+                else:
+                    local_status = "OFFLINE"
+                    local_status_color = "#ef4444" # Red
+                    # Auto-start if offline
+                    try:
+                        ollama.start_service()
+                    except Exception:
+                        pass
+            else:
+                local_status = "UNAVAILABLE"
+                local_status_color = "#64748b"
+
+            # 2. Check Brain (Gemini/OpenRouter) every 5-10 mins (spare quota)
+            # On first run, we check immediately, then relax to 10 minutes.
+            current_time = int(time.time())
+            if first_run or (current_time % 600 < 40):
+                try:
+                    # Minimal probe logic - using a very simple prompt
+                    # We use the unified gemini_generate which handles the user's manual 3.0-flash
+                    resp = gemini_generate("Ping status check. Reply 'OK'.", model="gemini-2.0-flash")
+                    
+                    if "connecting" in resp.lower() or "internet" in resp.lower():
+                        brain_status = "OFFLINE"
+                        brain_status_color = "#ef4444" 
+                    elif "quota" in resp.lower() or "429" in resp.lower():
+                        brain_status = "QUOTA"
+                        brain_status_color = "#f59e0b" # Orange
+                    elif "not found" in resp.lower() or "404" in resp.lower() or "not a valid model" in resp.lower():
+                        brain_status = "ID ERROR" 
+                        brain_status_color = "#f43f5e" # Rose
+                    else:
+                        brain_status = "ONLINE"
+                        brain_status_color = "#22c55e" # Green
+                except Exception:
+                    brain_status = "OFFLINE"
+                    brain_status_color = "#ef4444"
+                first_run = False
+            
+        except Exception:
+            pass
+        time.sleep(40) # Poll periodically
+
+threading.Thread(target=_brain_monitor_loop, daemon=True).start()
 tray_icon = None
 tray_lock = threading.Lock()
 
@@ -972,67 +1058,83 @@ def agent_handle(command):
     else:
         speak("I'm not sure how to perform that step. Please provide a direct command like 'install' or 'execute'.")
 
-def gemini_generate(prompt: str, conv=None, emotion: str = "Neutral", model: str = "gemini-2.5-flash") -> str:
+def gemini_generate(prompt: str, conv=None, emotion: str = "Neutral", model: str = "gemini-3-flash-preview") -> str:
     """
-    Send a prompt to Gemini 2.0 Flash and return the text response.
-    Optionally injects conversation history from `conv` (ConversationManager).
-    Falls back to Ollama if Gemini is unavailable.
+    Send a prompt to Gemini 2.0 Flash (primary), falling back to OpenRouter or Ollama on failure (e.g. 429 Quota).
     """
+    # 1. Try Gemini primary
     key = os.getenv("GEMINI_API_KEY")
-    if not key:
-        logging.warning("GEMINI_API_KEY not set.")
-        # Try Ollama offline
-        if sentinel_orchestrator and hasattr(sentinel_orchestrator, 'ollama_module'):
+    if key:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+        contents = []
+        if conv:
+            # Use ConversationManager if provided
             try:
-                return sentinel_orchestrator.ollama_module.generate(prompt) or "Gemini key missing and offline model unavailable."
+                for turn in list(conv._history):
+                    role = "model" if turn.role == "assistant" else "user"
+                    contents.append({"role": role, "parts": [{"text": turn.content}]})
             except Exception:
                 pass
-        return "Gemini API key not configured."
+        
+        if not contents:
+            contents.append({"role": "user", "parts": [{"text": "You are SentinelAI, an advanced personal AI assistant. Be concise."}]})
+        
+        user_text = f"[User emotion: {emotion}] {prompt}" if emotion and emotion != "Neutral" else prompt
+        contents.append({"role": "user", "parts": [{"text": user_text}]})
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+        body = {"contents": contents, "generationConfig": {"maxOutputTokens": 400, "temperature": 0.7}}
+        try:
+            with httpx.Client(timeout=30) as client:
+                r = client.post(url, json=body)
+                if r.status_code == 429:
+                    logging.warning("Gemini 429 Quota Exceeded. Falling back...")
+                else:
+                    j = r.json()
+                    text = j.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+                    if text:
+                        return text
+        except Exception as e:
+            logging.warning(f"Gemini call failed: {e}")
 
-    # Build contents with optional conversation history
-    contents = []
-    if conv:
-        for turn in list(conv._history):
-            role = "model" if turn.role == "assistant" else "user"
-            contents.append({"role": role, "parts": [{"text": turn.content}]})
+    # 2. Fallback to OpenRouter
+    or_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPEN_AI_API_KEY")
+    if or_key:
+        try:
+            logging.info("Attempting OpenRouter fallback...")
+            # Simple direct request to avoid heavy dependencies in this utility
+            url = "https://openrouter.ai/api/v1/chat/completions"
+            headers = {"Authorization": f"Bearer {or_key}", "Content-Type": "application/json"}
+            messages = [{"role": "user", "content": prompt}]
+            if conv:
+                try: messages = conv.build_messages(prompt, emotion=emotion)
+                except Exception: pass
+            
+            payload = {"model": "google/gemini-3-flash-preview", "messages": messages, "max_tokens": 400}
+            with httpx.Client(timeout=30) as client:
+                r = client.post(url, json=payload, headers=headers)
+                if r.status_code != 200:
+                    logging.warning(f"OpenRouter returned {r.status_code}: {r.text[:100]}")
+                    # Try a different model ID just in case the free experimental one is rotating names
+                    if r.status_code == 404:
+                        payload["model"] = "google/gemini-3-flash-preview"
+                        r = client.post(url, json=payload, headers=headers)
+                
+                j = r.json()
+                text = j.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+                if text:
+                    return text
+        except Exception as e:
+            logging.warning(f"OpenRouter fallback failed: {e}")
 
-    # Add system context if no prior history
-    if not contents:
-        contents.append({"role": "user", "parts": [{"text": "You are SentinelAI, an advanced personal AI assistant. Be concise and helpful."}]})
-        contents.append({"role": "model", "parts": [{"text": "Understood. I'm SentinelAI, ready to assist."}]})
+    # 3. Fallback to Ollama
+    if sentinel_orchestrator and hasattr(sentinel_orchestrator, 'ollama_module'):
+        try:
+            logging.info("Attempting local Ollama fallback...")
+            return sentinel_orchestrator.ollama_module.generate(prompt) or "Local model returned empty response."
+        except Exception as e:
+            logging.warning(f"Ollama fallback failed: {e}")
 
-    # Add current prompt
-    user_text = f"[User emotion: {emotion}] {prompt}" if emotion and emotion != "Neutral" else prompt
-    contents.append({"role": "user", "parts": [{"text": user_text}]})
-
-    body = {
-        "contents": contents,
-        "generationConfig": {
-            "maxOutputTokens": 400,
-            "temperature": 0.7,
-            "topP": 0.9
-        }
-    }
-    try:
-        with httpx.Client(timeout=30) as client:
-            r = client.post(url, json=body)
-            j = r.json()
-        text = j.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
-        if text:
-            logging.info(f"[Gemini 2.0] Response ({len(text)} chars)")
-            return text
-        # Log error detail if empty
-        if "error" in j:
-            logging.error(f"Gemini API error: {j['error'].get('message', j['error'])}")
-        return "I received an empty response from Gemini."
-    except httpx.TimeoutException:
-        logging.warning("Gemini request timed out.")
-        return "Request timed out. Please try again."
-    except Exception as e:
-        logging.error(f"Gemini error: {e}")
-        return "Gemini service error."
+    return "I'm having trouble connecting to all of my intelligence engines. Please check your internet or API keys."
 
 def _cosine(a, b):
     na = np.linalg.norm(a)
@@ -1313,7 +1415,7 @@ def record_wav(filename, duration=3, samplerate=16000, channels=1, frames_per_bu
     wf.close()
     print(f"[Saved] {filename}")
     return filename
-def record_until_silence(filename, max_duration=25, samplerate=16000, channels=1, frames_per_buffer=1024, min_duration=1.5, start_timeout=3.5, silence_threshold=0.008, speech_threshold=0.015, silence_duration=0.6, on_amp=None):
+def record_until_silence(filename, max_duration=25, samplerate=16000, channels=1, frames_per_buffer=1024, min_duration=1.5, start_timeout=3.5, silence_threshold=0.008, speech_threshold=0.007, silence_duration=0.6, on_amp=None):
     pa = pyaudio.PyAudio()
     try:
         stream = pa.open(format=pyaudio.paInt16,
@@ -1349,7 +1451,7 @@ def record_until_silence(filename, max_duration=25, samplerate=16000, channels=1
             if baseline_vals:
                 base = np.median(baseline_vals)
                 base = max(base, 0.002)
-                sp_thr = max(speech_threshold, base * 2.5)
+                sp_thr = max(speech_threshold, base * 2.0)
                 si_thr = max(silence_threshold, base * 1.2)
             else:
                 sp_thr = speech_threshold
@@ -1400,6 +1502,25 @@ def record_until_silence(filename, max_duration=25, samplerate=16000, channels=1
     print(f"[Saved] {filename}")
     return filename, had_speech
 
+root_window = None
+
+def shutdown_sentinel():
+    """Cleanly deactivates and closes the Sentinel application."""
+    global root_window
+    print("[Sentinel] Shutdown initiated.")
+    try:
+        # Stop wake word listener
+        stop_wake_listener()
+        # Close the main GUI window
+        if root_window:
+            root_window.after(100, root_window.destroy)
+        else:
+            import sys
+            sys.exit(0)
+    except Exception:
+        import sys
+        sys.exit(0)
+
 def trim_wav_silence(filename, threshold=0.02):
     # This cuts off the quiet parts at the start and end of a sound file
     # so we keep the important speaking part.
@@ -1446,8 +1567,8 @@ def _audio_signal_stats(filename):
         noise_floor = np.mean(sorted_energies[:max(1, len(energies) // 10)])
         
         # Voiced threshold: must be significantly above noise floor AND above a minimal absolute threshold.
-        # We cap the relative threshold to prevent it from becoming too high in loud environments.
-        voiced_threshold = max(0.012, min(0.05, noise_floor * 3.5))
+        # Further lowered base threshold from 0.005 to 0.003 and multiplier to 1.8 for extreme sensitivity.
+        voiced_threshold = max(0.003, min(0.035, noise_floor * 1.8))
         voiced_frames = [e for e in energies if e > voiced_threshold]
         voiced_ratio = float(len(voiced_frames) / len(energies))
         
@@ -1491,9 +1612,9 @@ def register_reference_if_missing():
             return False
         trim_wav_silence(REFERENCE_WAV)
         stats = _audio_signal_stats(REFERENCE_WAV)
-        if stats["rms"] < 0.012 or stats["voiced_ratio"] < 0.20:
-            speak("Voice registration failed. Please speak clearly.")
-            status_queue.put("Voice registration too quiet or unclear.")
+        if stats["rms"] < 0.005 or stats["voiced_ratio"] < 0.10:
+            speak("Voice registration failed. Please speak clearly, possibly closer to the microphone.")
+            status_queue.put(f"Voice registration too quiet (RMS: {stats['rms']:.3f}) or unclear (VR: {stats['voiced_ratio']:.2f}).")
             return False
         owner_embed = compute_embedding(REFERENCE_WAV)
         np.save(OWNER_EMBED_PATH, owner_embed)
@@ -1540,9 +1661,9 @@ def manual_register_voice():
             return
             
         stats = _audio_signal_stats(REFERENCE_WAV)
-        if stats["rms"] < 0.012 or stats["voiced_ratio"] < 0.20:
-            speak("Voice update failed. Audio quality too low.")
-            status_queue.put("Voice update failed: poor audio.")
+        if stats["rms"] < 0.005 or stats["voiced_ratio"] < 0.10:
+            speak("Voice update failed. Audio quality too low or too quiet.")
+            status_queue.put(f"Voice update failed: poor audio (RMS: {stats['rms']:.3f}, VR: {stats['voiced_ratio']:.2f}).")
             return
 
         owner_embed = compute_embedding(REFERENCE_WAV)
@@ -1584,9 +1705,9 @@ def liveness_check(threshold=0.88):
     try:
         trim_wav_silence(LIVENESS_WAV)
         stats = _audio_signal_stats(LIVENESS_WAV)
-        # Stricter checks for liveness
-        if stats["rms"] < 0.012 or stats["peak"] < 0.04 or stats["voiced_ratio"] < 0.22:
-            status_queue.put(f"Liveness failed: weak/noisy audio (VR: {stats['voiced_ratio']:.2f})")
+        # Even more relaxed checks for liveness
+        if stats["rms"] < 0.005 or stats["peak"] < 0.02 or stats["voiced_ratio"] < 0.12:
+            status_queue.put(f"Liveness failed: weak audio (RMS: {stats['rms']:.3f}, VR: {stats['voiced_ratio']:.2f})")
             return False
             
         live_embed = compute_embedding(LIVENESS_WAV)
@@ -1595,8 +1716,8 @@ def liveness_check(threshold=0.88):
         print(f"[Liveness Similarity Score]: {similarity:.4f}")
         status_queue.put(f"Liveness score: {similarity:.3f}")
         
-        # Stricter similarity threshold and voiced ratio requirement
-        is_owner = similarity >= threshold and stats["voiced_ratio"] >= 0.25
+        # Extremely relaxed similarity threshold and voiced ratio requirement
+        is_owner = similarity >= threshold or (similarity >= 0.85 and stats["voiced_ratio"] >= 0.15)
         if not is_owner:
             status_queue.put("Voice verification failed.")
             speak("Voice verification failed. Access denied.")
@@ -1675,7 +1796,7 @@ def transcribe_wav(filename):
 def interpret_command(command: str, emotion: str = "Neutral") -> str:
     """
     Routes a command to the best available LLM with full conversation history.
-    Uses Gemini 2.0 Flash as primary, OpenRouter as secondary, Ollama as offline fallback.
+    Now wraps the unified gemini_generate which handles fallbacks.
     """
     if not command:
         return ""
@@ -1687,83 +1808,14 @@ def interpret_command(command: str, emotion: str = "Neutral") -> str:
     except Exception:
         conv = None
 
-    # Direct Gemini routing
-    c = command.lower().strip()
-    if c.startswith("ask gemini") or c.startswith("use gemini"):
-        parts = command.split(" ", 2)
-        prompt = parts[2] if len(parts) > 2 else command
-        resp = gemini_generate(prompt, conv=conv, emotion=emotion)
-        if conv:
-            conv.add_turn("user", command, emotion=emotion, intent="ask_gemini")
-            conv.add_turn("assistant", resp)
-        return resp
-
-    # Build message list with conversation history
-    if conv:
-        messages = conv.build_messages(command, emotion=emotion)
-    else:
-        messages = [
-            {"role": "system", "content": "You are SentinelAI, a powerful personal desktop AI assistant. Be concise and action-oriented."},
-            {"role": "user", "content": command}
-        ]
-
-    # 1. Try Gemini 2.0 Flash (primary)
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    if gemini_key:
-        try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
-            # Convert messages to Gemini format
-            gemini_contents = []
-            for msg in messages:
-                role = "model" if msg["role"] == "assistant" else msg["role"]
-                if role == "system":
-                    role = "user"  # Gemini uses user for system context
-                gemini_contents.append({"role": role, "parts": [{"text": msg["content"]}]})
-            body = {"contents": gemini_contents, "generationConfig": {"maxOutputTokens": 300, "temperature": 0.7}}
-            with httpx.Client(timeout=30) as client:
-                r = client.post(url, json=body)
-                j = r.json()
-            resp = j.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "").strip()
-            if resp:
-                if conv:
-                    conv.add_turn("user", command, emotion=emotion)
-                    conv.add_turn("assistant", resp)
-                return resp
-        except Exception as e:
-            logging.warning(f"Gemini 2.0 failed: {e}")
-
-    # 2. Try OpenRouter (secondary)
-    or_key = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPEN_AI_API_KEY")
-    if or_key:
-        try:
-            from openai import OpenAI
-            client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=or_key)
-            resp = client.chat.completions.create(
-                model="google/gemini-2.5-flash-exp:free",
-                messages=messages,
-                max_tokens=300
-            )
-            text = resp.choices[0].message.content.strip()
-            if text:
-                if conv:
-                    conv.add_turn("user", command, emotion=emotion)
-                    conv.add_turn("assistant", text)
-                return text
-        except Exception as e:
-            logging.warning(f"OpenRouter failed: {e}")
-
-    # 3. Ollama offline fallback
-    if sentinel_orchestrator and sentinel_orchestrator.ollama_module:
-        try:
-            ollama_resp = sentinel_orchestrator.ollama_module.generate(command)
-            if ollama_resp and conv:
-                conv.add_turn("user", command, emotion=emotion)
-                conv.add_turn("assistant", ollama_resp)
-            return ollama_resp
-        except Exception as e:
-            logging.warning(f"Ollama failed: {e}")
-
-    return "I'm sorry, I couldn't process that request right now."
+    # Unified call via gemini_generate which handles fallback chain: Gemini -> OpenRouter -> Ollama
+    resp = gemini_generate(command, conv=conv, emotion=emotion)
+    
+    if resp and conv:
+        conv.add_turn("user", command, emotion=emotion)
+        conv.add_turn("assistant", resp)
+        
+    return resp
 
 # Execute a handful of commands (keeps your original behaviors)
 def execute_command(command):
@@ -1783,12 +1835,12 @@ def execute_command(command):
                 speak("I encountered a system error and could not find an immediate repair path.")
 
 def _execute_command_internal(command):
-    # This is the action center. It reads the command text and does the matching thing.
+    # Modular command engine entry point.
     original = (command or "").strip('.!?, ')
     command = original.lower()
-    print("[Execute] ", command)
+    print(f"[Sentinel] Processing: {command}")
     
-    # --- System Control Priority (Always active even if agent is on) ---
+    # ─── Priority System Overrides ───────────────────────────────────────
     if command in ("stop", "stop agent", "agent stop", "disable agent"):
         speak("Stopping agent")
         stop_agent()
@@ -1813,257 +1865,27 @@ def _execute_command_internal(command):
         status_queue.put("Entertainment mode disabled.")
         speak("Entertainment mode disabled.")
         return
-    # ------------------------------------------------------------------
-
-    global agent_active
-    if agent_active:
-        agent_handle(command)  # Now system controls are skipped, and actual tasks go to agent
-        return
     
-    if command in ("start", "start agent", "agent start", "enable agent"):
-        speak("Starting agent")
-        start_agent()
-        return
-    # Secrets: store
-    if ("password for" in command or "variable" in command) and ("keep in mind" in command or "remember" in command or "store" in command) and (" is " in command or " = " in command):
-        base = "password for"
-        idx = command.find(base)
-        if idx == -1:
-            base = "variable"
-            idx = command.find(base)
-        end = command.find(" is ", idx)
-        sep = 4
-        if end == -1:
-            end = command.find(" = ", idx)
-            sep = 3
-        name = original[idx+len(base):end].strip()
-        pwd = original[end+sep:].strip()
-        if name and pwd:
-            ok = store_secret(_normalize_name(name), pwd, parent=root_window)
-            if ok:
-                speak(f"Stored password for {name}")
-        return
-    # Secrets: fetch
-    if ("password for" in command or "variable" in command) and ("give me" in command or "what is" in command or "show" in command):
-        base = "password for"
-        idx = command.find(base)
-        if idx == -1:
-            base = "variable"
-            idx = command.find(base)
-        name = original[idx+len(base):].strip()
-        if name:
-            pw = fetch_secret(_normalize_name(name), parent=root_window)
-            if pw:
-                speak_password_spelled(pw)
-            else:
-                speak("No password found")
-        return
-
-    if command.startswith("open "):
-        appname = command.split("open ", 1)[1].strip()
-        if not open_app(appname):
-            install_and_open_app(appname)
-        return
-    elif command.startswith("close "):
-        appname = command.split("close ", 1)[1].strip()
-        if appname:
-            close_app(appname)
-        return
-    elif "open browser" in command:
-        speak("Opening browser")
-        webbrowser.open("https://www.google.com")
-        return
-    elif "open gmail" in command:
-        speak("Opening Gmail")
-        webbrowser.open("https://mail.google.com")
-        return
-    elif "shutdown" in command:
-        speak("Shutting down the system.")
-        os.system("shutdown /s /t 1")
-        return
-    elif "restart" in command:
-        speak("Restarting the system.")
-        os.system("shutdown /r /t 1")
-        return
-    elif "minimize window" in command or "window minimize" in command:
-        try:
-            import pygetwindow as gw
-            win = gw.getActiveWindow()
-            if win: win.minimize()
-            speak("Window minimized")
-        except Exception: speak("Could not minimize window")
-        return
-    elif "maximize window" in command or "window maximize" in command:
-        try:
-            import pygetwindow as gw
-            win = gw.getActiveWindow()
-            if win: win.maximize()
-            speak("Window maximized")
-        except Exception: speak("Could not maximize window")
-        return
-    elif "close window" in command or "window close" in command:
-        try:
-            import pygetwindow as gw
-            win = gw.getActiveWindow()
-            if win: win.close()
-            speak("Window closed")
-        except Exception: speak("Could not close window")
-        return
-    elif "snap left" in command or "window left" in command:
-        pyautogui.hotkey('win', 'left')
-        speak("Snapped left")
-        return
-    elif "snap right" in command or "window right" in command:
-        pyautogui.hotkey('win', 'right')
-        speak("Snapped right")
-        return
-    elif "move window to left monitor" in command or "window left monitor" in command:
-        pyautogui.hotkey('win', 'shift', 'left')
-        speak("Moved to left monitor")
-        return
-    elif "move window to right monitor" in command or "window right monitor" in command:
-        pyautogui.hotkey('win', 'shift', 'right')
-        speak("Moved to right monitor")
-        return
-    elif "clean downloads" in command:
-        speak("Cleaning downloads folder.")
-        threading.Thread(target=clean_downloads_folder, daemon=True).start()
-        return
-    elif "find large files" in command:
-        speak("Searching for large files in downloads.")
-        threading.Thread(target=find_large_files_in_downloads, daemon=True).start()
-        return
-
-    # Notes management
-    elif command.startswith("remember note ") or command.startswith("save note "):
-        note = original.split(" ", 2)[2].strip()
-        if note:
-            _notes_add(note)
-            speak("Note saved")
-        return
-    elif command in ("list notes", "show notes"):
-        items = _notes_list()
-        if not items:
-            speak("No notes")
-        else:
-            speak("You have " + str(len(items)) + " notes")
-            for i, n in enumerate(items, 1):
-                speak(f"Note {i}: {n[:80]}")
-        return
-    elif command.startswith("forget note "):
-        idx_s = command.split("forget note ", 1)[1].strip()
-        try:
-            idx = int(idx_s)
-            if _notes_forget(idx):
-                speak("Note removed")
-            else:
-                speak("No such note")
-        except Exception:
-            speak("Please provide a valid note number")
-        return
-
-    elif "system status" in command:
-        speak("System is active and monitoring.")
-        return
-    elif "temperature" in command or "cpu temp" in command:
-        # try to get system info through orchestrator or simple call
-        if sentinel_orchestrator:
-            speak(sentinel_orchestrator.run_command("what is my cpu temperature?"))
-        return
-    elif "system info" in command:
-        if sentinel_orchestrator:
-            speak(sentinel_orchestrator.run_command("give me a system info report"))
-        return
-    elif "ip address" in command or "show ip" in command:
-        import socket
-        try:
-            hostname = socket.gethostname()
-            ip = socket.gethostbyname(hostname)
-            speak(f"Your I P address is {ip}")
-        except Exception: speak("I could not determine your I P address.")
-        return
-    elif "battery report" in command:
-        speak("Generating battery report.")
-        os.system("powercfg /batteryreport /output %TEMP%\\battery-report.html")
-        webbrowser.open(os.path.join(os.getenv("TEMP"), "battery-report.html"))
-        return
-    elif "upcoming meets" in command or "google meet" in command or "calendar" in command:
-        if sentinel_orchestrator:
-            speak(sentinel_orchestrator.run_command("show my upcoming calendar events"))
-        return
-    elif "what is on my screen" in command or "analyze screen" in command:
-        if sentinel_orchestrator:
-            speak(sentinel_orchestrator.run_command("analyze my screen"))
-        return
-    elif "start perception" in command:
-        speak("Perception stream activated.")
-        # Trigger internal awareness if implemented
-        return
-    elif "stop perception" in command:
-        speak("Perception stream deactivated.")
-        return
-    elif "swarm" in command:
-        if sentinel_orchestrator:
-            speak(sentinel_orchestrator.run_command(original))
-        return
-    elif "computer use" in command:
-        if sentinel_orchestrator:
-            speak(sentinel_orchestrator.run_command(original))
-        return
-
-    elif "turn on awareness" in command:
-        speak("Awareness monitoring activated.")
-        return
-    elif "turn off awareness" in command:
-        speak("Awareness monitoring deactivated.")
-        return
-    elif "run this code" in command or "execute code" in command:
-        if sentinel_orchestrator:
-            speak(sentinel_orchestrator.run_command(original))
-        return
-    elif "connect headset" in command or "start bci" in command:
-        speak("Searching for B C I headset signal.")
-        return
-    elif "enable proxy shield" in command or "start zero trust" in command:
-        if sentinel_orchestrator and sentinel_orchestrator.security_shield:
-            msg = sentinel_orchestrator.security_shield.start_proxy_shield()
-            speak(msg)
-        else:
-            speak("Security shield module unavailable.")
-        return
-    elif "quantum optimization" in command or "calculate using qpu" in command:
-        speak("Offloading task to IBM Quantum Cloud for circuit optimization.")
-        if sentinel_orchestrator:
-            speak(sentinel_orchestrator.run_command(original))
-        return
-    elif "robot " in command or "automata " in command:
-        speak("Transmitting kinematic directions to robot rover.")
-        return
-
-    elif command in ("list commands", "help commands", "what can you do"):
-        speak("You can say open app names, start or stop agent, query system info, battery report, and manage secrets by saying remember password for name is value, or give me password for name")
-        return
-
-    # Fallback: Let the Sentinel Orchestrator handle advanced tasks
-    # If the command is explicitly asking for AI/Gemini, or if it's a complex task
-    ai_keywords = ["ai", "gemini", "assistant", "think", "explain", "why", "how", "what is", "who is", "search for"]
-    is_ai_request = any(k in command for k in ai_keywords)
-    
+    # ─── Modular Routing ────────────────────────────────────────────────
     if sentinel_orchestrator:
-        if is_ai_request:
-            status_queue.put("Thinking...")
+        status_queue.put("Routing command...")
         response = sentinel_orchestrator.run_command(original)
         if response:
-            # If orchestrator handled it without falling back to a general LLM response, or if it was an AI request
             speak(response)
             return
 
-    # Second fallback: Direct LLM call only if explicitly requested
-    if is_ai_request or "ask" in command:
+
+    # ─── Last Resort Fallback ───────────────────────────────────────────
+    ai_keywords = ["ai", "gemini", "think", "explain", "why", "how", "what is", "who is"]
+    if any(k in command for k in ai_keywords) or "?" in command:
+        status_queue.put("Consulting Gemini...")
         response = interpret_command(original)
         if response:
             speak(response)
- 
+            return
+
+    speak("I'm sorry, I couldn't understand or execute that command.")
+
 
 # ---------- Wake-word listener (runs in background thread) ----------
 def listen_for_wake_word_loop(session_duration=3600):
@@ -2307,7 +2129,11 @@ def refresh_config():
         try:
             from sentinel.core.orchestrator import SentinelOrchestrator
             if sentinel_orchestrator is None:
-                sentinel_orchestrator = SentinelOrchestrator(llm_callback=lambda p: gemini_generate(p))
+                sentinel_orchestrator = SentinelOrchestrator(
+                    llm_callback=lambda p: gemini_generate(p),
+                    speak_fn=speak,
+                    exit_callback=shutdown_sentinel
+                )
         except Exception:
             pass
 
@@ -2329,8 +2155,12 @@ def update_mic_level():
                 data = stream.read(512, exception_on_overflow=False)
                 samples = np.frombuffer(data, dtype=np.int16)
                 amp = float(np.mean(np.abs(samples))) / 32768.0
-                if mic_level_var:
-                    mic_level_var.set(amp)
+                # Ensure mic_level_var is still valid and initialized
+                if isinstance(mic_level_var, tk.DoubleVar):
+                    try:
+                        mic_level_var.set(amp)
+                    except (tk.TclError, AttributeError):
+                        pass
             except Exception:
                 if mic_level_var:
                     mic_level_var.set(0.0)
@@ -2478,6 +2308,18 @@ def start_gui():
                            font=MODERN_FONT, bg=MODERN_BG, fg=MODERN_TEXT_MUTED)
     status_label.pack(side='right')
 
+    # Healthcare / Status line (Brain & Local)
+    health_frame = tk.Frame(main_frame, bg=MODERN_BG)
+    health_frame.pack(fill='x', pady=(0, 15))
+    
+    brain_label = tk.Label(health_frame, text="BRAIN: CONNECTING", 
+                          bg=MODERN_BG, fg="#94a3b8", font=("Consolas", 8))
+    brain_label.pack(side='left')
+    
+    local_label = tk.Label(health_frame, text="LOCAL: INIT", 
+                          bg=MODERN_BG, fg="#94a3b8", font=("Consolas", 8))
+    local_label.pack(side='right')
+
     # Data Stream Monitor (Glassmorphism effect)
     info_frame = ttk.Frame(main_frame, style="Glass.TFrame")
     info_frame.pack(fill='x', pady=(0, 25))
@@ -2611,6 +2453,7 @@ def start_gui():
     root.protocol("WM_DELETE_WINDOW", on_close)
 
     def update_ui():
+        # Update command status
         while not status_queue.empty():
             msg = status_queue.get_nowait()
             status_label.config(text=msg.upper().replace(" ", "_"))
@@ -2618,6 +2461,11 @@ def start_gui():
                 status_label.config(fg=MODERN_ACCENT)
             else:
                 status_label.config(fg=MODERN_TEXT_MUTED)
+        
+        # Update Brain/Local health status
+        brain_label.config(text=f"BRAIN: {brain_status}", fg=brain_status_color)
+        local_label.config(text=f"LOCAL: {local_status}", fg=local_status_color)
+        
         root.after(400, update_ui)
 
     update_ui()

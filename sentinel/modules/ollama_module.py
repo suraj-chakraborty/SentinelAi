@@ -2,11 +2,14 @@ import ollama
 import psutil
 import logging
 import subprocess
+import threading
+import os
 
 class OllamaModule:
     def __init__(self):
         self.logger = logging.getLogger("OllamaModule")
         self.model = self._choose_model()
+        self.is_installing = False
 
     def _choose_model(self):
         """Chooses an appropriate model based on system specs."""
@@ -35,10 +38,77 @@ class OllamaModule:
     def is_available(self):
         """Checks if the Ollama service is running."""
         try:
+            # Using list() as a cheap ping
+            import ollama
             ollama.list()
             return True
         except Exception:
             return False
+
+    def start_service(self):
+        """Attempts to start the Ollama service in the background."""
+        if self.is_available():
+            return True
+        
+        self.logger.info("Service Offline. Attempting to start Ollama...")
+        try:
+            import platform
+            if platform.system() == "Windows":
+                # Try starting the background server
+                res = subprocess.run(["where", "ollama"], capture_output=True, text=True)
+                if res.returncode != 0:
+                    # Not in PATH, need to install
+                    self.install_service()
+                    return False
+
+                subprocess.Popen(["ollama", "serve"], 
+                                creationflags=subprocess.CREATE_NO_WINDOW,
+                                stdout=subprocess.DEVNULL, 
+                                stderr=subprocess.DEVNULL)
+            else:
+                subprocess.Popen(["ollama", "serve"], 
+                                stdout=subprocess.DEVNULL, 
+                                stderr=subprocess.DEVNULL)
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to start Ollama service: {e}")
+            self.install_service()
+            return False
+
+    def install_service(self):
+        """Automatically downloads and launches the Ollama installer for Windows."""
+        if self.is_installing:
+            return
+            
+        import requests
+        from pathlib import Path
+        
+        # Sentinel AppData folder for the installer
+        target_dir = Path(os.path.expanduser("~")) / "AppData" / "Roaming" / "SentinelAi"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        installer_path = target_dir / "OllamaSetup.exe"
+        
+        url = "https://ollama.com/download/OllamaSetup.exe"
+        
+        def _download_task():
+            self.is_installing = True
+            try:
+                self.logger.info(f"Downloading Ollama installer from {url}...")
+                with requests.get(url, stream=True) as r:
+                    r.raise_for_status()
+                    with open(installer_path, 'wb') as f:
+                        for chunk in r.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                
+                self.logger.info("Download complete. Launching installer...")
+                # Launch the installer (this will pop up a window for the user)
+                subprocess.Popen([str(installer_path)])
+                
+            except Exception as e:
+                self.logger.error(f"Ollama installation failed: {e}")
+                self.is_installing = False
+        
+        threading.Thread(target=_download_task, daemon=True).start()
 
     def generate(self, prompt):
         """Generates a response using the local model."""

@@ -203,7 +203,15 @@ Only output THOUGHT + ACTION + INPUT. Nothing else."""
             transcript.append(f"Step {step+1}: {thought[:80]}... → {action_name}")
 
             # ── TERMINAL STATES ───────────────────────────────────────────────
+            if action_name == "ERROR_LLM":
+                err_msg = action_input.get("message", "The brain is currently unavailable.")
+                logger.error(f"[ReAct] LLM Error: {err_msg}")
+                if speak_progress:
+                    self.speak(f"I'm sorry, my thinking engine is having trouble: {err_msg}")
+                return f"[Error] {err_msg}"
+
             if action_name == "DONE":
+                # Only trust DONE if we have a valid summary or if the LLM actually tried to solve it
                 summary = action_input.get("summary", "Goal accomplished.")
                 logger.info(f"[ReAct] DONE: {summary}")
                 if speak_progress:
@@ -217,11 +225,13 @@ Only output THOUGHT + ACTION + INPUT. Nothing else."""
                 return f"[Needs clarification] {question}"
 
             # ── ACT ─────────────────────────────────────────────────────────
-            if action_name not in self._tools:
+            # Use case-insensitive lookup (tools are registered in lowercase)
+            action_key = action_name.lower()
+            if action_key not in self._tools:
                 observation = f"Unknown tool '{action_name}'. Available: {list(self._tools.keys())}"
                 logger.warning(observation)
             else:
-                tool = self._tools[action_name]
+                tool = self._tools[action_key]
                 observation = tool.execute(**action_input)
                 logger.info(f"[ReAct] Observation: {observation[:100]}")
                 if speak_progress and len(observation) < 120:
@@ -257,9 +267,13 @@ Only output THOUGHT + ACTION + INPUT. Nothing else."""
     # ─── LLM call ─────────────────────────────────────────────────────────────
 
     def _call_llm(self, prompt: str) -> str:
-        if self.gemini:
+        callback = self.gemini
+        if callback is None and self.orchestrator and hasattr(self.orchestrator, "_safe_llm_call"):
+            callback = self.orchestrator._safe_llm_call
+            
+        if callback:
             try:
-                return self.gemini(prompt)
+                return callback(prompt)
             except Exception as e:
                 logger.error(f"LLM call failed: {e}")
         return ""
@@ -269,30 +283,51 @@ Only output THOUGHT + ACTION + INPUT. Nothing else."""
     def _parse_response(self, response: str) -> Tuple[str, str, dict]:
         """Extract THOUGHT, ACTION, and INPUT from LLM response."""
         import json, re
+        
+        # Check for common error signatures from unified gemini_generate fallback
+        error_keywords = ["having trouble connecting", "Request timed out", "service error", "Quota Exceeded"]
+        if any(k in response for k in error_keywords) or not response.strip():
+            return "The brain is currently unavailable.", "ERROR_LLM", {"message": response or "Empty response"}
+
         thought = ""
-        action_name = "DONE"
+        # Default to DONE only if we actually see a Thought/Action structure or if it's clearly a final answer
+        action_name = "DONE" 
         action_input = {}
 
         # Extract THOUGHT
         t_match = re.search(r"THOUGHT[:\s]*(.+?)(?=ACTION:|$)", response, re.DOTALL | re.IGNORECASE)
         if t_match:
             thought = t_match.group(1).strip()
+        else:
+            # If no THOUGHT block, it might be a direct conversational response
+            thought = response.strip()
 
         # Extract ACTION
         a_match = re.search(r"ACTION[:\s]*(\w+)", response, re.IGNORECASE)
         if a_match:
-            action_name = a_match.group(1).strip()
+            action_name = a_match.group(1).strip().upper()
+        else:
+            # If no ACTION block but we have content, treat as DONE with the content as summary
+            action_name = "DONE"
+            action_input = {"summary": response.strip()}
 
-        # Extract INPUT
-        i_match = re.search(r"INPUT[:\s]*(\{.+?\})", response, re.DOTALL | re.IGNORECASE)
+        # Extract INPUT (first JSON object; supports nested braces)
+        i_match = re.search(r"INPUT[:\s]*", response, re.IGNORECASE)
         if i_match:
-            try:
-                action_input = json.loads(i_match.group(1))
-            except json.JSONDecodeError:
-                # Try to extract key-value pairs manually
-                content = i_match.group(1)
-                pairs = re.findall(r'"(\w+)"\s*:\s*"([^"]*)"', content)
-                action_input = {k: v for k, v in pairs}
+            tail = response[i_match.end() :].lstrip()
+            if tail.startswith("{"):
+                dec = json.JSONDecoder()
+                try:
+                    action_input, _ = dec.raw_decode(tail)
+                except json.JSONDecodeError:
+                    try:
+                        action_input = json.loads(tail.split("}")[0] + "}")
+                    except json.JSONDecodeError:
+                        pairs = re.findall(r'"(\w+)"\s*:\s*"([^"]*)"', tail)
+                        if pairs:
+                            action_input = {k: v for k, v in pairs}
+                        else:
+                            action_input = {"raw": tail[:500]}
 
         return thought, action_name, action_input
 

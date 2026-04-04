@@ -79,10 +79,22 @@ class SentinelWebServer:
             version="2.0.0"
         )
 
-        # CORS for local tools / mobile companion
+        # CORS: localhost by default. Set SENTINEL_CORS_ORIGINS=* or comma-separated URLs for LAN/mobile.
+        _cors = (os.getenv("SENTINEL_CORS_ORIGINS") or "").strip()
+        if _cors == "*":
+            _allow = ["*"]
+        elif _cors:
+            _allow = [o.strip() for o in _cors.split(",") if o.strip()]
+        else:
+            _allow = [
+                "http://127.0.0.1:5000",
+                "http://localhost:5000",
+                "http://127.0.0.1",
+                "http://localhost",
+            ]
         self.app.add_middleware(
             CORSMiddleware,
-            allow_origins=["*"],
+            allow_origins=_allow,
             allow_methods=["*"],
             allow_headers=["*"],
         )

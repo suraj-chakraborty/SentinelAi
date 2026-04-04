@@ -21,6 +21,7 @@ ollama>=0.2.0              # Local LLM via Ollama daemon
 # ── RAG / Knowledge Base ─────────────────────────────────────────────────────
 chromadb>=0.5.0            # Vector database for semantic search
 sentence-transformers>=3.0.0  # Embedding model (all-MiniLM-L6-v2)
+networkx>=3.2              # Optional memory graph in KnowledgeBaseModule
 
 # ── Vision ────────────────────────────────────────────────────────────────────
 opencv-python>=4.10.0      # Camera/webcam capture

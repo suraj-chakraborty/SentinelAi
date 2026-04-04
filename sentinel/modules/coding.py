@@ -28,37 +28,70 @@ class CodingModule:
                 return self.execute_python_code(corrected_code, retry_count + 1, max_retries, llm_callback)
             return f"Syntax error: {error}"
 
-        with tempfile.NamedTemporaryFile(suffix=".py", delete=False) as tmp:
-            tmp.write(code.encode('utf-8'))
-            tmp_path = tmp.name
-
         try:
-            result = subprocess.run(
-                ["python", tmp_path],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
-            if result.returncode == 0:
-                return result.stdout or "Execution successful (no output)."
-            else:
-                # Runtime error - attempt self-correction
-                stderr = result.stderr
+            try:
+                from sentinel.security.sandbox import Sandbox
+
+                ok, output = Sandbox.execute(code, level=2, timeout=30)
+                if ok:
+                    return output or "Execution successful (no output)."
                 if retry_count < max_retries and llm_callback:
-                    self.logger.info(f"Runtime error, attempting self-correction (retry {retry_count+1})...")
-                    correction_prompt = f"The following Python code failed with a runtime error:\n{stderr}\n\nOriginal Code:\n```python\n{code}\n```\nPlease analyze the error, fix the code, and return only the corrected code block."
+                    self.logger.info(
+                        "Sandbox execution failed, attempting self-correction (retry %s)...",
+                        retry_count + 1,
+                    )
+                    correction_prompt = (
+                        f"The following Python code failed:\n{output}\n\n"
+                        f"Original Code:\n```python\n{code}\n```\n"
+                        "Please fix the code and return only the corrected code block."
+                    )
                     corrected_code_response = llm_callback(correction_prompt)
                     corrected_code = self._extract_code(corrected_code_response)
-                    return self.execute_python_code(corrected_code, retry_count + 1, max_retries, llm_callback)
+                    return self.execute_python_code(
+                        corrected_code, retry_count + 1, max_retries, llm_callback
+                    )
+                return f"Execution error: {output}"
+            except ImportError:
+                pass
+
+            with tempfile.NamedTemporaryFile(suffix=".py", delete=False) as tmp:
+                tmp.write(code.encode("utf-8"))
+                tmp_path = tmp.name
+
+            try:
+                result = subprocess.run(
+                    ["python", tmp_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if result.returncode == 0:
+                    return result.stdout or "Execution successful (no output)."
+                stderr = result.stderr
+                if retry_count < max_retries and llm_callback:
+                    self.logger.info(
+                        "Runtime error, attempting self-correction (retry %s)...",
+                        retry_count + 1,
+                    )
+                    correction_prompt = (
+                        f"The following Python code failed with a runtime error:\n{stderr}\n\n"
+                        f"Original Code:\n```python\n{code}\n```\n"
+                        "Please analyze the error, fix the code, and return only the corrected code block."
+                    )
+                    corrected_code_response = llm_callback(correction_prompt)
+                    corrected_code = self._extract_code(corrected_code_response)
+                    return self.execute_python_code(
+                        corrected_code, retry_count + 1, max_retries, llm_callback
+                    )
                 return f"Execution error: {stderr}"
-        except subprocess.TimeoutExpired:
-            return "Execution timed out (max 30s)."
+            except subprocess.TimeoutExpired:
+                return "Execution timed out (max 30s)."
+            finally:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
         except Exception as e:
             self.logger.error(f"Error executing code: {e}")
             return f"Error executing code: {e}"
-        finally:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
 
     def _extract_code(self, response):
         """Helper to extract code from LLM response blocks."""

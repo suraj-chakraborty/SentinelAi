@@ -43,7 +43,7 @@ datas += collect_data_files('mediapipe')
 datas += collect_data_files('sentence_transformers')
 
 a = Analysis(
-    ['sentinal_ai.py'],
+    ['sentinel_ai.py'],
     pathex=[],
     binaries=binaries,
     datas=datas,

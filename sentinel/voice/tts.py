@@ -152,22 +152,26 @@ class TTSEngine:
 
     def _speak_pyttsx3(self, text: str, emotion: str):
         """Fallback: blocking pyttsx3 synthesis."""
-        try:
-            pythoncom.CoInitialize()
-            engine = pyttsx3.init()
-            rate = engine.getProperty("rate")
-            volume = engine.getProperty("volume")
-            if emotion == "Stressed/Excited":
-                engine.setProperty("rate", min(rate + 50, 300))
-                engine.setProperty("volume", min(volume + 0.2, 1.0))
-            elif emotion == "Calm/Sad":
-                engine.setProperty("rate", max(rate - 30, 80))
-                engine.setProperty("volume", max(volume - 0.1, 0.3))
-            engine.say(text)
-            engine.runAndWait()
-            pythoncom.CoUninitialize()
-        except Exception as e:
-            logger.error(f"pyttsx3 error: {e}")
+        with self._lock:
+            try:
+                pythoncom.CoInitialize()
+                engine = pyttsx3.init()
+                rate = engine.getProperty("rate")
+                volume = engine.getProperty("volume")
+                if emotion == "Stressed/Excited":
+                    engine.setProperty("rate", min(rate + 50, 300))
+                    engine.setProperty("volume", min(volume + 0.2, 1.0))
+                elif emotion == "Calm/Sad":
+                    engine.setProperty("rate", max(rate - 30, 80))
+                    engine.setProperty("volume", max(volume - 0.1, 0.3))
+                engine.say(text)
+                engine.runAndWait()
+                # Ensure we clean up the engine engine to release resources
+                del engine
+                pythoncom.CoUninitialize()
+            except Exception as e:
+                # If we get 'run loop already started', we just wait a bit and hope the next one works
+                logger.error(f"pyttsx3 error: {e}")
 
 
 # Module-level singleton
