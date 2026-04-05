@@ -27,6 +27,7 @@ class OpenApp:
             "reddit": "https://www.reddit.com",
             "browser": "https://www.google.com",
             "internet": "https://www.google.com",
+            "bing": "https://www.bing.com",
         }
         
         # Clean target: lowercase, strip spaces and punctuation
@@ -43,13 +44,22 @@ class OpenApp:
                 logger.warning(f"webbrowser.open failed to return success for {url}")
                 return f"I tried to open {target}, but your browser didn't respond."
 
+        # New: Direct URL/Browse handling
+        import webbrowser
+        # Check if target looks like a URL (e.g. google.com, surajchakraborty.netlify.app)
+        if "." in target and len(target.split(".")[-1]) >= 2:
+            url = target if target.startswith("http") else f"https://{target}"
+            logger.info(f"Direct URL navigation: {url}")
+            if webbrowser.open(url):
+                return f"Navigating to {target}..."
+
         # 2. Local Windows launch (registry index via sentinel_ai when available)
         try:
             from sentinel.utils.app_launcher import launch_application
 
-            if launch_application(app_name):
-                return f"Opening {app_name}..."
-            return f"Sorry, I couldn't find the application {app_name}."
+            if launch_application(target):
+                return f"Opening {target}..."
+            return f"Sorry, I couldn't find the application {target}."
         except Exception as e:
             logger.error(f"Error in OpenApp plugin: {e}")
             return f"Failed to open {app_name}: {e}"

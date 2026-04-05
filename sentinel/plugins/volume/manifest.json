@@ -1,0 +1,11 @@
+{
+    "name": "Volume",
+    "version": "1.0.0",
+    "description": "Control system volume and mute via Windows Core Audio API.",
+    "author": "SentinelAI",
+    "intents": ["volume_up", "volume_down", "volume_mute"],
+    "triggers": ["volume up", "volume down", "louder", "quieter", "mute", "unmute", "increase volume", "lower volume"],
+    "entry": "plugin.py",
+    "class": "VolumePlugin",
+    "requires": ["pycaw>=20240210"]
+}

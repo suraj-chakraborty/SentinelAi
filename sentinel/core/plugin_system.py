@@ -37,6 +37,7 @@ import sys
 import json
 import importlib.util
 import logging
+import subprocess
 from typing import Dict, List, Optional
 
 logger = logging.getLogger("PluginSystem")
@@ -97,7 +98,7 @@ class LoadedPlugin:
         try:
             return self.instance.handle(command) or ""
         except Exception as e:
-            self.instance.logger.error(f"Plugin '{self.name}' handle error: {e}")
+            self.instance.logger.error("Plugin '%s' handle error: %s", self.name, e, exc_info=True)
             return f"Plugin error: {e}"
 
 
@@ -138,22 +139,30 @@ class PluginSystem:
         return loaded
 
     def load_plugin(self, plugin_dir: str) -> bool:
-        """Load a single plugin from its directory."""
+        """Load a single plugin from its directory, installing any missing dependencies first."""
         manifest_path = os.path.join(plugin_dir, "manifest.json")
         try:
             with open(manifest_path, "r", encoding="utf-8") as f:
                 manifest = json.load(f)
-        except Exception as e:
-            logger.error(f"Bad manifest at {manifest_path}: {e}")
+        except Exception as exc:
+            logger.error("Bad manifest at %s: %s", manifest_path, exc)
             return False
 
         name = manifest.get("name", os.path.basename(plugin_dir))
+
+        # ── Install dependencies declared in manifest ──────────────────────
+        requires = manifest.get("requires", [])
+        if requires:
+            if not self._install_requirements(name, requires):
+                logger.warning("Plugin '%s' skipped — dependency installation failed.", name)
+                return False
+
         entry_file = manifest.get("entry", "plugin.py")
         class_name = manifest.get("class", "Plugin")
         entry_path = os.path.join(plugin_dir, entry_file)
 
         if not os.path.exists(entry_path):
-            logger.error(f"Plugin '{name}': entry file not found: {entry_path}")
+            logger.error("Plugin '%s': entry file not found: %s", name, entry_path)
             return False
 
         try:
@@ -164,11 +173,41 @@ class PluginSystem:
             instance = PluginClass(orchestrator=self.orchestrator)
             instance.on_load()
             self._plugins[name] = LoadedPlugin(manifest, instance, plugin_dir)
-            logger.info(f"Loaded plugin: {name} v{manifest.get('version', '?')}")
+            logger.info("Loaded plugin: %s v%s", name, manifest.get("version", "?"))
             return True
-        except Exception as e:
-            logger.error(f"Failed to load plugin '{name}': {e}")
+        except Exception as exc:
+            logger.error("Failed to load plugin '%s': %s", name, exc, exc_info=True)
             return False
+
+    def _install_requirements(self, plugin_name: str, requires: List[str]) -> bool:
+        """
+        Install each requirement in `requires` via pip if not already present.
+        Returns True if all requirements are satisfied, False if any failed.
+        """
+        all_ok = True
+        for req in requires:
+            pkg = req.split(">=")[0].split("<=")[0].split("==")[0].split("!=")[0].strip()
+            try:
+                __import__(pkg.replace("-", "_"))
+                logger.debug("Plugin '%s' dep already satisfied: %s", plugin_name, pkg)
+            except ImportError:
+                logger.info("Installing dependency '%s' for plugin '%s'…", req, plugin_name)
+                try:
+                    result = subprocess.run(
+                        [sys.executable, "-m", "pip", "install", req, "--quiet"],
+                        capture_output=True,
+                        text=True,
+                        timeout=120,
+                    )
+                    if result.returncode == 0:
+                        logger.info("Installed: %s", req)
+                    else:
+                        logger.error("pip install failed for '%s': %s", req, result.stderr[:200])
+                        all_ok = False
+                except Exception as exc:
+                    logger.error("Dependency install error for '%s': %s", req, exc)
+                    all_ok = False
+        return all_ok
 
     def unload_plugin(self, name: str) -> bool:
         """Unload a plugin by name."""

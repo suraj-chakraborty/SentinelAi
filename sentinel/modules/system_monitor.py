@@ -10,7 +10,11 @@ class SystemMonitor:
         self.temp_threshold = temp_threshold
         self.logger = logging.getLogger("SystemMonitor")
 
-    def get_cpu_temp(self):
+    def get_cpu_temp(self) -> float:
+        """Attempt to read CPU temperature, handling Windows/psutil limitations."""
+        if not hasattr(psutil, "sensors_temperatures"):
+            return None
+            
         try:
             temps = psutil.sensors_temperatures()
             if not temps:
@@ -18,9 +22,9 @@ class SystemMonitor:
             for name, entries in temps.items():
                 for entry in entries:
                     return entry.current
-        except Exception as e:
-            self.logger.error(f"Error getting CPU temp: {e}")
+        except Exception:
             return None
+        return None
 
     def get_gpu_temp(self):
         if not GPUtil:
@@ -32,6 +36,7 @@ class SystemMonitor:
         except Exception as e:
             self.logger.error(f"Error getting GPU temp: {e}")
             return None
+        return None
 
     def check_temp_alerts(self):
         cpu_temp = self.get_cpu_temp()
@@ -44,12 +49,19 @@ class SystemMonitor:
         return alerts
 
     def check_misuse(self):
-        # Basic misuse check: High CPU/RAM processes not recognized
+        """Identify processes with abnormally high CPU usage."""
         misuse_alerts = []
-        for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']):
-            try:
-                if proc.info['cpu_percent'] > 90:
-                    misuse_alerts.append(f"Process {proc.info['name']} (PID: {proc.info['pid']}) is using high CPU: {proc.info['cpu_percent']}%")
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
+        try:
+            # We use a short interval for process_iter to get real-time CPU %
+            for proc in psutil.process_iter(['pid', 'name', 'cpu_percent']):
+                try:
+                    # Ignore the 'System Idle Process' and 'System'
+                    if (proc.info['name'] or "").lower() in ('system idle process', 'system', 'idle'):
+                        continue
+                    if proc.info['cpu_percent'] > 95:
+                        misuse_alerts.append(f"Process {proc.info['name']} (PID: {proc.info['pid']}) is using high CPU: {proc.info['cpu_percent']}%")
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+        except Exception:
+            pass
         return misuse_alerts

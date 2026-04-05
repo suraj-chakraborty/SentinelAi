@@ -1,0 +1,11 @@
+{
+    "name": "Timer",
+    "version": "1.0.0",
+    "description": "Set, list and cancel countdown timers with voice alerts.",
+    "author": "SentinelAI",
+    "intents": ["set_timer"],
+    "triggers": ["set a timer", "timer for", "start a timer", "set timer"],
+    "entry": "plugin.py",
+    "class": "TimerPlugin",
+    "requires": []
+}

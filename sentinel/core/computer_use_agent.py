@@ -18,14 +18,16 @@ Usage:
     result = agent.execute("Open Notepad, type 'Hello World', and save the file")
 """
 
-import os
-import time
-import base64
 import json
 import re
+import os
 import logging
 import threading
+import time
+import base64
 from typing import Optional, Tuple
+
+from sentinel.app.intelligence import gemini_generate
 
 logger = logging.getLogger("ComputerUseAgent")
 
@@ -140,6 +142,13 @@ class ComputerUseAgent:
                 continue
 
             action_type = action.get("action", "").lower()
+            
+            # Coordinate scaling: from AI (1280x720) to Actual
+            if "x" in action and "y" in action:
+                sw, sh = pyautogui.size()
+                action["x"] = int(action["x"] * (sw / 1280.0))
+                action["y"] = int(action["y"] * (sh / 720.0))
+                
             logger.info(f"[ComputerUse] Step {step+1}: {action_type} → {action}")
 
             # 3. Handle terminal states
@@ -259,11 +268,7 @@ class ComputerUseAgent:
         return None
 
     def _ask_vision(self, goal: str, history: list, screenshot_b64: str) -> Optional[dict]:
-        """Ask Gemini 2.0 Flash Vision what action to take next."""
-        if not self.api_key or not _HTTPX:
-            logger.warning("No API key or httpx unavailable.")
-            return None
-
+        """Ask Gemini Vision via unified intelligence module."""
         history_str = "\n".join(
             f"  Step {h['step']}: {h['action']} → {h['result']}"
             for h in history[-6:]
@@ -272,21 +277,11 @@ class ComputerUseAgent:
         prompt = VISION_PROMPT.format(goal=goal, history=history_str)
 
         try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={self.api_key}"
-            payload = {
-                "contents": [{
-                    "parts": [
-                        {"text": prompt},
-                        {"inline_data": {"mime_type": "image/png", "data": screenshot_b64}}
-                    ]
-                }],
-                "generationConfig": {"maxOutputTokens": 150, "temperature": 0.1}
-            }
-            with httpx.Client(timeout=25) as client:
-                resp = client.post(url, json=payload)
-            text = resp.json().get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+            # Use the unified intelligence module instead of raw httpx
+            text = gemini_generate(prompt, image_b64=screenshot_b64)
+            if not text:
+                return None
 
-            # Extract JSON from the response
             match = re.search(r'\{[^{}]+\}', text, re.DOTALL)
             if match:
                 return json.loads(match.group())

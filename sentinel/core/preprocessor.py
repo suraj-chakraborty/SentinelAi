@@ -12,8 +12,11 @@ def preprocess_command(text: str) -> str:
         
     text = text.lower().strip()
     
-    # 1. Remove common punctuation
-    text = re.sub(r'[.!?,:;]', '', text)
+    # 1. Normalize spelled-out punctuation from STT
+    text = re.sub(r'\s+dot\s+', '.', text)
+    
+    # 2. Remove common punctuation (KEEP dot for URLs)
+    text = re.sub(r'[,!?:;]', '', text)
 
     # 2. Define fillers to remove (keep semantics: do not strip "tell me"/"what is"/"about" — breaks Q&A routing)
     fillers = [

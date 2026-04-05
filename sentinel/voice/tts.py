@@ -62,6 +62,10 @@ class TTSEngine:
     """
 
     def __init__(self):
+        from sentinel.app.config import load_settings
+        settings = load_settings()
+        self.preferred_voice = settings.get("voice", "en-US-GuyNeural")
+        
         self._lock = threading.Lock()
         self._queue: queue.Queue = queue.Queue()
         self._worker = threading.Thread(target=self._process_queue, daemon=True)
@@ -117,7 +121,15 @@ class TTSEngine:
 
     def _speak_edge(self, text: str, emotion: str):
         """Synthesize speech with edge-tts and play with pygame."""
-        voice, rate, volume = EMOTION_VOICE_MAP.get(emotion, EMOTION_VOICE_MAP["Neutral"])
+        # Mapping for rate/volume adjustments based on emotion
+        STYLING = {
+            "Stressed/Excited": ("+30%", "+10%"),
+            "Calm/Sad":         ("-20%", "-5%"),
+            "Neutral":          ("+0%",  "+0%"),
+        }
+        rate, volume = STYLING.get(emotion, STYLING["Neutral"])
+        voice = self.preferred_voice
+        
         tmp_file = os.path.join(_TTS_CACHE_DIR, f"tts_{threading.get_ident()}.mp3")
 
         async def _synthesize():
@@ -137,8 +149,19 @@ class TTSEngine:
                 try:
                     pygame.mixer.music.load(tmp_file)
                     pygame.mixer.music.play()
+                    
+                    # Watchdog to prevent hanging
+                    wait_start = time.time()
                     while pygame.mixer.music.get_busy():
                         time.sleep(0.05)
+                        if time.time() - wait_start > 10.0:  # 10s max for one phrase
+                            logger.warning("Pygame mixer timed out. Stopping.")
+                            break
+                except Exception as e:
+                    logger.warning(f"Pygame playback error: {e}")
+                    # Final fallback for this file
+                    try: os.startfile(tmp_file)
+                    except Exception: pass
                 finally:
                     try:
                         pygame.mixer.music.stop()
@@ -146,9 +169,15 @@ class TTSEngine:
                         os.remove(tmp_file)
                     except Exception:
                         pass
-        else:
-            # Fallback: use os.startfile or another player
-            os.startfile(tmp_file) if os.path.exists(tmp_file) else None
+        elif os.path.exists(tmp_file):
+            # No pygame - use system player
+            try:
+                os.startfile(tmp_file)
+                # We can't easily wait for startfile, so we wait a bit before cleanup
+                time.sleep(3.0)
+                os.remove(tmp_file)
+            except Exception as e:
+                logger.error(f"System player fallback failed: {e}")
 
     def _speak_pyttsx3(self, text: str, emotion: str):
         """Fallback: blocking pyttsx3 synthesis."""

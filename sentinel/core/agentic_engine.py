@@ -396,16 +396,20 @@ Only output THOUGHT + ACTION + INPUT. Nothing else."""
 
     def _tool_open_app(self, app_name: str = "") -> str:
         try:
-            import subprocess, webbrowser
+            from sentinel.utils.app_launcher import launch_application
+            import webbrowser
+            
             app_lower = app_name.lower()
             urls = {"chrome": "https://google.com", "browser": "https://google.com"}
             if app_lower in urls:
                 webbrowser.open(urls[app_lower])
                 return f"Opened {app_name} in browser."
-            subprocess.Popen(app_name, shell=True)
-            return f"Launched: {app_name}"
+            
+            if launch_application(app_name):
+                return f"Launched: {app_name}"
+            return f"Failed to find or open: {app_name}"
         except Exception as e:
-            return f"Open failed: {e}"
+            return f"Open error: {e}"
 
     def _tool_run_code(self, code: str = "") -> str:
         try:

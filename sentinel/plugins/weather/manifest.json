@@ -1,0 +1,11 @@
+{
+    "name": "Weather",
+    "version": "1.0.0",
+    "description": "Current weather and forecast via Open-Meteo (no API key required).",
+    "author": "SentinelAI",
+    "intents": ["get_weather"],
+    "triggers": ["weather", "temperature", "forecast", "will it rain", "is it sunny"],
+    "entry": "plugin.py",
+    "class": "WeatherPlugin",
+    "requires": ["httpx>=0.27.0"]
+}

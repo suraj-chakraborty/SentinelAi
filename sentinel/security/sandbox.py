@@ -28,30 +28,82 @@ from typing import Tuple
 
 logger = logging.getLogger("SentinelSandbox")
 
+import ast
+
+
+# ── AST Safety Visitor ────────────────────────────────────────────────────────
+
+_BLOCKED_IMPORTS = {
+    "os", "subprocess", "shutil", "ctypes", "winreg", "socket",
+    "requests", "httpx", "sys", "builtins", "importlib", "pathlib",
+    "pty", "tty", "signal", "multiprocessing", "concurrent", "asyncio",
+}
+
+_BLOCKED_CALLS = {
+    "eval", "exec", "compile", "open", "__import__", "getattr",
+    "setattr", "delattr", "vars", "dir", "globals", "locals",
+    "breakpoint", "input",
+}
+
+_BLOCKED_ATTRIBS = {
+    "system", "popen", "exec_", "execl", "execve", "spawn",
+    "rmdir", "remove", "unlink", "chmod", "chown", "kill",
+    "environ", "__subclasses__", "__mro__", "__globals__", 
+    "__builtins__", "__dict__", "func_globals", "mro",
+}
+
+
+class _SafetyVisitor(ast.NodeVisitor):
+    """
+    AST-level visitor that raises ValueError on any dangerous node.
+
+    Catches attacks that bypass simple regex:
+      • import("os")           → ast.Call with func.id == '__import__'
+      • __builtins__['eval']   → ast.Subscript
+      • getattr(os, 'system')  → ast.Call with func.id == 'getattr'
+    """
+
+    def visit_Import(self, node: ast.Import):
+        for alias in node.names:
+            pkg = alias.name.split(".")[0]
+            if pkg in _BLOCKED_IMPORTS:
+                raise ValueError(f"Blocked import: {alias.name}")
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom):
+        pkg = (node.module or "").split(".")[0]
+        if pkg in _BLOCKED_IMPORTS:
+            raise ValueError(f"Blocked from-import: {node.module}")
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call):
+        # Direct dangerous call: eval(...), exec(...), open(...)
+        func = node.func
+        name = None
+        if isinstance(func, ast.Name):
+            name = func.id
+        elif isinstance(func, ast.Attribute):
+            name = func.attr
+        if name and name in _BLOCKED_CALLS:
+            raise ValueError(f"Blocked call: {name}(…)")
+        # Attribute access: os.system, subprocess.run, shutil.rmtree …
+        if isinstance(func, ast.Attribute) and func.attr in _BLOCKED_ATTRIBS:
+            raise ValueError(f"Blocked attribute access: .{func.attr}")
+        self.generic_visit(node)
+
+    def visit_Attribute(self, node: ast.Attribute):
+        if node.attr in _BLOCKED_ATTRIBS:
+            raise ValueError(f"Blocked attribute: .{node.attr}")
+        self.generic_visit(node)
+
 
 class Sandbox:
     """
     Safe Python code execution with multiple isolation levels.
-    """
 
-    # Dangerous patterns that are always blocked
-    BLOCKED_PATTERNS = [
-        r'\bos\.system\b',
-        r'\bsubprocess\b',
-        r'\bimport\s+os\b',
-        r'\bimport\s+subprocess\b',
-        r'\b__import__\b',
-        r'\beval\s*\(',
-        r'\bexec\s*\(',
-        r'\bopen\s*\(',
-        r'\brmdir\b',
-        r'\bshutil\b',
-        r'\bsocket\b',
-        r'\brequests\b',
-        r'\bhttpx\b',
-        r'\bimport\s+ctypes\b',
-        r'\bimport\s+winreg\b',
-    ]
+    Safety level can be overridden at runtime via:
+        SENTINEL_CODE_SANDBOX_LEVEL = 1 | 2 | 3
+    """
 
     @classmethod
     def execute(cls, code: str, level: int = 2, timeout: int = 15) -> Tuple[bool, str]:
@@ -61,6 +113,7 @@ class Sandbox:
         Args:
             code:    Python source code to execute
             level:   1=RestrictedPython, 2=subprocess+timeout (default), 3=Docker
+                     (overridden by SENTINEL_CODE_SANDBOX_LEVEL env var)
             timeout: Max execution time in seconds
 
         Returns:
@@ -69,10 +122,15 @@ class Sandbox:
         if not code or not code.strip():
             return False, "No code provided."
 
-        # Static analysis blocklist (always applied)
+        # Env-var override
+        env_level = os.getenv("SENTINEL_CODE_SANDBOX_LEVEL", "").strip()
+        if env_level.isdigit():
+            level = int(env_level)
+
+        # AST-based static analysis (always applied, catches obfuscation)
         blocked = cls._static_analysis(code)
         if blocked:
-            return False, f"Blocked: {blocked}"
+            return False, f"Code blocked by safety analysis: {blocked}"
 
         if level == 1:
             return cls._execute_restricted(code)
@@ -209,33 +267,34 @@ class Sandbox:
 
     @classmethod
     def _static_analysis(cls, code: str) -> str:
-        """Scan code for blocked patterns. Returns the violation or empty string."""
-        for pattern in cls.BLOCKED_PATTERNS:
-            if re.search(pattern, code):
-                return f"Forbidden pattern: {pattern}"
+        """
+        AST-level safety scan. Returns violation message or empty string if safe.
+        This replaces the old regex approach to catch obfuscated patterns like:
+            __import__('os') or __builtins__['eval'](...)
+        """
+        # First: parse for SyntaxErrors (fast fail)
+        try:
+            tree = ast.parse(code)
+        except SyntaxError as exc:
+            return f"Syntax error: {exc}"
+
+        # Then: walk AST for dangerous nodes
+        try:
+            _SafetyVisitor().visit(tree)
+        except ValueError as exc:
+            return str(exc)
         return ""
 
     @classmethod
     def get_safety_report(cls, code: str) -> dict:
-        """Analyze code and return a safety report without executing."""
-        violations = []
-        for pattern in cls.BLOCKED_PATTERNS:
-            if re.search(pattern, code):
-                violations.append(pattern)
-
-        import ast
-        syntax_ok = True
-        syntax_error = None
-        try:
-            ast.parse(code)
-        except SyntaxError as e:
-            syntax_ok = False
-            syntax_error = str(e)
+        """Analyse code and return a safety report without executing."""
+        violation = cls._static_analysis(code)
+        syntax_ok  = not violation.startswith("Syntax error")
 
         return {
-            "safe": len(violations) == 0 and syntax_ok,
-            "violations": violations,
-            "syntax_ok": syntax_ok,
-            "syntax_error": syntax_error,
-            "line_count": len(code.splitlines()),
+            "safe"         : not violation,
+            "violation"    : violation or None,
+            "syntax_ok"    : syntax_ok,
+            "line_count"   : len(code.splitlines()),
+            "sandbox_level": int(os.getenv("SENTINEL_CODE_SANDBOX_LEVEL", "2")),
         }

@@ -1,5 +1,5 @@
 import logging
-import time
+from sentinel.app.voice import speak
 
 logger = logging.getLogger("Deactivate")
 
@@ -13,12 +13,11 @@ class Deactivate:
         """
         logger.info("Deactivate plugin triggered.")
         
-        # We trigger the shutdown in a small delay to allow the response to be spoken/returned
-        import threading
-        def _delayed_shutdown():
-            time.sleep(2)
-            self.orchestrator.shutdown()
-            
-        threading.Thread(target=_delayed_shutdown, daemon=True).start()
+        # Speak the goodbye message and wait for it to finish
+        message = "Deactivating Sentinel systems. Goodbye, Master."
+        speak(message, block=True)
         
-        return "Deactivating Sentinel systems. Goodbye, Master."
+        # Shutdown the orchestrator and exit
+        self.orchestrator.shutdown()
+        
+        return "System Deactivated."

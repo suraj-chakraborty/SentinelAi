@@ -18,6 +18,11 @@ INTENT_TO_PLUGIN: Dict[Intent, str] = {
     Intent.SYSTEM_STATUS: "system_control",
     Intent.DEACTIVATE: "deactivate",
     Intent.AUTONOMOUS_AGENT: "ai_agent",
+    Intent.COMPUTER_USE: "computer_use",
+    Intent.SEARCH_WEB: "search_web",
+    Intent.TAKE_SCREENSHOT: "computer_use",
+    Intent.DESCRIBE_SCREEN: "computer_use",
+    Intent.BROWSE_URL: "open_app",
 }
 
 class CommandRouter:
