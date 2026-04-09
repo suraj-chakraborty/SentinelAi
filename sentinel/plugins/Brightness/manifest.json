@@ -1,0 +1,11 @@
+{
+  "name": "Brightness",
+  "version": "1.0.0",
+  "description": "Adjust screen brightness",
+  "author": "SentinelAi",
+  "intents": ["brightness"],
+  "triggers": ["increase brightness", "decrease brightness", "set brightness"],
+  "entry": "plugin.py",
+  "class": "Brightness",
+  "requires": []
+}

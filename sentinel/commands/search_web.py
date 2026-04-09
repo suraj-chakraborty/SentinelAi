@@ -1,6 +1,13 @@
 import logging
-from sentinel.voice.tts import speak
-from googlesearch import search
+try:
+    from sentinel.voice.tts import speak
+except Exception:
+    try:
+        from sentinel.app.voice import speak
+    except Exception:
+        def speak(*args, **kwargs):
+            pass
+# googlesearch is loaded lazily inside execute to avoid hard dependency in tests
 
 logger = logging.getLogger("SearchWeb")
 
@@ -18,24 +25,26 @@ class SearchWeb:
         logger.info(f"Searching for: {query}")
         
         try:
-            results = []
-            # Use googlesearch-python (already installed in venv)
-            for url in search(query, num_results=3):
-                results.append(url)
-            
+            # Lazy import: only import googlesearch if available in this environment
+            from googlesearch import search  # type: ignore
+            results = [url for url in search(query, num_results=3)]
             if not results:
-                return f"I couldn't find any results for '{query}'."
-            
+                return None
+
             # Briefly describe results
             response = f"I found some results for '{query}'. The top link is {results[0]}."
             # Optionally use AI to summarize if possible
             if self.orchestrator and hasattr(self.orchestrator, "_safe_llm_call"):
-                summary = self.orchestrator._safe_llm_call(f"The user searched for '{query}'. Found results: {results}. Summarize briefly.")
+                summary = self.orchestrator._safe_llm_call(
+                    f"The user searched for '{query}'. Found results: {results}. Summarize briefly."
+                )
                 if summary:
                     return summary
 
             return response
-            
+        except ImportError:
+            # googlesearch not installed; skip web search gracefully
+            return None
         except Exception as e:
             logger.error(f"Web search error: {e}")
-            return f"I'm sorry, I encountered an error while searching for '{query}': {e}"
+            return None

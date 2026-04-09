@@ -17,6 +17,8 @@ def preprocess_command(text: str) -> str:
     
     # 2. Remove common punctuation (KEEP dot for URLs)
     text = re.sub(r'[,!?:;]', '', text)
+    # Remove trailing period(s) to satisfy UI tests (keep internal periods like in URLs handled elsewhere)
+    text = text.rstrip(".")
 
     # 2. Define fillers to remove (keep semantics: do not strip "tell me"/"what is"/"about" — breaks Q&A routing)
     fillers = [

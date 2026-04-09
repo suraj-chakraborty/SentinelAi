@@ -109,6 +109,10 @@ class SentinelOrchestrator:
 
         # ── Web server ────────────────────────────────────────────────────────
         from sentinel.core.web_server import SentinelWebServer
+        # Optional: Retrieval module for RAG-style augmentation
+        from sentinel.modules.retrieval_module import RetrievalModule
+        # New: import for retrieval prompts (Phase 3)
+        from sentinel.core.retrieval import RetrievalContext, PromptBuilder
         self.web_server   = self._init("WebServer", SentinelWebServer, self)
 
         # ── Command router ────────────────────────────────────────────────────
@@ -117,6 +121,8 @@ class SentinelOrchestrator:
             return CommandRouter(self)
             
         self.command_router = self._init("CommandRouter", _router_factory)
+        # Initialize retrieval module (Phase 3)
+        self.retrieval_module = self._init("RetrievalModule", RetrievalModule, knowledge_base=self.knowledge_base)
 
         # ── Start background services ─────────────────────────────────────────
         self._start_background_services()
@@ -287,17 +293,29 @@ class SentinelOrchestrator:
     # ── LLM gateway ──────────────────────────────────────────────────────────
 
     def _safe_llm_call(self, prompt: str) -> str:
-        """Call online LLM with long-term memory injection; auto-fallback to Ollama on failure."""
-        
-        # 1. Inject past memory
-        memory_context = ""
-        if self.long_term_memory:
-            memory_context = self.long_term_memory.inject_past_context(prompt)
-            
-        full_prompt = (
-            f"[Background Memory]\n{memory_context}\n\n"
-            f"[Current Task]\n{prompt}"
-        ) if memory_context else prompt
+        """Call online LLM with long-term memory injection; optional RAG with KB; auto-fallback to Ollama on failure."""
+        # Build a structured prompt using RetrievalContext / PromptBuilder (Phase 3)
+        try:
+            from sentinel.core.retrieval import RetrievalContext, PromptBuilder
+            memory_context = self.long_term_memory.inject_past_context(prompt) if self.long_term_memory else ""
+            kb_context = self.knowledge_base.query_knowledge(prompt) if getattr(self, 'knowledge_base', None) and hasattr(self.knowledge_base, 'query_knowledge') else ""
+            retrieval_context = self.retrieval_module.retrieve(prompt) if getattr(self, 'retrieval_module', None) else ""
+            rc = RetrievalContext(memory_context=memory_context, retrieved_context=retrieval_context, knowledge_context=kb_context, current_task=prompt)
+            full_prompt = PromptBuilder(rc).build()
+        except Exception:
+            # Fallback to legacy simple composition if something goes wrong
+            memory_context = self.long_term_memory.inject_past_context(prompt) if self.long_term_memory else ""
+            kb_context = self.knowledge_base.query_knowledge(prompt) if getattr(self, 'knowledge_base', None) and hasattr(self.knowledge_base, 'query_knowledge') else ""
+            retrieval_context = self.retrieval_module.retrieve(prompt) if getattr(self, 'retrieval_module', None) else ""
+            parts = []
+            if memory_context:
+                parts.append(memory_context)
+            if isinstance(retrieval_context, str) and retrieval_context.strip():
+                parts.append("[Retrieved]\n" + retrieval_context.strip())
+            if isinstance(kb_context, str) and kb_context.strip():
+                parts.append("[Knowledge]" + ("\n" if kb_context[:1] != "[" else "") + kb_context.strip())
+            parts.append(f"[Current Task]\n{prompt}")
+            full_prompt = "\n".join(parts) if parts else prompt
 
         try:
             return self.llm_callback(full_prompt)

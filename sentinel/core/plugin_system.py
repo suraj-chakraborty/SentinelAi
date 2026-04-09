@@ -59,6 +59,10 @@ class PluginBase:
         """Return True if this plugin can handle the given command."""
         return False
 
+    def health(self) -> bool:
+        """Return health status of the plugin. Default to healthy."""
+        return True
+
     def handle(self, command: str) -> str:
         """Handle the command and return a response string."""
         return ""

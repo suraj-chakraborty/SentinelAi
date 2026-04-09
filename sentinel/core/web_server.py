@@ -22,9 +22,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time as _time
 import secrets
 import threading
-import time
 from typing import Any, Dict, List, Optional, Set
 
 logger = logging.getLogger("SentinelWebServer")
@@ -32,10 +32,11 @@ logger = logging.getLogger("SentinelWebServer")
 APPDATA_DIR = os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "SentinelAi")
 _KEY_FILE   = os.path.join(APPDATA_DIR, "web_api_key.txt")
 _NO_AUTH    = {"/", "/health", "/ws"}           # paths that skip auth check
+from sentinel.app.config import ROTATION_LOG_PATH
 
 try:
     from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-    from fastapi.responses import HTMLResponse, JSONResponse
+    from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
     from fastapi.middleware.cors import CORSMiddleware
     from pydantic import BaseModel
     import uvicorn
@@ -141,7 +142,10 @@ class SentinelWebServer:
         self._api_key      = _load_or_create_api_key()
         self._manager      = _ConnectionManager()
         self._alerts_buf: List[str] = []
+        # Track last key rotation timestamp for admin visibility
+        self._last_key_rotation = None
         self._server_thread: Optional[threading.Thread] = None
+        self._start_time = _time.time()
 
         self.app = FastAPI(
             title="SentinelAI Dashboard",
@@ -169,6 +173,30 @@ class SentinelWebServer:
         self._register_routes()
         logger.info("SentinelWebServer configured on %s:%d", self.host, self.port)
         logger.info("Dashboard API key: %s", self._api_key)
+
+    def _rotate_api_key(self) -> str:
+        """Rotate the stored API key and persist it to disk."""
+        new_key = secrets.token_urlsafe(32)
+        self._api_key = new_key
+        self._last_key_rotation = _time.time()
+        try:
+            with open(_KEY_FILE, "w", encoding="utf-8") as f:
+                f.write(new_key)
+        except Exception as exc:
+            logger.error("Failed to persist rotated API key: %s", exc)
+        logger.info("Web API key rotated.")
+        # Notify connected clients in a lightweight fashion
+        try:
+            self.broadcast({"type": "admin", "event": "key_rotated", "preview": new_key[:8] + "..."})
+        except Exception:
+            pass
+        # Persist a rotation event to the rotation log for admin auditing
+        try:
+            with open(ROTATION_LOG_PATH, "a", encoding="utf-8") as lf:
+                lf.write(f"{_time.time()},{new_key[:8]}...\n")
+        except Exception:
+            pass
+        return new_key
 
     # ── Auth middleware ───────────────────────────────────────────────────────
 
@@ -209,7 +237,8 @@ class SentinelWebServer:
             return {
                 "status": "ok",
                 "version": "3.0.0",
-                "uptime_epoch": time.time(),
+                "uptime_epoch": _time.time(),
+                "uptime_seconds": int(_time.time() - self._start_time),
                 "modules": self._module_health(),
                 "api_key_hint": self._api_key[:8] + "…",
             }
@@ -385,6 +414,82 @@ class SentinelWebServer:
             finally:
                 mgr.disconnect(ws)
 
+        # ── Metrics endpoint ───────────────────────────────────────────────────
+        @app.get("/metrics", response_class=PlainTextResponse)
+        async def metrics():
+            """Lightweight metrics in plain text (Prometheus-like)."""
+            rotation_count = 0
+            try:
+                if ROTATION_LOG_PATH and os.path.exists(ROTATION_LOG_PATH):
+                    with open(ROTATION_LOG_PATH, "r", encoding="utf-8") as lf:
+                        rotation_count = sum(1 for _ in lf if _)
+            except Exception:
+                rotation_count = 0
+            uptime = int(_time.time() - self._start_time)
+            return f"web_api_key_rotations_total {rotation_count}\nuptime_seconds {uptime}\n"
+
+        # ── Admin: memory export ───────────────────────────────────────────────
+        @app.get("/admin/memory/export")
+        async def memory_export(request: Request):
+            """Export current memory state for admin diagnostics."""
+            token = request.headers.get("X-Sentinel-Key") or request.query_params.get("key")
+            if not token or token != self._api_key:
+                return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+            try:
+                mem = getattr(self.orchestrator, 'long_term_memory', None)
+                if not mem:
+                    return {"error": "Memory backend not available"}
+                # In-memory backend exposure
+                if getattr(mem, "_in_memory", False):
+                    data = {
+                        "summaries": list(getattr(mem, "_mem_summaries", [])),
+                        "facts": list(getattr(mem, "_mem_facts", [])),
+                    }
+                    return data
+                # Fallback: expose counts only for non in-memory
+                return {
+                    "summaries_count": int(getattr(mem, "_summaries_col").count()) if mem._summaries_col else 0,
+                    "facts_count": int(getattr(mem, "_facts_col").count()) if mem._facts_col else 0,
+                }
+            except Exception as exc:
+                return {"error": str(exc)}
+
+        # ── Admin: rotate API key ─────────────────────────────────────────────────
+        @app.post("/admin/rotate-key")
+        async def admin_rotate_key(request: Request):
+            """Rotate the web API key. Requires the current key to authorize."""
+            # Authorization: require current API key via header or query param
+            token = request.headers.get("X-Sentinel-Key") or request.query_params.get("key")
+            if not token or token != self._api_key:
+                return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+            new_key = self._rotate_api_key()
+            # Do not expose full key here; provide a masked preview for operator awareness
+            return {"status": "rotated", "preview": new_key[:8] + "..."}
+
+        @app.get("/admin/status")
+        async def admin_status(request: Request):
+            """Admin status: show last rotation time and a masked preview of the key."""
+            token = request.headers.get("X-Sentinel-Key") or request.query_params.get("key")
+            if not token or token != self._api_key:
+                return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+            last_rot = self._last_key_rotation
+            preview = (self._api_key[:8] + "...") if self._api_key else None
+            return {
+                "last_key_rotation_epoch": last_rot,
+                "key_preview": preview,
+            }
+
+        @app.post("/admin/memory/clear")
+        async def memory_clear(request: Request):
+            """Admin: clear memory stores (summaries and facts)."""
+            token = request.headers.get("X-Sentinel-Key") or request.query_params.get("key")
+            if not token or token != self._api_key:
+                return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+            if self.long_term_memory and hasattr(self.long_term_memory, 'clear_memory'):
+                ok = self.long_term_memory.clear_memory()
+                return {"cleared": ok}
+            return {"cleared": False}
+
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def broadcast(self, event: dict) -> None:
@@ -440,7 +545,29 @@ class SentinelWebServer:
             "playwright_agent", "agentic_engine", "daily_brief", "ollama_module",
             "swarm_engine", "computer_use", "long_term_memory", "quantum",
         ]
-        return {a: getattr(self.orchestrator, a, None) is not None for a in attrs}
+        health = {a: getattr(self.orchestrator, a, None) is not None for a in attrs}
+        # Phase 2: include plugin health (if available via CommandRouter)
+        try:
+            plugin_health = {}
+            rom = getattr(self.orchestrator, 'command_router', None)
+            if rom and hasattr(rom, 'plugins'):
+                for pname, p in rom.plugins.items():
+                    status = True
+                    try:
+                        if hasattr(p, 'health') and callable(p.health):
+                            res = p.health()
+                            if isinstance(res, bool):
+                                status = res
+                            elif isinstance(res, dict):
+                                status = bool(res.get('healthy', True))
+                    except Exception:
+                        status = False
+                    plugin_health[str(pname)] = status
+            health['plugins'] = plugin_health
+        except Exception:
+            # If anything goes wrong, omit plugin health gracefully
+            health['plugins'] = {}
+        return health
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -546,6 +673,18 @@ _DASHBOARD_HTML = """<!DOCTYPE html>
     </div>
   </div>
 
+  <!-- Admin panel -->
+  <div class="panel" id="admin-panel">
+    <h2>🧭 Admin</h2>
+    <div id="admin-status" style="margin-bottom:8px; font-family:var(--font); font-size:0.95rem; color:#ddd;">
+      Last rotation: <span id="admin-last-rotation">n/a</span>
+    </div>
+    <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+      <button onclick="rotateApiKey()">Rotate API Key</button>
+      <span style="font-family:var(--font); font-size:0.85rem; color:#aaa;">Premium preview: <span id="admin-key-preview">—</span></span>
+    </div>
+  </div>
+
   <!-- Module health -->
   <div class="panel">
     <h2>🧠 Module Health</h2>
@@ -577,6 +716,8 @@ function connect() {
     if (d.type === 'agent_started')    appendSys('🤖 Agent started: ' + d.goal);
     if (d.type === 'agent_stopped')    appendSys('🛑 Agent stopped');
   };
+  // Initialize admin UI status when connection established
+  fetchAdminStatus();
 }
 
 function setWs(on) {
@@ -644,6 +785,42 @@ async function fetchStats() {
 }
 
 connect();
+<script>
+async function fetchAdminStatus() {
+  try {
+    const r = await fetch('/admin/status', { headers: {'X-Sentinel-Key': API_KEY} });
+    const d = await r.json();
+    const last = d.last_key_rotation_epoch ? new Date(d.last_key_rotation_epoch * 1000).toLocaleString() : 'never';
+    document.getElementById('admin-last-rotation').textContent = last;
+    document.getElementById('admin-key-preview').textContent = d.key_preview || '—';
+  } catch (e) {
+    // ignore
+  }
+}
+
+async function rotateApiKey() {
+  try {
+    const r = await fetch('/admin/rotate-key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Sentinel-Key': API_KEY }
+    });
+    const d = await r.json();
+    if (d.status === 'rotated') {
+      // small UX hint in the UI console
+      const sys = document.createElement('div');
+      sys.textContent = 'API key rotated';
+      sys.style.color = '#9be7a5';
+      document.getElementById('messages').appendChild(sys);
+    }
+    fetchAdminStatus();
+  } catch (e) {
+    // ignore
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  fetchAdminStatus();
+});
 </script>
 </body>
 </html>
