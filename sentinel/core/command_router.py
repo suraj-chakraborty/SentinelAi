@@ -35,6 +35,8 @@ class CommandRouter:
         self._load_core_commands()
         self._plugin_system = None
         self._load_manifest_plugins()
+        self._dynamic_loader = None
+        self._unknown_command_count = 0
 
     def _load_manifest_plugins(self):
         """Load optional manifest-based plugins from AppData and built-in dirs."""
@@ -119,7 +121,13 @@ class CommandRouter:
         # 5. Fallback: AI (specifically check if it's an autonomous goal)
         if intent == Intent.AUTONOMOUS_AGENT or intent == Intent.UNKNOWN:
             # If unknown but looks like a complex task, try autonomous agent
-            return self.ai_fallback(cleaned)
+            result = self.ai_fallback(cleaned)
+            
+            # If AI also couldn't handle it well, try to generate a plugin
+            if result and self._should_auto_generate(raw_command):
+                self._try_generate_plugin(raw_command)
+            
+            return result
 
         return None
 
@@ -137,3 +145,34 @@ class CommandRouter:
             return self.orchestrator._safe_llm_call(command)
             
         return "I'm not sure how to handle that command yet."
+
+    def _should_auto_generate(self, command: str) -> bool:
+        """Determine if we should auto-generate a plugin for this command."""
+        self._unknown_command_count += 1
+        
+        if self._unknown_command_count >= 3:
+            self._unknown_command_count = 0
+            return True
+        
+        return False
+
+    def _try_generate_plugin(self, command: str):
+        """Attempt to generate a plugin for an unknown command."""
+        try:
+            from sentinel.core.plugin_generator import get_plugin_generator
+            from sentinel.core.dynamic_plugin_loader import create_dynamic_loader
+            
+            generator = get_plugin_generator(self.orchestrator)
+            success, name, message = generator.generate_plugin(command)
+            
+            if success:
+                if self._plugin_system and not self._dynamic_loader:
+                    from sentinel.core.dynamic_plugin_loader import create_dynamic_loader
+                    self._dynamic_loader = create_dynamic_loader(self._plugin_system)
+                
+                if self._dynamic_loader:
+                    self._dynamic_loader.load_generated_plugins()
+                    
+                logger.info(f"Auto-generated plugin for command: {command}")
+        except Exception as e:
+            logger.error(f"Plugin auto-generation failed: {e}")

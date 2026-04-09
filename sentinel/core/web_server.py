@@ -33,6 +33,7 @@ APPDATA_DIR = os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "Senti
 _KEY_FILE   = os.path.join(APPDATA_DIR, "web_api_key.txt")
 _NO_AUTH    = {"/", "/health", "/ws"}           # paths that skip auth check
 from sentinel.app.config import ROTATION_LOG_PATH
+from sentinel.core.auth import require_role
 
 try:
     from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -407,6 +408,275 @@ class SentinelWebServer:
                 return self.orchestrator.long_term_memory.get_stats()
             return {"available": False}
 
+        # ── Semantic Screen Memory ─────────────────────────────────────────────
+        @app.get("/memory/screen/stats")
+        async def screen_memory_stats():
+            try:
+                from sentinel.commands.search_memory import get_search_memory_command
+                cmd = get_search_memory_command()
+                return cmd.get_stats()
+            except Exception as e:
+                return {"error": str(e)}
+
+        @app.post("/memory/screen/search")
+        async def search_screen_memory(req: KBQueryRequest):
+            try:
+                from sentinel.commands.search_memory import get_search_memory_command
+                cmd = get_search_memory_command()
+                return cmd.execute(req.query, req.n_results or 5)
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        @app.get("/memory/screen/recent")
+        async def get_recent_screens(limit: int = 10):
+            try:
+                from sentinel.commands.search_memory import get_search_memory_command
+                cmd = get_search_memory_command()
+                return cmd.get_recent(limit)
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        @app.post("/memory/screen/capture")
+        async def capture_screen():
+            try:
+                from sentinel.commands.search_memory import get_search_memory_command
+                cmd = get_search_memory_command()
+                return cmd.capture_now()
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        @app.post("/memory/screen/indexing/start")
+        async def start_screen_indexing(interval: int = 60):
+            try:
+                from sentinel.commands.search_memory import get_search_memory_command
+                cmd = get_search_memory_command()
+                return cmd.start_indexing(interval)
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        @app.post("/memory/screen/indexing/stop")
+        async def stop_screen_indexing():
+            try:
+                from sentinel.commands.search_memory import get_search_memory_command
+                cmd = get_search_memory_command()
+                return cmd.stop_indexing()
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        @app.delete("/memory/screen/{screen_id}")
+        async def delete_screen(screen_id: str):
+            try:
+                from sentinel.commands.search_memory import get_search_memory_command
+                cmd = get_search_memory_command()
+                return cmd.delete_screen(screen_id)
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        # ── UI Automation (UIA) ─────────────────────────────────────────────────
+        @app.get("/automation/uia/window")
+        async def uia_window_info():
+            try:
+                from sentinel.commands.ui_automation import get_uia_command
+                cmd = get_uia_command()
+                return cmd._get_window_info()
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        @app.get("/automation/uia/windows")
+        async def uia_list_windows():
+            try:
+                from sentinel.commands.ui_automation import get_uia_command
+                cmd = get_uia_command()
+                return cmd.execute("list_windows")
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        @app.get("/automation/uia/children")
+        async def uia_list_children(parent_hwnd: int = None):
+            try:
+                from sentinel.commands.ui_automation import get_uia_command
+                cmd = get_uia_command()
+                return cmd.execute("list_children", parent_hwnd=parent_hwnd)
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        @app.post("/automation/uia/click")
+        async def uia_click(handle: int, double_click: bool = False):
+            try:
+                from sentinel.commands.ui_automation import get_uia_command
+                cmd = get_uia_command()
+                return cmd.execute("click", handle=handle, double_click=double_click)
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        @app.post("/automation/uia/keys")
+        async def uia_send_keys(text: str, handle: int = None):
+            try:
+                from sentinel.commands.ui_automation import get_uia_command
+                cmd = get_uia_command()
+                return cmd.execute("send_keys", text=text, handle=handle)
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        @app.post("/automation/uia/focus")
+        async def uia_focus(handle: int):
+            try:
+                from sentinel.commands.ui_automation import get_uia_command
+                cmd = get_uia_command()
+                return cmd.execute("focus", handle=handle)
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        @app.post("/automation/uia/close")
+        async def uia_close(handle: int):
+            try:
+                from sentinel.commands.ui_automation import get_uia_command
+                cmd = get_uia_command()
+                return cmd.execute("close_window", handle=handle)
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        # ── Live Spatial Vision ─────────────────────────────────────────────────
+        @app.post("/vision/stream/start")
+        async def start_vision_stream(camera_id: int = 0, fps: int = 10):
+            try:
+                from sentinel.vision.live_vision import start_vision_stream
+                success = start_vision_stream(camera_id, fps)
+                return {"success": success, "message": "Vision stream started" if success else "Failed to start"}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        @app.post("/vision/stream/stop")
+        async def stop_vision_stream():
+            try:
+                from sentinel.vision.live_vision import stop_vision_stream
+                stop_vision_stream()
+                return {"success": True, "message": "Vision stream stopped"}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        @app.get("/vision/stream/frame")
+        async def get_vision_frame():
+            try:
+                from sentinel.vision.live_vision import get_vision_frame
+                frame_b64 = get_vision_frame()
+                if frame_b64:
+                    return {"success": True, "frame": frame_b64, "format": "jpeg"}
+                return {"success": False, "error": "No frame available"}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        @app.get("/vision/stream/stats")
+        async def get_vision_stats():
+            try:
+                from sentinel.vision.live_vision import get_live_vision
+                stream = get_live_vision()
+                return stream.get_stats()
+            except Exception as e:
+                return {"error": str(e)}
+
+        @app.post("/vision/capture")
+        async def capture_vision_frame():
+            try:
+                from sentinel.vision.live_vision import get_live_vision
+                stream = get_live_vision()
+                filepath = stream.capture_frame()
+                if filepath:
+                    return {"success": True, "filepath": filepath}
+                return {"success": False, "error": "No frame to capture"}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        @app.post("/vision/analyze")
+        async def analyze_vision_frame(prompt: str = "Describe what you see in this image."):
+            try:
+                from sentinel.vision.live_vision import get_live_vision
+                stream = get_live_vision()
+                result = stream.analyze_current_frame(prompt)
+                return {"success": True, "analysis": result}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        # ── Context-Aware Background Daemons ───────────────────────────────────
+        @app.get("/daemons")
+        async def list_daemons():
+            try:
+                from sentinel.daemons.daemon_manager import get_daemon_manager
+                manager = get_daemon_manager()
+                return manager.get_stats()
+            except Exception as e:
+                return {"error": str(e)}
+
+        @app.post("/daemons/start")
+        async def start_daemons():
+            try:
+                from sentinel.daemons.daemon_manager import start_daemon_manager
+                start_daemon_manager()
+                return {"success": True, "message": "Daemon manager started"}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        @app.post("/daemons/stop")
+        async def stop_daemons():
+            try:
+                from sentinel.daemons.daemon_manager import stop_daemon_manager
+                stop_daemon_manager()
+                return {"success": True, "message": "Daemon manager stopped"}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        @app.get("/daemons/{task_id}")
+        async def get_daemon_status(task_id: str):
+            try:
+                from sentinel.daemons.daemon_manager import get_daemon_manager
+                manager = get_daemon_manager()
+                status = manager.get_task_status(task_id)
+                if status:
+                    return status
+                return {"error": f"Task {task_id} not found"}
+            except Exception as e:
+                return {"error": str(e)}
+
+        @app.post("/daemons/{task_id}/run")
+        async def run_daemon_task(task_id: str):
+            try:
+                from sentinel.daemons.daemon_manager import get_daemon_manager
+                manager = get_daemon_manager()
+                return manager.run_task_now(task_id)
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        @app.post("/daemons/{task_id}/enable")
+        async def enable_daemon(task_id: str):
+            try:
+                from sentinel.daemons.daemon_manager import get_daemon_manager
+                manager = get_daemon_manager()
+                if manager.enable_task(task_id):
+                    return {"success": True, "message": f"Task {task_id} enabled"}
+                return {"success": False, "error": "Task not found"}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        @app.post("/daemons/{task_id}/disable")
+        async def disable_daemon(task_id: str):
+            try:
+                from sentinel.daemons.daemon_manager import get_daemon_manager
+                manager = get_daemon_manager()
+                if manager.disable_task(task_id):
+                    return {"success": True, "message": f"Task {task_id} disabled"}
+                return {"success": False, "error": "Task not found"}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        @app.get("/daemons/events")
+        async def get_daemon_events():
+            try:
+                from sentinel.daemons.daemon_manager import get_daemon_manager
+                manager = get_daemon_manager()
+                return {"events": manager.get_events()}
+            except Exception as e:
+                return {"events": [], "error": str(e)}
+
         # ── Generative UI ─────────────────────────────────────────────────────
         @app.post("/generate-ui")
         async def generate_ui(req: UIGeneratorRequest):
@@ -476,10 +746,8 @@ class SentinelWebServer:
 
         # ── Admin: memory export ───────────────────────────────────────────────
         @app.get("/admin/memory/export")
+        @require_role('admin')
         async def memory_export(request: Request):
-            from sentinel.core.auth import is_admin
-            if not is_admin(request):
-                return JSONResponse({"detail": "Forbidden"}, status_code=403)
             """Export current memory state for admin diagnostics."""
             token = request.headers.get("X-Sentinel-Key") or request.query_params.get("key")
             if not token or token != self._api_key:
@@ -501,8 +769,23 @@ class SentinelWebServer:
                     "facts_count": mem.get_stats().get("stored_facts", 0),
                     "db_path": mem.db_path if hasattr(mem, 'db_path') else None,
                 }
-            except Exception as exc:
+        except Exception as exc:
                 return {"error": str(exc)}
+
+        @app.post("/admin/memory/import")
+        @require_role('admin')
+        async def memory_import(request: Request):
+            try:
+                payload = await request.json()
+            except Exception:
+                payload = {}
+            token = request.headers.get("X-Sentinel-Key") or request.query_params.get("key")
+            if not token or token != self._api_key:
+                return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+            if getattr(self.orchestrator, 'long_term_memory', None) and payload:
+                ok = self.orchestrator.long_term_memory.import_memory(payload)
+                return {"imported": ok}
+            return {"imported": False}
 
         # ── Admin: rotate API key ─────────────────────────────────────────────────
         @app.post("/admin/rotate-key")
@@ -529,6 +812,23 @@ class SentinelWebServer:
                 "key_preview": preview,
             }
 
+        @app.get("/admin/audit")
+        @require_role('admin')
+        async def admin_audit(request: Request, limit: int = 50):
+            try:
+                if not AUDIT_LOG_PATH or not os.path.exists(AUDIT_LOG_PATH):
+                    return {"events": []}
+                events = []
+                with open(AUDIT_LOG_PATH, "r", encoding="utf-8") as f:
+                    for line in f:
+                        try:
+                            events.append(json.loads(line))
+                        except Exception:
+                            events.append({"raw": line.strip()})
+                return {"events": events[-limit:]}
+            except Exception as exc:
+                return {"events": [], "error": str(exc)}
+
         @app.post("/admin/memory/clear")
         async def memory_clear(request: Request):
             """Admin: clear memory stores (summaries and facts)."""
@@ -544,7 +844,97 @@ class SentinelWebServer:
                 log_audit("admin", "clear_memory", "Phase 4: per-topic TTL clear")
                 return {"cleared": ok}
             return {"cleared": False}
+        
+        @app.post("/user/profile")
+        async def user_profile(request: Request):
+            # Phase 5 MVP: per-user profile (in-memory, patch ready)
+            user_id = request.headers.get("X-User-Id") or request.query_params.get("user_id")
+            if not user_id:
+                return {"error": "user_id required"}
+            try:
+                payload = await request.json()
+            except Exception:
+                payload = {}
+            persona = payload.get('persona') if isinstance(payload, dict) else None
+            memory_ttl_hours = int(payload.get('memory_ttl_hours', 0)) if isinstance(payload, dict) else 0
+            opt_in_privacy = bool(payload.get('opt_in_privacy', True)) if isinstance(payload, dict) else True
+            preferred_tools = payload.get('preferred_tools', []) if isinstance(payload, dict) else []
+            if self.orchestrator and getattr(self.orchestrator, 'user_profiles', None):
+                upm = self.orchestrator.user_profiles
+                profile = upm.set_profile(user_id, persona=persona, memory_ttl_hours=memory_ttl_hours,
+                                        opt_in_privacy=opt_in_privacy, preferred_tools=preferred_tools)
+                self.orchestrator.current_user_id = user_id
+                return {"status": "updated", "profile": profile.to_dict()}
+            return {"status": "ok"}
 
+        @app.get("/user/profile")
+        async def user_profile_get(request: Request):
+            user_id = request.headers.get("X-User-Id") or request.query_params.get("user_id")
+            if not user_id:
+                return {"error": "user_id required"}
+            if self.orchestrator and getattr(self.orchestrator, 'user_profiles', None):
+                profile = self.orchestrator.user_profiles.get_profile(user_id)
+                return {"profile": profile.to_dict() if profile else None}
+            return {"profile": None}
+        @app.get("/admin/memory/ttl")
+        @require_role('admin')
+        async def memory_ttl_get(request: Request):
+            ttl_hours = getattr(self.orchestrator.long_term_memory, '_memory_ttl_hours', 0) if getattr(self.orchestrator, 'long_term_memory', None) else 0
+            return {"memory_ttl_hours": int(ttl_hours)}
+
+        # ── Plugin Generator (Self-Healing) ─────────────────────────────────────
+        @app.post("/admin/plugins/generate")
+        async def generate_plugin(request: Request, command: str, description: str = ""):
+            """Admin: auto-generate a plugin for a command."""
+            from sentinel.core.auth import is_admin
+            if not is_admin(request):
+                return JSONResponse({"detail": "Forbidden"}, status_code=403)
+            try:
+                from sentinel.core.plugin_generator import get_plugin_generator
+                gen = get_plugin_generator(self.orchestrator)
+                success, name, message = gen.generate_plugin(command, description)
+                return {"success": success, "plugin_name": name, "message": message}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        @app.get("/admin/plugins/generated")
+        async def list_generated_plugins(request: Request):
+            """List all auto-generated plugins."""
+            try:
+                from sentinel.core.plugin_generator import get_plugin_generator
+                gen = get_plugin_generator()
+                plugins = gen.list_generated_plugins()
+                return {"plugins": plugins}
+            except Exception as e:
+                return {"plugins": [], "error": str(e)}
+
+        @app.delete("/admin/plugins/{plugin_name}")
+        async def delete_generated_plugin(request: Request, plugin_name: str):
+            """Admin: delete an auto-generated plugin."""
+            from sentinel.core.auth import is_admin
+            if not is_admin(request):
+                return JSONResponse({"detail": "Forbidden"}, status_code=403)
+            try:
+                from sentinel.core.plugin_generator import get_plugin_generator
+                gen = get_plugin_generator()
+                success = gen.delete_plugin(plugin_name)
+                return {"success": success}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        @app.post("/admin/memory/ttl")
+        @require_role('admin')
+        async def memory_ttl_set(request: Request):
+            try:
+                data = await request.json()
+            except Exception:
+                data = {}
+            hours = int(data.get("ttl_hours", 0))
+            if getattr(self.orchestrator, 'long_term_memory', None):
+                mem = self.orchestrator.long_term_memory
+                mem._memory_ttl_hours = max(0, hours)
+                return {"memory_ttl_hours": mem._memory_ttl_hours}
+            return {"memory_ttl_hours": 0}
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def broadcast(self, event: dict) -> None:
@@ -649,7 +1039,7 @@ class SentinelWebServer:
 # ── Embedded dashboard HTML ───────────────────────────────────────────────────
 # Minimal but functional dark-mode dashboard that connects via WebSocket.
 
- _DASHBOARD_HTML = """<!DOCTYPE html>
+  _DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -716,7 +1106,7 @@ class SentinelWebServer:
   </div>
   <div id="ws-status"><div id="ws-dot"></div><span id="ws-label">Connecting…</span></div>
 </header>
-<main>
+  <main>
 
   <!-- Chat panel -->
   <div class="panel" id="chat-panel">
@@ -727,6 +1117,58 @@ class SentinelWebServer:
       <button onclick="sendCmd()">Send</button>
     </div>
   </div>
+
+  <!-- Per-User Personalization (Phase 5.4) -->
+  <section class="panel" id="jarvis-personalization" aria-label="Per-User Personalization" style="min-width:320px;">
+    <h2>🧩 Per-User Personalization</h2>
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+      <div>
+        <label for="pu-userid" style="font-size:0.8rem; color:#aaa;">User ID</label>
+        <input id="pu-userid" placeholder="e.g. user123" style="width:100%; padding:6px; border-radius:6px; background:#0a0a20; color:#fff; border:1px solid #333;" />
+      </div>
+      <div>
+        <label for="pu-persona" style="font-size:0.8rem; color:#aaa;">Persona</label>
+        <select id="pu-persona" style="width:100%; padding:6px; border-radius:6px; background:#0a0a20; color:#fff; border:1px solid #333;">
+          <option value="calm">Calm Jarvis</option>
+          <option value="formal">Formal Jarvis</option>
+          <option value="direct">Direct Jarvis</option>
+          <option value="humorous">Humorous Jarvis</option>
+        </select>
+      </div>
+    </div>
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:6px;">
+      <div>
+        <label for="pu-memoryttl" style="font-size:0.8rem; color:#aaa;">Memory TTL (hours)</label>
+        <input id="pu-memoryttl" type="number" min="0" step="1" value="24" style="width:100%; padding:6px; border-radius:6px; background:#0a0a20; color:#fff; border:1px solid #333;" />
+      </div>
+      <div>
+        <label for="pu-tools" style="font-size:0.8rem; color:#aaa;">Preferred Tools (comma-separated)</label>
+        <input id="pu-tools" placeholder="notes, planner" style="width:100%; padding:6px; border-radius:6px; background:#0a0a20; color:#fff; border:1px solid #333;" />
+      </div>
+    </div>
+    <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+      <button onclick="saveUserProfile()">Save Profile</button>
+      <span id="pu-status" style="font-family:var(--font); font-size:0.85rem; color:#aaa;">Not saved</span>
+    </div>
+    <div id="pu-preview" style="margin-top:10px; font-family:var(--font); font-size:0.9rem; color:#ddd;"></div>
+  </section>
+
+  <!-- Jarvis UI (Phase 5.4: Per-User Personalization) -->
+  <section class="panel" id="jarvis-panel" aria-label="Jarvis Panel" style="min-width:320px;">
+    <h2>🧭 Jarvis</h2>
+    <div style="display:flex; gap:12px; align-items: center; flex-wrap: wrap; margin-bottom:6px;">
+      <span>Persona:</span>
+      <span id="jarvis-current-persona" style="font-family:monospace; background:#0a0a20; padding:4px 8px; border-radius:6px; border:1px solid #333;">calm Jarvis</span>
+      <span style="margin-left:auto; font-size:12px; color:#aaa;">live persona</span>
+    </div>
+    <div class="stat-row" style="align-items:stretch; padding:6px 8px;">
+      <span>Plan status</span>
+      <span id="jarvis-plan-status" class="val">Idle</span>
+    </div>
+    <div id="jarvis-plan-steps" class="panel" style="padding:8px; margin-top:8px; background:#0a0a20; border-radius:6px; border:1px solid #333; max-height:120px; overflow:auto;"></div>
+    <div id="jarvis-next-step" style="margin-top:8px; font-family:monospace; color:#fff;"></div>
+    <div id="jarvis-transcript" class="panel" style="margin-top:8px; padding:8px; background:#0a0a20; border-radius:6px; border:1px solid #333; max-height:120px; overflow:auto;"></div>
+  </section>
 
   <!-- Admin panel -->
   <div class="panel" id="admin-panel">
@@ -773,7 +1215,100 @@ function connect() {
   };
   // Initialize admin UI status when connection established
   fetchAdminStatus();
+  // Initialize Jarvis UI on load
+  fetchJarvisStatus();
+  // Poll Jarvis UI periodically for status
+  setInterval(fetchJarvisStatus, 10000);
+  // Optional: populate per-user profile if user id is known
+  setInterval(fetchJarvisTranscript, 15000);
 }
+
+async function fetchAdminStatus() {
+  try {
+    const r = await fetch('/admin/status', { headers: { 'X-Sentinel-Key': API_KEY } });
+    const d = await r.json();
+    if (d.last_key_rotation_epoch !== undefined) {
+      document.getElementById('admin-last-rotation').textContent = new Date(d.last_key_rotation_epoch * 1000).toLocaleString();
+    }
+    if (d.key_preview) {
+      document.getElementById('admin-key-preview').textContent = d.key_preview;
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
+async function fetchJarvisStatus() {
+  try {
+    const r = await fetch('/jarvis/status');
+    const d = await r.json();
+    const panel = document.getElementById('jarvis-plan-status');
+    if (panel && d.progress !== undefined) panel.textContent = 'Progress: ' + d.progress;
+    // Show simple plan steps if provided
+    const steps = d.plan || [];
+    const list = document.getElementById('jarvis-plan-steps');
+    if (list && steps.length >= 1) {
+      list.innerHTML = steps.map((s,i)=> `<div style="padding:4px 0;">${i+1}. ${s}</div>`).join('');
+    }
+    if (document.getElementById('jarvis-current-persona')) {
+      // Persona may come from the backend in the plan, but ensure display exists
+    }
+  } catch { /* ignore */ }
+}
+
+async function fetchJarvisTranscript() {
+  try {
+    const r = await fetch('/jarvis/transcript');
+    const t = await r.json();
+    const tBox = document.getElementById('jarvis-transcript');
+    if (tBox && Array.isArray(t)) {
+      tBox.innerHTML = t.slice(-6).map((e)=> `<div style="padding:2px 0; font-family:monospace; font-size:0.8rem;">${e.step} → ${e.result}</div>`).join('')
+    }
+  } catch { /* ignore */ }
+}
+
+async function loadUserProfile() {
+  const userId = document.getElementById('pu-userid').value;
+  if (!userId) return;
+  try {
+    const r = await fetch('/user/profile', {
+      headers: { 'X-User-Id': userId },
+    });
+    const data = await r.json();
+    const p = data && data.profile ? data.profile : {};
+    if (p.persona) document.getElementById('pu-persona').value = p.persona;
+    if (p.memory_ttl_hours != null) document.getElementById('pu-memoryttl').value = p.memory_ttl_hours;
+  } catch {
+    // ignore
+  }
+}
+
+window.loadUserProfile = loadUserProfile;
+
+async function saveUserProfile() {
+  const userId = document.getElementById('pu-userid').value;
+  if (!userId) { alert('Enter a user_id in the User ID field to save'); return; }
+  const persona = document.getElementById('pu-persona').value;
+  const ttl = parseInt(document.getElementById('pu-memoryttl').value || '0', 10);
+  const toolsRaw = document.getElementById('pu-tools').value || '';
+  const tools = toolsRaw.split(',').map(s => s.trim()).filter(s => s);
+  const payload = { persona, memory_ttl_hours: ttl, opt_in_privacy: true, preferred_tools: tools };
+  try {
+    const r = await fetch('/user/profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-User-Id': userId },
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json();
+    document.getElementById('pu-status').textContent = data?.status || 'saved';
+    if (data?.profile) {
+      document.getElementById('pu-preview').textContent = 'Profile saved: persona=' + data.profile.persona;
+    }
+  } catch (e) {
+    document.getElementById('pu-status').textContent = 'save failed';
+  }
+}
+
 
 function setWs(on) {
   document.getElementById('ws-dot').className = 'dot' + (on ? ' on' : '');
@@ -877,6 +1412,12 @@ document.addEventListener('DOMContentLoaded', () => {
   fetchAdminStatus();
 });
 </script>
+<section id="jarvis_governance" style="padding:8px;">
+  <h4>Jarvis Governance</h4>
+  <div id="jarvis-governance-content" style="font-family:monospace; font-size:12px;">
+    TTL: <span id="governance-ttl">unknown</span> • Audit events: <span id="governance-audit-count">0</span>
+  </div>
+</section>
 </body>
 </html>
 """

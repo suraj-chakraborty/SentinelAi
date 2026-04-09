@@ -132,6 +132,10 @@ class SentinelOrchestrator:
         self.planner = self._init("Planner", Planner, self)
         self._jarvis_plan = []
         self._jarvis_progress = 0
+        # Phase 5: per-user profiles (in-memory MVP)
+        from sentinel.core.user_profiles import UserProfileManager
+        self.user_profiles = self._init("UserProfileManager", UserProfileManager)
+        self.current_user_id = None
 
         # ── Start background services ─────────────────────────────────────────
         self._start_background_services()
@@ -344,23 +348,32 @@ class SentinelOrchestrator:
     # ── LLM gateway ──────────────────────────────────────────────────────────
 
     def _safe_llm_call(self, prompt: str) -> str:
-        """Call online LLM with long-term memory injection; optional RAG with KB; auto-fallback to Ollama on failure."""
-        # Build a structured prompt using RetrievalContext / PromptBuilder (Phase 3)
+        """End-to-end LLM call with memory grounding and per-user persona (Phase 5 MVP)."""
+        # Build a robust prompt with persona override and fallbacks
         try:
             from sentinel.core.retrieval import RetrievalContext, PromptBuilder
             memory_context = self.long_term_memory.inject_past_context(prompt) if self.long_term_memory else ""
             kb_context = self.knowledge_base.query_knowledge(prompt) if getattr(self, 'knowledge_base', None) and hasattr(self.knowledge_base, 'query_knowledge') else ""
             retrieval_context = self.retrieval_module.retrieve(prompt) if getattr(self, 'retrieval_module', None) else ""
-            persona_str = "" 
+            persona_str = ""
             if getattr(self, 'jarvis_persona', None) and self.jarvis_persona is not None:
                 try:
                     persona_str = self.jarvis_persona.get_prompt_schip()
                 except Exception:
                     persona_str = ""
-            rc = RetrievalContext(memory_context=memory_context, retrieved_context=retrieval_context, knowledge_context=kb_context, current_task=prompt, persona=persona_str)
+            # Phase 5.2: apply per-user persona if a profile exists for the active user
+            persona_override = persona_str
+            if getattr(self, 'current_user_id', None) and getattr(self, 'user_profiles', None):
+                try:
+                    profile = self.user_profiles.get_profile(self.current_user_id)
+                    if profile and getattr(profile, 'persona', None):
+                        persona_override = profile.persona
+                except Exception:
+                    pass
+            rc = RetrievalContext(memory_context=memory_context, retrieved_context=retrieval_context, knowledge_context=kb_context, current_task=prompt, persona=persona_override)
             full_prompt = PromptBuilder(rc).build()
         except Exception:
-            # Fallback to legacy simple composition if something goes wrong
+            # Fallback to legacy simple composition
             memory_context = self.long_term_memory.inject_past_context(prompt) if self.long_term_memory else ""
             kb_context = self.knowledge_base.query_knowledge(prompt) if getattr(self, 'knowledge_base', None) and hasattr(self.knowledge_base, 'query_knowledge') else ""
             retrieval_context = self.retrieval_module.retrieve(prompt) if getattr(self, 'retrieval_module', None) else ""
@@ -375,18 +388,13 @@ class SentinelOrchestrator:
             full_prompt = "\n".join(parts) if parts else prompt
 
         try:
-            # Call LLM and capture result, then log transcript for Jarvis MVP
             llm_res = self.llm_callback(full_prompt)
             if not hasattr(self, "_jarvis_transcript"):
                 self._jarvis_transcript = []
-            self._jarvis_transcript.append({
-                "step": next_step,
-                "result": llm_res,
-                "timestamp": time.time(),
-            })
+            self._jarvis_transcript.append({"step": getattr(self, 'last_step_text', 'JarvisStep'), "result": llm_res, "timestamp": time.time()})
             return llm_res
         except Exception as exc:
-            logger.warning("Online LLM failed (%s) — falling back to Ollama.", exc)
+            logger.warning("Online LLM failed (%s) — fallback to Ollama.", exc)
             if self.ollama_module:
                 if not self.ollama_module.is_available():
                     self.ollama_module.start_service()

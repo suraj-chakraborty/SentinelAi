@@ -184,9 +184,9 @@ class LongTermMemory:
             summary = self.llm_callback(prompt)
             if not summary or len(summary) < 10:
                 return None
-        if self._in_memory:
+            if self._in_memory:
                 self._mem_summaries.append(summary)
-                self._mem_summaries_times.append(_time.time())
+                self._mem_summaries_times.append(time.time())
                 logger.info("Session summary stored (in-memory). TTL=%s hours.", self._memory_ttl_hours)
                 return summary
             doc_id = f"session_{uuid.uuid4().hex}"
