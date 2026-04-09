@@ -231,6 +231,52 @@ class SentinelWebServer:
         async def dashboard():
             return HTMLResponse(_DASHBOARD_HTML.replace("__API_KEY__", self._api_key))
 
+        @app.post("/jarvis/plan")
+        async def jarvis_plan(request: Request):
+            data = {}
+            try:
+                data = await request.json()
+            except Exception:
+                data = {}
+            goal = data.get("goal", "")
+            status = self.orchestrator.start_jarvis(goal) if hasattr(self.orchestrator, 'start_jarvis') else {"error": "not supported"}
+            return status
+
+        @app.get("/jarvis/status")
+        async def jarvis_status():
+            plan = getattr(self.orchestrator, 'jarvis_plan', None) or []
+            return {"plan": [step.text if hasattr(step, 'text') else str(step) for step in plan], "progress": getattr(self.orchestrator, '_jarvis_progress', 0)}
+
+        @app.get("/jarvis/reflect")
+        async def jarvis_reflect():
+            if not self.orchestrator or not hasattr(self.orchestrator, 'jarvis_reflect'):
+                return {"status": "not_supported"}
+            return self.orchestrator.jarvis_reflect()
+
+        @app.get("/jarvis/transcript")
+        async def jarvis_transcript():
+            # Return the in-memory transcript if available
+            try:
+                transcript = getattr(self.orchestrator, "_jarvis_transcript", [])
+                return transcript
+            except Exception:
+                return []
+
+        @app.post("/jarvis/clear_transcript")
+        async def jarvis_clear_transcript():
+            try:
+                if hasattr(self.orchestrator, "_jarvis_transcript"):
+                    self.orchestrator._jarvis_transcript.clear()
+                return {"status": "cleared"}
+            except Exception:
+                return {"status": "error"}
+
+        @app.post("/jarvis/execute_next")
+        async def jarvis_execute_next():
+            if not hasattr(self.orchestrator, 'jarvis_execute_next'):
+                return {"status": "not_supported"}
+            return self.orchestrator.jarvis_execute_next()
+
         # ── Health ────────────────────────────────────────────────────────────
         @app.get("/health")
         async def health():
@@ -431,6 +477,9 @@ class SentinelWebServer:
         # ── Admin: memory export ───────────────────────────────────────────────
         @app.get("/admin/memory/export")
         async def memory_export(request: Request):
+            from sentinel.core.auth import is_admin
+            if not is_admin(request):
+                return JSONResponse({"detail": "Forbidden"}, status_code=403)
             """Export current memory state for admin diagnostics."""
             token = request.headers.get("X-Sentinel-Key") or request.query_params.get("key")
             if not token or token != self._api_key:
@@ -439,17 +488,18 @@ class SentinelWebServer:
                 mem = getattr(self.orchestrator, 'long_term_memory', None)
                 if not mem:
                     return {"error": "Memory backend not available"}
-                # In-memory backend exposure
+                # In-memory mode exposure
                 if getattr(mem, "_in_memory", False):
                     data = {
                         "summaries": list(getattr(mem, "_mem_summaries", [])),
                         "facts": list(getattr(mem, "_mem_facts", [])),
                     }
                     return data
-                # Fallback: expose counts only for non in-memory
+                # Fallback: counts for non-in-memory
                 return {
-                    "summaries_count": int(getattr(mem, "_summaries_col").count()) if mem._summaries_col else 0,
-                    "facts_count": int(getattr(mem, "_facts_col").count()) if mem._facts_col else 0,
+                    "summaries_count": mem.get_stats().get("session_summaries", 0),
+                    "facts_count": mem.get_stats().get("stored_facts", 0),
+                    "db_path": mem.db_path if hasattr(mem, 'db_path') else None,
                 }
             except Exception as exc:
                 return {"error": str(exc)}
@@ -482,11 +532,16 @@ class SentinelWebServer:
         @app.post("/admin/memory/clear")
         async def memory_clear(request: Request):
             """Admin: clear memory stores (summaries and facts)."""
+            from sentinel.core.auth import is_admin
+            if not is_admin(request):
+                return JSONResponse({"detail": "Forbidden"}, status_code=403)
             token = request.headers.get("X-Sentinel-Key") or request.query_params.get("key")
             if not token or token != self._api_key:
                 return JSONResponse({"detail": "Unauthorized"}, status_code=401)
             if self.long_term_memory and hasattr(self.long_term_memory, 'clear_memory'):
                 ok = self.long_term_memory.clear_memory()
+                from sentinel.core.audit import log_audit
+                log_audit("admin", "clear_memory", "Phase 4: per-topic TTL clear")
                 return {"cleared": ok}
             return {"cleared": False}
 
@@ -594,7 +649,7 @@ class SentinelWebServer:
 # ── Embedded dashboard HTML ───────────────────────────────────────────────────
 # Minimal but functional dark-mode dashboard that connects via WebSocket.
 
-_DASHBOARD_HTML = """<!DOCTYPE html>
+ _DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">

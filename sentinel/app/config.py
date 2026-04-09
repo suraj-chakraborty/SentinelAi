@@ -45,6 +45,9 @@ PORCUPINE_KEYWORD_PATH = os.path.join(BASE_DIR, "assets", "sounds", "Hey-robert_
 # Path to log key rotation events for admin visibility
 ROTATION_LOG_PATH = os.path.join(APPDATA_DIR, "key_rotations.log")
 
+# Audit log for governance actions
+AUDIT_LOG_PATH = os.path.join(APPDATA_DIR, "audit.log")
+
 # ── UI Constants (Modern "Jarvis" Light Theme) ──────────────────────────────
 MODERN_BG = "#FFFFFF"         # Pure White
 MODERN_SURFACE = "#F8FAFC"    # Slate 50

@@ -17,6 +17,7 @@ class RetrievalContext:
     retrieved_context: str = ""
     knowledge_context: str = ""
     current_task: str = ""
+    persona: str = ""
 
 
 class PromptBuilder:
@@ -27,6 +28,8 @@ class PromptBuilder:
 
     def build(self) -> str:
         parts = []
+        if self.context.persona:
+            parts.append(self.context.persona)
         if self.context.memory_context:
             parts.append(self.context.memory_context)
         if self.context.retrieved_context:

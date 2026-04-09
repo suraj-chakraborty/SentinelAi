@@ -109,20 +109,29 @@ class SentinelOrchestrator:
 
         # ── Web server ────────────────────────────────────────────────────────
         from sentinel.core.web_server import SentinelWebServer
+        from sentinel.core.jarvis_persona import JarvisPersona
         # Optional: Retrieval module for RAG-style augmentation
         from sentinel.modules.retrieval_module import RetrievalModule
         # New: import for retrieval prompts (Phase 3)
         from sentinel.core.retrieval import RetrievalContext, PromptBuilder
         self.web_server   = self._init("WebServer", SentinelWebServer, self)
+        # Phase 1: initialize Jarvis persona (calm default)
+        self.jarvis_persona = self._init("JarvisPersona", JarvisPersona, tone="calm")
 
         # ── Command router ────────────────────────────────────────────────────
         def _router_factory():
             from sentinel.core.command_router import CommandRouter
             return CommandRouter(self)
-            
+             
         self.command_router = self._init("CommandRouter", _router_factory)
         # Initialize retrieval module (Phase 3)
         self.retrieval_module = self._init("RetrievalModule", RetrievalModule, knowledge_base=self.knowledge_base)
+
+        # Phase 1: initialize a simple Planner
+        from sentinel.core.planner import Planner
+        self.planner = self._init("Planner", Planner, self)
+        self._jarvis_plan = []
+        self._jarvis_progress = 0
 
         # ── Start background services ─────────────────────────────────────────
         self._start_background_services()
@@ -206,6 +215,48 @@ class SentinelOrchestrator:
 
         # Start proactive intelligence loop
         self._start_proactive_loop()
+
+    # ── Jarvis (Phase 2 MVP) ───────────────────────────────────────────────
+    def start_jarvis(self, goal: str) -> dict:
+        """Initialize a Jarvis planning session for a user-specified goal."""
+        if not self.planner:
+            return {"error": "Planner not available"}
+        plan = self.planner.plan(goal)
+        self._jarvis_plan = plan
+        self._jarvis_progress = 0
+        return {"status": "planned", "steps": [s.text for s in plan]}
+
+    def jarvis_execute_next(self) -> dict:
+        """Execute the next step of the current Jarvis plan. This is a minimal MVP path: uses LLM to simulate execution."""
+        if not getattr(self, "_jarvis_plan", None) or not self._jarvis_plan:
+            return {"status": "no_plan"}
+        next_step = self._jarvis_plan[0].text if isinstance(self._jarvis_plan[0], type(self.planner._plan[0])) else str(self._jarvis_plan[0])
+        # Use LLM fallback to simulate execution of the step
+        if self._jarvis_plan and self._jarvis_plan[0].done:
+            self._jarvis_plan.pop(0)
+            return {"status": "step_done"}
+        # Simulate execution by asking the LLM to interpret the step (if available)
+        result = "No execution result"  # default
+        try:
+            if self and hasattr(self, "_safe_llm_call"):
+                result = self._safe_llm_call(f"Execute: {next_step}")
+        except Exception:
+            result = "Execution simulated"
+        self._jarvis_plan[0] = type(self._jarvis_plan[0])(self._jarvis_plan[0].text)  # keep type
+        self._jarvis_plan.pop(0)
+        self._jarvis_progress += 1
+        return {"status": "executed", "step": next_step, "result": result}
+
+    def jarvis_reflect(self) -> dict:
+        """Return a light-weight reflection of current Jarvis plan state."""
+        remaining = [getattr(s, "text", str(s)) for s in getattr(self, "_jarvis_plan", [])]
+        if not remaining:
+            return {"status": "complete", "notes": "No remaining steps"}
+        return {
+            "status": "in_progress",
+            "remaining_steps": remaining,
+            "progress": getattr(self, "_jarvis_progress", 0)
+        }
 
     def _pull_ollama_model(self) -> None:
         """Start Ollama service and pull the selected model if missing."""
@@ -300,7 +351,13 @@ class SentinelOrchestrator:
             memory_context = self.long_term_memory.inject_past_context(prompt) if self.long_term_memory else ""
             kb_context = self.knowledge_base.query_knowledge(prompt) if getattr(self, 'knowledge_base', None) and hasattr(self.knowledge_base, 'query_knowledge') else ""
             retrieval_context = self.retrieval_module.retrieve(prompt) if getattr(self, 'retrieval_module', None) else ""
-            rc = RetrievalContext(memory_context=memory_context, retrieved_context=retrieval_context, knowledge_context=kb_context, current_task=prompt)
+            persona_str = "" 
+            if getattr(self, 'jarvis_persona', None) and self.jarvis_persona is not None:
+                try:
+                    persona_str = self.jarvis_persona.get_prompt_schip()
+                except Exception:
+                    persona_str = ""
+            rc = RetrievalContext(memory_context=memory_context, retrieved_context=retrieval_context, knowledge_context=kb_context, current_task=prompt, persona=persona_str)
             full_prompt = PromptBuilder(rc).build()
         except Exception:
             # Fallback to legacy simple composition if something goes wrong
@@ -318,7 +375,16 @@ class SentinelOrchestrator:
             full_prompt = "\n".join(parts) if parts else prompt
 
         try:
-            return self.llm_callback(full_prompt)
+            # Call LLM and capture result, then log transcript for Jarvis MVP
+            llm_res = self.llm_callback(full_prompt)
+            if not hasattr(self, "_jarvis_transcript"):
+                self._jarvis_transcript = []
+            self._jarvis_transcript.append({
+                "step": next_step,
+                "result": llm_res,
+                "timestamp": time.time(),
+            })
+            return llm_res
         except Exception as exc:
             logger.warning("Online LLM failed (%s) — falling back to Ollama.", exc)
             if self.ollama_module:

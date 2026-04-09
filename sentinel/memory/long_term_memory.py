@@ -73,9 +73,28 @@ class LongTermMemory:
         self._in_memory = (_os.getenv("SENTINEL_LT_MEM_BACKEND", "" ).lower() == "memory")
         self._mem_summaries: List[str] = []
         self._mem_facts: List[str] = []
+        self._mem_summaries_times: List[float] = []
         if self._in_memory:
             logger.info("LongTermMemory: using in-memory backend (SENTINEL_LT_MEM_BACKEND=memory)")
+        # TTL for in-memory summaries (hours). 0 means disabled.
         self._turns_since_last_summary = 0
+        self._memory_ttl_hours = int(os.getenv("SENTINEL_MEMORY_TTL_HOURS", "0"))
+        
+    def _prune_summaries_if_needed(self):
+        ttl = getattr(self, "_memory_ttl_hours", 0)
+        if not ttl:
+            return
+        cutoff = time.time() - ttl * 3600
+        # prune in-memory summaries with timestamps
+        if hasattr(self, "_mem_summaries_times"):
+            new_summaries = []
+            new_times = []
+            for s, ts in zip(self._mem_summaries, self._mem_summaries_times):
+                if ts >= cutoff:
+                    new_summaries.append(s)
+                    new_times.append(ts)
+            self._mem_summaries = new_summaries
+            self._mem_summaries_times = new_times
         self._init_db()
 
     # ── Initialisation ────────────────────────────────────────────────────────
@@ -165,9 +184,10 @@ class LongTermMemory:
             summary = self.llm_callback(prompt)
             if not summary or len(summary) < 10:
                 return None
-            if self._in_memory:
+        if self._in_memory:
                 self._mem_summaries.append(summary)
-                logger.info("Session summary stored (in-memory).")
+                self._mem_summaries_times.append(_time.time())
+                logger.info("Session summary stored (in-memory). TTL=%s hours.", self._memory_ttl_hours)
                 return summary
             doc_id = f"session_{uuid.uuid4().hex}"
             self._summaries_col.add(
@@ -200,6 +220,8 @@ class LongTermMemory:
         """
         if not self._available:
             return ""
+        # Prune expired in-memory summaries if TTL is configured
+        self._prune_summaries_if_needed()
         try:
             if self._in_memory:
                 count = len(self._mem_summaries)
@@ -309,4 +331,28 @@ class LongTermMemory:
             return True
         # Persistent DB clearing is not implemented to avoid accidental data loss
         logger.warning("LongTermMemory.clear_memory(): persistent DB clearing not implemented.")
+        return False
+
+    def export_memory(self) -> dict:
+        """Export memory. In in-memory mode, export full content; otherwise export summaries/facts counts."""
+        if getattr(self, '_in_memory', False):
+            return {
+                'summaries': list(self._mem_summaries),
+                'facts': list(self._mem_facts),
+            }
+        # Non in-memory: export counts to avoid leaking data from persistent store
+        return {
+            'summaries_count': int(self._summaries_col.count()) if not self._in_memory and self._summaries_col else 0,
+            'facts_count': int(self._facts_col.count()) if not self._in_memory and self._facts_col else 0,
+        }
+
+    def import_memory(self, payload: dict) -> bool:
+        """Import memory payload. Returns True on success."""
+        if not payload:
+            return False
+        if self._in_memory:
+            self._mem_summaries = list(payload.get('summaries', []))
+            self._mem_facts = list(payload.get('facts', []))
+            return True
+        # For non in-memory, simply return False and rely on persisted memory load paths
         return False

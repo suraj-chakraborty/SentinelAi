@@ -22,7 +22,7 @@ class TestManifestLoading(unittest.TestCase):
                 "intents": [],
                 "triggers": ["test manifest plugin"],
                 "entry": "plugin.py",
-                "class": "TestManifest",
+                "class": "Testmanifest",
                 "requires": [],
             }
 
@@ -34,7 +34,7 @@ class TestManifestLoading(unittest.TestCase):
                 f.write(
                     """
 from sentinel.core.plugin_system import PluginBase
-class TestManifest(PluginBase):
+class Testmanifest(PluginBase):
     def __init__(self, orchestrator=None):
         super().__init__(orchestrator)
     def can_handle(self, command):
@@ -52,8 +52,8 @@ class TestManifest(PluginBase):
                 ps = PluginSystem(orchestrator=DummyOrchestrator())
                 loaded = ps.load_all()
                 # There is at least one plugin loaded (the builtins), but our manifest should be discovered too
-            self.assertGreaterEqual(loaded, 1)
-            self.assertIn("TestManifest", ps._plugins)
+                self.assertGreaterEqual(loaded, 1)
+                self.assertIn("TestManifest", ps._plugins)
                 res = ps.dispatch("test manifest plugin")
                 self.assertEqual(res, "Manifest Plugin Activated")
             finally:

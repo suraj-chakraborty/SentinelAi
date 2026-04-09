@@ -15,25 +15,25 @@ class TestManifestLoadingE2ERouter(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             plugins_root = os.path.join(tmpdir, "plugins_e2e")
-            os.makedirs(os.path.join(plugins_root, "ManifestEndToEnd"), exist_ok=True)
+            os.makedirs(os.path.join(plugins_root, "Manifest"), exist_ok=True)
             manifest = {
-                "name": "ManifestEndToEnd",
+                "name": "Manifest",
                 "version": "0.1.0",
                 "description": "End-to-end manifest test plugin",
                 "author": "Test",
                 "intents": [],
                 "triggers": ["test manifest plugin"],
                 "entry": "plugin.py",
-                "class": "TestManifestPlugin",
+                "class": "Manifest",
                 "requires": [],
             }
-            with open(os.path.join(plugins_root, "ManifestEndToEnd", "manifest.json"), "w", encoding="utf-8") as f:
+            with open(os.path.join(plugins_root, "Manifest", "manifest.json"), "w", encoding="utf-8") as f:
                 json.dump(manifest, f)
-            with open(os.path.join(plugins_root, "ManifestEndToEnd", "plugin.py"), "w", encoding="utf-8") as f:
+            with open(os.path.join(plugins_root, "Manifest", "plugin.py"), "w", encoding="utf-8") as f:
                 f.write(
                     """
 from sentinel.core.plugin_system import PluginBase
-class TestManifestPlugin(PluginBase):
+class Manifest(PluginBase):
     def __init__(self, orchestrator=None):
         super().__init__(orchestrator)
     def can_handle(self, command):
@@ -42,8 +42,6 @@ class TestManifestPlugin(PluginBase):
         return 'Manifest Plugin Activated'
 """
                 )
-
-            import sentinel.core.plugin_system as plugin_sys
             import sentinel.core.plugin_system as plugin_sys
             old_dir = plugin_sys.PLUGINS_DIR
             try:
