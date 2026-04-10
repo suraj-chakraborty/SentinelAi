@@ -17,12 +17,16 @@ INTENT_TO_PLUGIN: Dict[Intent, str] = {
     Intent.RESTART: "system_control",
     Intent.SYSTEM_STATUS: "system_control",
     Intent.DEACTIVATE: "deactivate",
-    Intent.AUTONOMOUS_AGENT: "ai_agent",
+    Intent.AUTONOMOUS_AGENT: "smart_response",  # Changed from ai_agent - won't auto-execute
     Intent.COMPUTER_USE: "computer_use",
     Intent.SEARCH_WEB: "search_web",
-    Intent.TAKE_SCREENSHOT: "computer_use",
-    Intent.DESCRIBE_SCREEN: "computer_use",
+    Intent.TAKE_SCREENSHOT: "screen_vision",
+    Intent.DESCRIBE_SCREEN: "screen_vision",
     Intent.BROWSE_URL: "open_app",
+    Intent.TRANSLATE: "translate",
+    Intent.CALCULATE: "smart_response",  # Handle calculations locally
+    Intent.GET_WEATHER: "smart_response",  # Don't open browser for weather
+    Intent.GET_NEWS: "smart_response",  # Don't open browser for news
 }
 
 class CommandRouter:

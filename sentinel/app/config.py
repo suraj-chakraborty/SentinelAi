@@ -63,6 +63,11 @@ MODERN_FONT = ("Segoe UI Variable Display", 10)
 MODERN_FONT_BOLD = ("Segoe UI Variable Display", 10, "bold")
 MODERN_FONT_LARGE = ("Segoe UI Variable Display", 16, "bold")
 
+# ── Voice Settings (Better Jarvis Voice) ───────────────────────────────────────
+DEFAULT_VOICE = "en-US-JennyNeural"  # Friendly female neural voice
+VOICE_RATE = "+15%"                  # Slightly faster for natural feel
+VOICE_VOLUME = "+5%"
+
 # ── App Aliases ─────────────────────────────────────────────────────────────
 ALIASES = {
     "vs code": "vscode",

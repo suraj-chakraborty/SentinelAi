@@ -35,6 +35,13 @@ def execute_command(command: str, orchestrator_ref=None):
         speak("Stopping autonomous agent.")
         get_state().set_status("AGENT_ACTIVE", False)
         return
+    
+    # Stop speaking commands
+    stop_speaking_cmds = ("stop speaking", "silence", "quiet", "be quiet", "shut up", "stop talking")
+    if any(cmd.startswith(sc) for sc in stop_speaking_cmds):
+        from sentinel.voice.tts import get_tts
+        get_tts().stop_speaking()
+        return
         
     if cmd in ("pause listening", "stop listening"):
         get_state().set_status("LISTENING_PAUSED", True)
@@ -57,21 +64,35 @@ def execute_command(command: str, orchestrator_ref=None):
     try:
         response = interpret_command(command)
         if response:
-            # Handle AI-generated [EXECUTE: ...] tags for autonomous repair
-            import re
-            match = re.search(r"\[EXECUTE:\s*(.*?)\]", response)
-            if match:
-                exec_cmd = match.group(1).strip()
-                clean_msg = response.replace(match.group(0), "").strip()
-                if clean_msg:
-                    speak(clean_msg)
-                
-                logger.info(f"AI suggested autonomous execution: {exec_cmd}")
-                from sentinel.utils.app_launcher import launch_application
-                launch_application(exec_cmd)
-                return
+            # Check if user explicitly wants browser/search actions
+            search_keywords = ("search", "look up", "find", "google", "bing", "web search", "open browser")
+            allow_execute = any(sk in cmd for sk in search_keywords)
             
-            speak(response)
+            clean_response = response
+            execute_cmd = None
+            if "[EXECUTE:" in response:
+                import re
+                match = re.search(r'\[EXECUTE:\s*(.*?)\]', response)
+                if match:
+                    execute_cmd = match.group(1).strip()
+                
+                if allow_execute and execute_cmd:
+                    logger.info(f"Auto-executing: {execute_cmd}")
+                else:
+                    # Remove execute for non-search commands (e.g., translate, weather)
+                    clean_response = re.sub(r'\[EXECUTE:.*?\]', '', response).strip()
+                    logger.info("Removed auto-execute suggestion from AI response")
+            
+            if clean_response:
+                speak(clean_response)
+            
+            # Execute the command if allowed
+            if allow_execute and execute_cmd:
+                try:
+                    os.system(execute_cmd)
+                    logger.info(f"Executed: {execute_cmd}")
+                except Exception as e:
+                    logger.error(f"Failed to execute: {e}")
         else:
             speak("I'm sorry, I couldn't understand or execute that command.")
     except Exception as e:

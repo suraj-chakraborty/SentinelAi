@@ -42,11 +42,13 @@ try:
 except Exception:
     _PYTTSX3_AVAILABLE = False
 
-# Emotion → voice style mapping
+# Emotion → voice style mapping (improved)
 EMOTION_VOICE_MAP = {
-    "Stressed/Excited": ("en-US-GuyNeural", "+30%", "+10%"),    # voice, rate, volume
-    "Calm/Sad":         ("en-US-JennyNeural", "-20%", "-5%"),
-    "Neutral":          ("en-US-GuyNeural",   "+0%",  "+0%"),
+    "Stressed/Excited": ("en-US-JennyNeural", "+40%", "+15%"),    # voice, rate, volume
+    "Calm/Sad":         ("en-US-JennyNeural", "-10%", "-5%"),
+    "Neutral":          ("en-US-JennyNeural", "+15%", "+5%"),       # Better default
+    "Happy":            ("en-US-JennyNeural", "+25%", "+10%"),
+    "Excited":          ("en-US-AriaNeural", "+30%", "+10%"),
 }
 
 APPDATA_DIR = os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "SentinelAi")
@@ -64,14 +66,25 @@ class TTSEngine:
     def __init__(self):
         from sentinel.app.config import load_settings
         settings = load_settings()
-        self.preferred_voice = settings.get("voice", "en-US-GuyNeural")
+        self.preferred_voice = settings.get("voice", "en-US-JennyNeural")
         
         self._lock = threading.Lock()
         self._queue: queue.Queue = queue.Queue()
         self._worker = threading.Thread(target=self._process_queue, daemon=True)
         self._worker.start()
         self._tts_disabled = False
+        self._stop_event = None  # For interrupting speech
         logger.info(f"TTSEngine started. edge-tts={'✓' if _EDGE_TTS_AVAILABLE else '✗'}, pygame={'✓' if _PYGAME_AVAILABLE else '✗'}, pyttsx3={'✓' if _PYTTSX3_AVAILABLE else '✗'}")
+
+    def stop_speaking(self):
+        """Stop current speech immediately."""
+        try:
+            import pygame
+            if pygame.mixer.get_init():
+                pygame.mixer.music.stop()
+                logger.info("Speech stopped")
+        except Exception as e:
+            logger.error(f"Failed to stop speech: {e}")
 
     def speak(self, text: str, emotion: str = "Neutral", block: bool = False):
         """Queue text for speech. Non-blocking by default."""
@@ -150,12 +163,13 @@ class TTSEngine:
                     pygame.mixer.music.load(tmp_file)
                     pygame.mixer.music.play()
                     
-                    # Watchdog to prevent hanging
-                    wait_start = time.time()
+                    # Wait for playback to complete - no timeout (user can interrupt)
                     while pygame.mixer.music.get_busy():
                         time.sleep(0.05)
-                        if time.time() - wait_start > 10.0:  # 10s max for one phrase
-                            logger.warning("Pygame mixer timed out. Stopping.")
+                        # Check if user requested interrupt (via event)
+                        if self._stop_event and self._stop_event.is_set():
+                            pygame.mixer.music.stop()
+                            logger.info("TTS interrupted by user")
                             break
                 except Exception as e:
                     logger.warning(f"Pygame playback error: {e}")

@@ -62,6 +62,7 @@ from sentinel.app.gui import build_dashboard, RecordingOverlay, start_tray_icon
 from sentinel.app.audio import record_until_silence, liveness_verify
 from sentinel.app.voice import speak, transcribe
 from sentinel.app.orchestration import execute_command, start_alert_loop
+from sentinel.voice.tts import get_tts
 
 # Suppress harmless but noisy WNDPROC warnings on Windows 11
 warnings.filterwarnings("ignore", message="WPARAM is simple, so must be an int object")
@@ -232,6 +233,9 @@ class SentinelApp:
             if self.state.get_status("LISTENING_PAUSED"):
                 return
 
+            # Check if TTS is playing and stop it when wake word is detected
+            get_tts().stop_speaking()
+            
             self.log_status("Wake word detected.")
             
             # 1. Session Check
@@ -257,6 +261,14 @@ class SentinelApp:
             self.log_status("Processing...")
             text = transcribe(fn)
             if text:
+                # Check for stop/silence commands in the transcribed text
+                stop_words = ("stop", "silence", "quiet", "be quiet", "shut up", "stop speaking")
+                if any(text.strip().lower().startswith(sw) for sw in stop_words):
+                    get_tts().stop_speaking()
+                    self.log_status("Speech interrupted by user")
+                    self._is_paused = False
+                    return
+                    
                 print(f"\n[USER COMMAND]: {text}")
                 self.log_status(f"Command: {text}")
                 execute_command(text, self.orchestrator)
