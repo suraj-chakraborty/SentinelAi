@@ -769,7 +769,7 @@ class SentinelWebServer:
                     "facts_count": mem.get_stats().get("stored_facts", 0),
                     "db_path": mem.db_path if hasattr(mem, 'db_path') else None,
                 }
-        except Exception as exc:
+            except Exception as exc:
                 return {"error": str(exc)}
 
         @app.post("/admin/memory/import")

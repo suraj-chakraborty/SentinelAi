@@ -1,6 +1,6 @@
 """
 sentinel/memory/screen_capture.py
-──────────────────────────────────
+─────────────────────────────────
 Screen capture module for semantic screen memory.
 Captures screenshots and extracts text via OCR.
 """
@@ -14,7 +14,13 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image
-import pytesseract
+
+try:
+    import pytesseract
+    PYTESSERACT_OK = True
+except ImportError:
+    PYTESSERACT_OK = False
+    logging.warning("pytesseract not available - OCR disabled")
 
 from sentinel.app.config import APPDATA_DIR
 
@@ -75,6 +81,9 @@ class ScreenCapture:
             return None
 
     def extract_text(self, image: np.ndarray, lang: str = "eng") -> str:
+        if not PYTESSERACT_OK:
+            logger.warning("OCR not available - pytesseract not installed")
+            return ""
         try:
             pil_image = Image.fromarray(image)
             text = pytesseract.image_to_string(pil_image, lang=lang)

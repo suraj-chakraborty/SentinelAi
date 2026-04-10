@@ -1,6 +1,6 @@
 """
 sentinel/memory/screen_memory_db.py
-────────────────────────────────────
+───────────────────────────────────
 ChromaDB wrapper for semantic screen memory storage.
 Stores screenshot OCR text as vectors for semantic recall.
 """
@@ -12,8 +12,13 @@ from typing import List, Dict, Any, Optional
 from pathlib import Path
 import json
 
-import chromadb
-from chromadb.config import Settings
+try:
+    import chromadb
+    from chromadb.config import Settings
+    CHROMADB_OK = True
+except ImportError:
+    CHROMADB_OK = False
+    logging.warning("chromadb not available - screen memory DB disabled")
 
 from sentinel.app.config import APPDATA_DIR
 
@@ -25,6 +30,8 @@ Path(SCREEN_MEMORY_DIR).mkdir(parents=True, exist_ok=True)
 
 class ScreenMemoryDB:
     def __init__(self, persist_directory: str = SCREEN_MEMORY_DIR):
+        if not CHROMADB_OK:
+            raise RuntimeError("ChromaDB not available")
         self.persist_directory = persist_directory
         self._client = None
         self._collection = None
@@ -32,6 +39,8 @@ class ScreenMemoryDB:
         self._init_db()
 
     def _init_db(self):
+        if not CHROMADB_OK:
+            return
         try:
             from sentence_transformers import SentenceTransformer
             

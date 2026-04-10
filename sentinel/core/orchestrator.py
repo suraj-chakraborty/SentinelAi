@@ -137,6 +137,61 @@ class SentinelOrchestrator:
         self.user_profiles = self._init("UserProfileManager", UserProfileManager)
         self.current_user_id = None
 
+        # ── Advanced Modules (Modules 1-20) ─────────────────────────────────────
+        # Module 1: Semantic Screen Memory
+        self.screen_memory = self._init_optional("sentinel.memory.screen_indexer", "ScreenIndexer")
+        
+        # Module 2: Self-Healing Plugin Generation
+        self.plugin_generator = self._init_optional("sentinel.core.plugin_generator", "PluginGenerator", self)
+        
+        # Module 3: Accessibility Automation (UIA)
+        self.ui_automation = self._init_optional("sentinel.automation.uia_automation", "UIAutomation")
+        
+        # Module 4: Live Spatial Vision
+        self.live_vision = self._init_optional("sentinel.vision.live_vision", "LiveVisionStream")
+        
+        # Module 5: Context-Aware Background Daemons
+        self.daemon_manager = self._init_optional("sentinel.daemons.daemon_manager", "DaemonManager")
+        
+        # Module 6: Acoustic Localization
+        self.acoustic_awareness = self._init_optional("sentinel.voice.acoustic_awareness", "AcousticAwareness")
+        
+        # Module 7: Sandboxed Code Execution
+        self.sandbox = self._init_optional("sentinel.core.sandbox", "SandboxEngine")
+        
+        # Module 8: Biometric Auth
+        self.biometric_auth = self._init_optional("sentinel.perception.biometric_auth", "BiometricAuth")
+        
+        # Module 9: Phone Bridge
+        self.phone_bridge = self._init_optional("sentinel.core.phone_bridge", "PhoneBridge")
+        
+        # Module 10: Meeting Surrogate
+        self.meeting_surrogate = self._init_optional("sentinel.voice.meeting_surrogate", "MeetingSurrogate")
+        
+        # Module 11: Kernel-Level Cybersecurity
+        self.cyber_overwatch = self._init_optional("sentinel.security.overwatch", "CyberOverwatch")
+        
+        # Module 12: Distributed Hive Computing
+        self.hive_computing = self._init_optional("sentinel.network.hive_computing", "HiveNetwork")
+        
+        # Module 13: Nocturnal Fine-Tuning
+        self.nocturnal_trainer = self._init_optional("sentinel.core.nocturnal_trainer", "NocturnalTrainer")
+        
+        # Module 14: Neural Pre-Fetching
+        self.neural_prefetch = self._init_optional("sentinel.core.prefetch_engine", "NeuralPrefetch")
+        
+        # Module 15: Spatial AR Integration
+        self.spatial_ar = self._init_optional("sentinel.ar.spatial_interface", "SpatialInterface")
+        
+        # Module 16: System-Wide Audio Intelligence (Omni-Ear)
+        self.omni_ear = self._init_optional("sentinel.audio.omni_ear", "OmniEar")
+        
+        # Module 17-18: Biomimetic Emotional TTS
+        self.emotional_tts = self._init_optional("sentinel.voice.emotional_tts", "EmotionalTTS")
+        
+        # Module 19-20: Digital Telekinesis
+        self.telekinesis = self._init_optional("sentinel.neuro.telekinesis", "Telekinesis")
+
         # ── Start background services ─────────────────────────────────────────
         self._start_background_services()
 

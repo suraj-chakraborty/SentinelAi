@@ -1,6 +1,6 @@
 """
 sentinel/daemons/daemon_manager.py
-──────────────────────────────────
+───────────────────────────────────
 Context-aware background daemon manager.
 Schedules and runs background tasks with triggers and context awareness.
 """
@@ -11,11 +11,17 @@ import logging
 import threading
 import queue
 import json
-import schedule
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, Callable, List
 from dataclasses import dataclass, field
 from enum import Enum
+
+try:
+    import schedule
+    SCHEDULE_OK = True
+except ImportError:
+    SCHEDULE_OK = False
+    logging.warning("schedule not available - interval tasks disabled")
 
 from sentinel.app.config import APPDATA_DIR
 
@@ -82,7 +88,10 @@ class DaemonManager:
             self._tasks[task_id] = task
             
             if trigger == "interval" and interval_seconds > 0:
-                schedule.every(interval_seconds).seconds.do(self._run_task, task_id)
+                if SCHEDULE_OK:
+                    schedule.every(interval_seconds).seconds.do(self._run_task, task_id)
+                else:
+                    logger.warning("Schedule module not available - interval tasks won't run")
             
             logger.info(f"Registered daemon task: {task_id} (trigger: {trigger})")
             return True
@@ -138,7 +147,8 @@ class DaemonManager:
         """Run scheduled tasks."""
         while self._running:
             try:
-                schedule.run_pending()
+                if SCHEDULE_OK:
+                    schedule.run_pending()
             except Exception as e:
                 logger.error(f"Schedule loop error: {e}")
             time.sleep(1)
