@@ -16,9 +16,29 @@ class UIAutomationCommand:
     def __init__(self):
         self._uia = get_uia()
 
-    def execute(self, action: str, **kwargs) -> Dict[str, Any]:
-        """Execute a UI automation action."""
+    def execute(self, action: str, **kwargs) -> Any:
+        """Execute a UI automation action or natural language RPA command."""
         try:
+            act_lower = str(action).lower().strip()
+            # Handle natural language RPA requests
+            if any(k in act_lower for k in ("snap", "tile", "organize", "center window")):
+                import os
+                from sentinel.automation.deep_rpa import DeepRPA
+                rpa = DeepRPA()
+                if "snap left" in act_lower or "tile left" in act_lower or "left" in act_lower:
+                    rpa.snap_active_window("left")
+                    return "Snapped window to the left half."
+                elif "snap right" in act_lower or "tile right" in act_lower or "right" in act_lower:
+                    rpa.snap_active_window("right")
+                    return "Snapped window to the right half."
+                elif "center" in act_lower:
+                    rpa.snap_active_window("center")
+                    return "Centered active window."
+                elif "organize" in act_lower:
+                    d_path = os.path.join(os.path.expanduser("~"), "Downloads")
+                    res = rpa.organize_directory(d_path)
+                    return f"Organized {res.get('files_organized', 0)} files in your Downloads folder."
+
             if action == "window_info":
                 return self._get_window_info()
             

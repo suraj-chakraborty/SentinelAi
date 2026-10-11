@@ -1,129 +1,77 @@
 """
 sentinel/commands/search_memory.py
 ───────────────────────────────────
-Command to search semantic screen memory.
+Unified Episodic & Semantic Memory Search Command.
+Handles cross-session recall ("What did we do yesterday?", "Recall past commands", "Search screens").
 """
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 
-from sentinel.memory.screen_indexer import get_screen_indexer, start_screen_indexer, stop_screen_indexer
-from sentinel.memory.screen_memory_db import get_screen_memory_db
+from sentinel.memory.episodic_logger import get_episodic_logger
+from sentinel.memory.screen_indexer import get_screen_indexer
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("SearchMemory")
 
 
 class SearchMemoryCommand:
-    def __init__(self):
-        self._indexer = None
+    def __init__(self, orchestrator=None):
+        self.orchestrator = orchestrator
 
-    def execute(self, query: str, n_results: int = 5) -> Dict[str, Any]:
+    def execute(self, query: str, entity: Optional[str] = None) -> Union[str, Dict[str, Any]]:
+        """
+        Processes memory recall requests for both voice commands and direct queries.
+        """
+        q_lower = query.lower()
+
+        # 1. Check for yesterday / past actions
+        if "yesterday" in q_lower or "previous session" in q_lower:
+            episodes = get_episodic_logger().get_past_actions(days_ago=1)
+            if episodes:
+                commands_summary = ", ".join([f"'{e['user_command']}'" for e in episodes[:4]])
+                msg = f"Yesterday, you executed: {commands_summary}."
+                return msg
+            return "I don't have recorded commands from yesterday in episodic memory."
+
+        # 2. Check for recent commands / history
+        if any(k in q_lower for k in ("recent commands", "what did i do", "what did we do", "last command", "history")):
+            episodes = get_episodic_logger().get_recent(limit=4)
+            if episodes:
+                lines = [f"- '{e['user_command']}' ({e['date_str'].split(' ')[1][:5]})" for e in episodes]
+                return f"Your most recent commands were: {'; '.join(lines)}."
+            return "No recent command history found."
+
+        # 3. Keyword search in episodic memory
+        clean_search = entity or query.replace("search memory for", "").replace("search memory", "").replace("recall", "").strip()
+        episodes = get_episodic_logger().search_episodes(clean_search, limit=3)
+        if episodes:
+            match = episodes[0]
+            return f"I recall that on {match['date_str']}, you ran '{match['user_command']}'. The result was: {match['response'][:150]}."
+
+        # 4. Fallback to semantic screen indexer
         try:
             indexer = get_screen_indexer()
-            results = indexer.search(query, n_results)
-            
-            if not results:
-                return {
-                    "success": True,
-                    "query": query,
-                    "results": [],
-                    "message": "No matching screens found"
-                }
-            
-            formatted = []
-            for r in results:
-                formatted.append({
-                    "screen_id": r["id"],
-                    "text_preview": r["text"][:300] + "..." if len(r["text"]) > 300 else r["text"],
-                    "timestamp": r["metadata"].get("timestamp"),
-                    "screenshot": r["metadata"].get("screenshot_path"),
-                    "distance": r.get("distance")
-                })
-            
-            return {
-                "success": True,
-                "query": query,
-                "results": formatted,
-                "count": len(formatted)
-            }
+            results = indexer.search(clean_search, limit=3)
+            if results:
+                top = results[0]
+                preview = top.get("text", "")[:180]
+                return f"Found a matching screen capture containing: '{preview}'."
         except Exception as e:
-            logger.error(f"Memory search failed: {e}")
-            return {"success": False, "error": str(e)}
+            logger.debug(f"Screen indexer search: {e}")
+
+        return f"I could not find past records matching '{clean_search}'."
 
     def get_recent(self, limit: int = 10) -> Dict[str, Any]:
+        """API method for UI/dashboard."""
         try:
-            indexer = get_screen_indexer()
-            screens = indexer.get_recent(limit)
-            
-            formatted = []
-            for s in screens:
-                formatted.append({
-                    "screen_id": s["id"],
-                    "text_preview": s["text"][:300] + "..." if len(s["text"]) > 300 else s["text"],
-                    "timestamp": s["metadata"].get("timestamp"),
-                    "screenshot": s["metadata"].get("screenshot_path")
-                })
-            
-            return {
-                "success": True,
-                "screens": formatted,
-                "count": len(formatted)
-            }
+            screens = get_screen_indexer().get_recent(limit)
+            return {"success": True, "screens": screens, "count": len(screens)}
         except Exception as e:
-            logger.error(f"Get recent screens failed: {e}")
             return {"success": False, "error": str(e)}
 
     def get_stats(self) -> Dict[str, Any]:
+        """API method for UI/dashboard."""
         try:
-            indexer = get_screen_indexer()
-            return indexer.get_stats()
+            return get_screen_indexer().get_stats()
         except Exception as e:
-            logger.error(f"Get stats failed: {e}")
             return {"success": False, "error": str(e)}
-
-    def start_indexing(self, interval_seconds: int = 60) -> Dict[str, Any]:
-        try:
-            start_screen_indexer(interval_seconds)
-            return {"success": True, "message": f"Screen indexing started (interval: {interval_seconds}s)"}
-        except Exception as e:
-            logger.error(f"Start indexing failed: {e}")
-            return {"success": False, "error": str(e)}
-
-    def stop_indexing(self) -> Dict[str, Any]:
-        try:
-            stop_screen_indexer()
-            return {"success": True, "message": "Screen indexing stopped"}
-        except Exception as e:
-            logger.error(f"Stop indexing failed: {e}")
-            return {"success": False, "error": str(e)}
-
-    def capture_now(self) -> Dict[str, Any]:
-        try:
-            indexer = get_screen_indexer()
-            screen_id = indexer.index_now()
-            if screen_id:
-                return {"success": True, "screen_id": screen_id, "message": "Screen captured and indexed"}
-            return {"success": False, "error": "No text extracted from screen"}
-        except Exception as e:
-            logger.error(f"Capture now failed: {e}")
-            return {"success": False, "error": str(e)}
-
-    def delete_screen(self, screen_id: str) -> Dict[str, Any]:
-        try:
-            db = get_screen_memory_db()
-            if db.delete_screen(screen_id):
-                return {"success": True, "message": f"Screen {screen_id} deleted"}
-            return {"success": False, "error": "Failed to delete screen"}
-        except Exception as e:
-            logger.error(f"Delete screen failed: {e}")
-            return {"success": False, "error": str(e)}
-
-
-_search_memory_command: Optional[SearchMemoryCommand] = None
-
-
-def get_search_memory_command() -> SearchMemoryCommand:
-    global _search_memory_command
-    if _search_memory_command is None:
-        _search_memory_command = SearchMemoryCommand()
-    return _search_memory_command

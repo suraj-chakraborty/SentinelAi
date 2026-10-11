@@ -19,7 +19,7 @@ import logging
 import os
 import re
 import time
-from typing import List, Optional
+from typing import List
 
 from sentinel.core.plugin_system import PluginBase
 

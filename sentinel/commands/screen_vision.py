@@ -45,7 +45,11 @@ class ScreenVision:
             try:
                 vision = self._get_vision()
                 if vision:
-                    result = vision.analyze_screen("Describe what is on this screen in detail.")
+                    is_window_focused = any(k in command.lower() for k in ("window", "active", "this app", "this error"))
+                    if is_window_focused:
+                        result = vision.describe_active_window()
+                    else:
+                        result = vision.analyze_screen(f"Context: {command}. Describe what is on this screen in detail.")
                     
                     # Speak result after analysis
                     if result and len(result) > 10:
@@ -56,7 +60,7 @@ class ScreenVision:
                     self._speak("Vision module not available.")
             except Exception as e:
                 logger.error(f"Screen analysis error: {e}")
-                self._speak(f"Sorry, I had trouble analyzing the screen.")
+                self._speak("Sorry, I had trouble analyzing the screen.")
 
         # Run analysis in background
         thread = threading.Thread(target=analyze_background, daemon=True)
