@@ -12,7 +12,7 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11"]
+        python-version: ["3.11", "3.12", "3.13"]
 
     steps:
       - name: Checkout code
@@ -28,11 +28,8 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pytest pytest-cov ruff rapidfuzz bandit
-
-      - name: Install project dependencies (no heavy ML/audio)
-        run: |
-          pip install httpx requests python-dotenv fastapi pydantic
-        continue-on-error: true
+          pip install -r requirements.txt --no-deps || true
+          pip install httpx requests python-dotenv fastapi pydantic uvicorn
 
       - name: Lint with ruff (including Security checks)
         run: |

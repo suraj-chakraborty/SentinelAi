@@ -1,20 +1,68 @@
+# ── Environment & Secrets ──
 .env
-.history
-env
-history
-build/*
-Untitled.zip/*
-__pycache__/*
-build/*
-dist/*
+*.env
+*.key
+*.pem
+
+# ── Python & Bytecode ──
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+
+# ── Virtual Environments ──
 venv/
+env/
 resem-env/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+
+# ── Build & Packaging ──
+build/
+dist/
+*.spec
+*.egg-info/
+*.egg
+
+# ── Testing & Code Quality ──
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-*.pyc
-*.pyo
-*.log
-*.wav
-*.npy
+.coverage
+htmlcov/
 
+# ── IDEs & Tooling ──
+.history/
+.qoder/
+.vscode/
+.idea/
+
+# ── Temporary, Logs & Caches ──
+*.log
+*.tmp
+tmp/
+tmp_pip/
+tmp_*/
+temp/
+
+# ── Media & Binary Artifacts ──
+*.wav
+*.mp3
+*.npy
+*.zip
+*.tar.gz
+*.png
+*.jpg
+*.jpeg
+screenshot*
+
+# ── External Binaries & Drivers ──
+chromedriver*
+chrome-win64*
+
+# ── OS Generated Files ──
+Thumbs.db
+Desktop.ini
+.DS_Store
