@@ -67,10 +67,22 @@ def gemini_generate(prompt: str, conv=None, emotion: str = "Neutral",
             except Exception:
                 pass
         
+        try:
+            from sentinel.modules.mood_engine import get_mood_engine
+            mood_engine = get_mood_engine()
+            mood_engine.update_resonance(prompt)
+            system_instruction = mood_engine.get_personality_system_prompt()
+            active_mood = mood_engine.agent_mood.value
+        except Exception:
+            system_instruction = "You are SentinelAI, an advanced charismatic personal companion with authentic opinions and emotions."
+            active_mood = emotion
+
         if not contents:
-            contents.append({"role": "user", "parts": [{"text": "You are SentinelAI, an advanced personal AI assistant. Be concise."}]})
+            contents.append({"role": "user", "parts": [{"text": system_instruction}]})
+        else:
+            contents.insert(0, {"role": "user", "parts": [{"text": system_instruction}]})
         
-        user_text = f"[User emotion: {emotion}] {prompt}" if emotion and emotion != "Neutral" else prompt
+        user_text = f"[Agent mood: {active_mood} | User emotion: {emotion}] {prompt}"
         
         parts = [{"text": user_text}]
         if image_b64:

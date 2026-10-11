@@ -144,11 +144,14 @@ def launch_application(name: str) -> bool:
         except OSError:
             pass
 
-    # Final attempt: Shell execution via subprocess, but WITHOUT 'start' to avoid popups
+    # Final attempt: safe tokenized execution without shell=True
     try:
-        subprocess.Popen(name, shell=True)
-        return True
-    except Exception:
-        pass
+        import shlex
+        args = shlex.split(name)
+        if args and (shutil.which(args[0]) or os.path.exists(args[0])):
+            subprocess.Popen(args, shell=False)
+            return True
+    except Exception as e:
+        logger.debug("Final launch attempt failed: %s", e)
 
     return False

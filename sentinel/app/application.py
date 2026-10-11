@@ -120,7 +120,8 @@ class SentinelApp:
                     model_path=model_path
                 )
         except Exception as e:
-            self.log_status(f"Wake word init failed: {str(e)[:20]}")
+            logger.warning("Wake word listener could not initialize: %s", e)
+            self.log_status("Wake word offline (use Alt+J or GUI)")
             return
 
         pa = pyaudio.PyAudio()
@@ -277,9 +278,27 @@ class SentinelApp:
         finally:
             self._is_paused = False
 
+    def _on_hotkey_pressed(self):
+        """Global Alt+J hotkey pressed -> wake detection trigger."""
+        if getattr(self, "_is_paused", False):
+            return
+        logger.info("Global hotkey invoked Sentinel!")
+        self._is_paused = True
+        threading.Thread(target=self._handle_wake_detection, daemon=True).start()
+
+    def _on_barge_in_triggered(self):
+        """User spoke while Sentinel was speaking -> interrupt and listen."""
+        self.log_status("Interrupted by user. Listening...")
+
     def _on_exit(self):
         """Callback to shut down the entire app gracefully."""
         self.log_status("Shutting down...")
+        if hasattr(self, "hotkey_manager") and self.hotkey_manager:
+            try: self.hotkey_manager.stop()
+            except Exception: pass
+        if hasattr(self, "barge_in_monitor") and self.barge_in_monitor:
+            try: self.barge_in_monitor.stop()
+            except Exception: pass
         if self.root:
             self.root.after(100, self.root.destroy)
         else:
@@ -299,12 +318,30 @@ class SentinelApp:
         # 1. Startup Greeting
         speak("Sentinel OS V4 online. How can I assist?", block=False)
 
-        # 2. Start wake listener
+        # 2. Start wake listener & barge-in monitor
         threading.Thread(target=self._listen_loop, daemon=True).start()
+        try:
+            from sentinel.voice.barge_in import BargeInMonitor
+            self.barge_in_monitor = BargeInMonitor(
+                tts_engine=get_tts(),
+                on_barge_in=self._on_barge_in_triggered
+            )
+            self.barge_in_monitor.start()
+        except Exception as e:
+            logger.debug(f"BargeInMonitor startup failed: {e}")
+
+        # 3. Start Global Hotkey listener (Alt+J / Ctrl+Shift+J)
+        try:
+            from sentinel.utils.hotkey_manager import GlobalHotkeyManager
+            self.hotkey_manager = GlobalHotkeyManager(on_trigger=self._on_hotkey_pressed)
+            self.hotkey_manager.start()
+        except Exception as e:
+            logger.debug(f"GlobalHotkeyManager startup failed: {e}")
 
         # Build GUI
         from sentinel.app.voice_enroll import start_enrollment
         from sentinel.app.secrets import verify_master
+        from sentinel.app.registry import build_app_registry
         from tkinter import simpledialog
 
         def on_voice_reg_click():
@@ -314,11 +351,13 @@ class SentinelApp:
             else:
                 self.log_status("Authentication failed.")
 
+        from sentinel.app.gui import ConfigWindow
+
         self.root, self.voice_meter, self.mru_combo = build_dashboard(
             on_voice_reg=on_voice_reg_click,
             on_rebuild=lambda: threading.Thread(target=build_app_registry, kwargs={"fast_only": False}, daemon=True).start(),
             on_manual=lambda: self._handle_wake_detection(), # Reuse wake logic
-            on_config=lambda: print("Show Config"),
+            on_config=lambda: ConfigWindow(self.root),
             on_terminate=lambda: self._on_exit(),
             on_agent_toggle=lambda: print("Agent Toggle"),
             app_list=[] # Load from registry
@@ -326,9 +365,13 @@ class SentinelApp:
 
         def update_ui():
             while not self.status_queue.empty():
-                msg = self.status_queue.get_nowait()
-                # Update status label in root (needs a reference, simplified here)
-            self.root.after(400, update_ui)
+                try:
+                    msg = self.status_queue.get_nowait()
+                    if hasattr(self.root, "status_label") and self.root.status_label:
+                        self.root.status_label.config(text=str(msg)[:80])
+                except Exception:
+                    break
+            self.root.after(200, update_ui)
 
         self.root.after(400, update_ui)
         self.root.mainloop()

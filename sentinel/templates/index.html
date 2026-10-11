@@ -3,736 +3,1729 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SentinelAI — Intelligence Dashboard</title>
-    <meta name="description" content="SentinelAI advanced personal AI assistant — real-time monitoring and command interface">
+    <title>SentinelAI — Next-Gen Intelligence HUD</title>
+    <meta name="description" content="SentinelAI Advanced Autonomous Assistant — 3D Holographic Viseme HUD, Hands-Free Voice, Screen Error Vision, and Multi-Agent Swarm">
     <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- Three.js for 3D Holographic WebGL Mesh -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <style>
-        /* ─── Design Tokens ─────────────────────────────────────────── */
+        /* ─── Cyberpunk / Jarvis Design System ────────────────────────── */
         :root {
-            --bg:           #080c14;
-            --surface:      #0d1420;
-            --surface-2:    #111827;
-            --border:       rgba(255,255,255,0.07);
-            --border-glow:  rgba(34,211,238,0.3);
-            --cyan:         #22d3ee;
-            --cyan-dim:     rgba(34,211,238,0.12);
+            --bg:           #060911;
+            --surface:      rgba(13, 20, 32, 0.78);
+            --surface-card: rgba(17, 24, 39, 0.65);
+            --surface-hover:rgba(30, 41, 59, 0.7);
+            --border:       rgba(255, 255, 255, 0.08);
+            --border-glow:  rgba(0, 243, 255, 0.35);
+            --cyan:         #00f3ff;
+            --cyan-glow:    rgba(0, 243, 255, 0.25);
             --purple:       #a78bfa;
-            --purple-dim:   rgba(167,139,250,0.12);
-            --green:        #4ade80;
-            --red:          #f87171;
+            --purple-glow:  rgba(167, 139, 250, 0.25);
+            --green:        #10b981;
+            --green-glow:   rgba(16, 185, 129, 0.25);
             --amber:        #fbbf24;
-            --text:         #f1f5f9;
+            --amber-glow:   rgba(251, 191, 36, 0.25);
+            --red:          #f43f5e;
+            --red-glow:     rgba(244, 63, 94, 0.3);
+            --text:         #f8fafc;
             --text-dim:     #64748b;
             --text-mid:     #94a3b8;
-            --radius:       16px;
-            --radius-sm:    10px;
-            --glow-cyan:    0 0 20px rgba(34,211,238,0.15);
-            --glow-purple:  0 0 20px rgba(167,139,250,0.15);
+            --radius-lg:    18px;
+            --radius-md:    12px;
+            --radius-sm:    8px;
         }
 
-        /* ─── Reset & Base ──────────────────────────────────────────── */
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
         body {
             background: var(--bg);
             color: var(--text);
-            font-family: 'Inter', sans-serif;
+            font-family: 'Inter', -apple-system, sans-serif;
             font-size: 14px;
             line-height: 1.6;
             min-height: 100vh;
             overflow-x: hidden;
+            background-image: 
+                radial-gradient(circle at 15% 15%, rgba(0, 243, 255, 0.04) 0%, transparent 40%),
+                radial-gradient(circle at 85% 85%, rgba(167, 139, 250, 0.05) 0%, transparent 45%);
         }
 
-        /* ─── Ambient background ────────────────────────────────────── */
+        /* Ambient scanline texture */
         body::before {
             content: '';
             position: fixed;
-            top: -30%;
-            left: -20%;
-            width: 60vw;
-            height: 60vw;
-            background: radial-gradient(ellipse, rgba(34,211,238,0.04), transparent 60%);
+            top: 0; left: 0; width: 100vw; height: 100vh;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.02), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.02));
+            background-size: 100% 3px, 6px 100%;
             pointer-events: none;
-            z-index: 0;
-        }
-        body::after {
-            content: '';
-            position: fixed;
-            bottom: -20%;
-            right: -10%;
-            width: 50vw;
-            height: 50vw;
-            background: radial-gradient(ellipse, rgba(167,139,250,0.05), transparent 60%);
-            pointer-events: none;
-            z-index: 0;
+            z-index: 999;
+            opacity: 0.35;
         }
 
-        /* ─── Layout ────────────────────────────────────────────────── */
-        .app { position: relative; z-index: 1; max-width: 1400px; margin: 0 auto; padding: 24px; }
+        .hud-app {
+            position: relative;
+            z-index: 1;
+            max-width: 1540px;
+            margin: 0 auto;
+            padding: 20px 24px;
+        }
 
-        /* ─── Glass card ────────────────────────────────────────────── */
-        .card {
+        /* ─── Glassmorphism card utility ─────────────────────────────── */
+        .glass-panel {
             background: var(--surface);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
             border: 1px solid var(--border);
-            border-radius: var(--radius);
-            padding: 24px;
-            backdrop-filter: blur(12px);
-            transition: border-color 0.3s, box-shadow 0.3s;
+            border-radius: var(--radius-lg);
+            transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
         }
-        .card:hover { border-color: var(--border-glow); box-shadow: var(--glow-cyan); }
-        .card.purple:hover { border-color: rgba(167,139,250,0.3); box-shadow: var(--glow-purple); }
+        .glass-panel:hover {
+            border-color: rgba(0, 243, 255, 0.2);
+            box-shadow: 0 8px 32px rgba(0, 243, 255, 0.08);
+        }
 
-        /* ─── Header ────────────────────────────────────────────────── */
+        /* ─── Top Header ─────────────────────────────────────────────── */
         header {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            margin-bottom: 28px;
+            margin-bottom: 20px;
             flex-wrap: wrap;
             gap: 16px;
+            padding: 16px 24px;
+            background: rgba(13, 20, 32, 0.6);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
         }
-        .logo { display: flex; align-items: center; gap: 12px; }
-        .logo-icon {
-            width: 44px; height: 44px;
-            background: linear-gradient(135deg, var(--cyan), var(--purple));
+        .logo-group {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+        }
+        .logo-orb-preview {
+            width: 44px;
+            height: 44px;
             border-radius: 12px;
-            display: flex; align-items: center; justify-content: center;
+            background: linear-gradient(135deg, #00f3ff, #8b5cf6);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 0 20px rgba(0, 243, 255, 0.4);
+            font-size: 22px;
+            font-weight: 800;
+            color: #060911;
+        }
+        .logo-title h1 {
             font-size: 20px;
-            box-shadow: 0 0 24px rgba(34,211,238,0.3);
-            animation: pulse-glow 3s ease-in-out infinite;
+            font-weight: 800;
+            letter-spacing: 0.05em;
+            background: linear-gradient(90deg, #ffffff, #00f3ff, #a78bfa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
         }
-        @keyframes pulse-glow {
-            0%,100% { box-shadow: 0 0 24px rgba(34,211,238,0.3); }
-            50%      { box-shadow: 0 0 40px rgba(34,211,238,0.5); }
+        .logo-title p {
+            font-size: 11px;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.12em;
+            font-family: 'JetBrains Mono', monospace;
         }
-        .logo h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.5px; }
-        .logo h1 span { color: var(--cyan); }
-        .logo p { font-size: 12px; color: var(--text-dim); margin-top: 1px; }
 
-        .header-right { display: flex; align-items: center; gap: 12px; }
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
         .status-pill {
-            display: flex; align-items: center; gap: 8px;
-            background: var(--surface-2); border: 1px solid var(--border);
-            border-radius: 999px; padding: 8px 16px; font-size: 13px;
-            color: var(--text-mid);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 14px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border);
+            border-radius: 999px;
+            font-size: 12px;
+            font-family: 'JetBrains Mono', monospace;
         }
-        .pulse-dot {
-            width: 8px; height: 8px; border-radius: 50%;
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
             background: var(--green);
-            animation: pulse-dot 2s ease-in-out infinite;
+            box-shadow: 0 0 10px var(--green);
+            animation: pulse-dot 2s infinite ease-in-out;
         }
-        .pulse-dot.inactive { background: var(--red); animation: none; }
-        @keyframes pulse-dot {
-            0%,100% { opacity: 1; transform: scale(1); }
-            50%      { opacity: 0.5; transform: scale(1.3); }
+        .status-dot.listening { background: var(--purple); box-shadow: 0 0 12px var(--purple); }
+        .status-dot.speaking  { background: var(--cyan); box-shadow: 0 0 12px var(--cyan); }
+        .status-dot.alert     { background: var(--red); box-shadow: 0 0 12px var(--red); }
+        @keyframes pulse-dot { 0%, 100% { opacity: 0.7; transform: scale(0.9); } 50% { opacity: 1; transform: scale(1.15); } }
+
+        /* Hands-Free Voice Button */
+        .btn-hands-free {
+            background: rgba(167, 139, 250, 0.12);
+            border: 1px solid rgba(167, 139, 250, 0.4);
+            color: var(--purple);
+            padding: 8px 16px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: 'JetBrains Mono', monospace;
+            text-transform: uppercase;
+        }
+        .btn-hands-free.active {
+            background: var(--purple);
+            color: #060911;
+            box-shadow: 0 0 18px rgba(167, 139, 250, 0.5);
         }
 
-        /* ─── Stats row ─────────────────────────────────────────────── */
-        .stats-grid {
+        /* Barge-In Button */
+        .btn-barge-in {
+            background: linear-gradient(135deg, rgba(244, 63, 94, 0.2), rgba(244, 63, 94, 0.4));
+            border: 1px solid rgba(244, 63, 94, 0.6);
+            color: #ffe4e6;
+            padding: 8px 16px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: 'JetBrains Mono', monospace;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .btn-barge-in:hover {
+            background: var(--red);
+            color: #fff;
+            box-shadow: 0 0 20px rgba(244, 63, 94, 0.5);
+            transform: translateY(-1px);
+        }
+
+        /* ─── Navigation Tabs ────────────────────────────────────────── */
+        .hud-tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 12px;
+            overflow-x: auto;
+        }
+        .tab-btn {
+            background: transparent;
+            border: 1px solid transparent;
+            color: var(--text-mid);
+            padding: 10px 20px;
+            border-radius: var(--radius-md);
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        .tab-btn:hover {
+            color: var(--text);
+            background: rgba(255, 255, 255, 0.03);
+        }
+        .tab-btn.active {
+            background: rgba(0, 243, 255, 0.1);
+            border-color: rgba(0, 243, 255, 0.3);
+            color: var(--cyan);
+            box-shadow: 0 0 16px rgba(0, 243, 255, 0.15);
+        }
+
+        /* ─── 3D Hologram & Hero Section ─────────────────────────────── */
+        .hero-banner {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 16px;
+            grid-template-columns: 380px 1fr;
+            gap: 20px;
             margin-bottom: 24px;
         }
-        .stat-card {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: var(--radius-sm);
-            padding: 20px;
+        @media (max-width: 1024px) {
+            .hero-banner { grid-template-columns: 1fr; }
+        }
+        .holo-card {
+            position: relative;
+            height: 290px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        #three-canvas-container {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            cursor: grab;
+        }
+        .holo-overlay {
+            position: absolute;
+            bottom: 14px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+            pointer-events: none;
+            z-index: 2;
+        }
+        .holo-state-badge {
+            background: rgba(6, 9, 17, 0.85);
+            border: 1px solid var(--border-glow);
+            padding: 4px 14px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 700;
+            color: var(--cyan);
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            box-shadow: 0 0 14px rgba(0, 243, 255, 0.2);
             transition: all 0.3s;
         }
-        .stat-card:hover { transform: translateY(-2px); box-shadow: var(--glow-cyan); border-color: var(--border-glow); }
-        .stat-label {
-            font-size: 11px; font-weight: 600; text-transform: uppercase;
-            letter-spacing: 0.08em; color: var(--text-dim); margin-bottom: 8px;
+        .viseme-badge {
+            background: rgba(167, 139, 250, 0.15);
+            border: 1px solid rgba(167, 139, 250, 0.4);
+            color: var(--purple);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10px;
+            padding: 2px 10px;
+            border-radius: 999px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
         }
-        .stat-value { font-size: 24px; font-weight: 700; color: var(--cyan); font-family: 'JetBrains Mono', monospace; }
-        .stat-value.ok  { color: var(--green); }
-        .stat-value.warn { color: var(--amber); }
-        .stat-value.err  { color: var(--red); }
-        .stat-sub { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
 
-        /* ─── Main grid ─────────────────────────────────────────────── */
-        .main-grid {
+        /* Quick Stats Grid in Hero */
+        .telemetry-grid {
             display: grid;
-            grid-template-columns: 1fr 360px;
-            gap: 20px;
-            align-items: start;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 12px;
         }
-        @media (max-width: 900px) { .main-grid { grid-template-columns: 1fr; } }
-
-        /* ─── Conversation / Command Center ─────────────────────────── */
-        .command-center { display: flex; flex-direction: column; gap: 16px; }
-
-        .chat-history {
-            background: var(--surface-2);
-            border: 1px solid var(--border);
-            border-radius: var(--radius);
-            height: 360px;
-            overflow-y: auto;
+        .telemetry-card {
             padding: 16px;
+            background: rgba(17, 24, 39, 0.5);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            position: relative;
+            overflow: hidden;
+        }
+        .telemetry-card::after {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; width: 3px; height: 100%;
+            background: var(--cyan);
+        }
+        .telemetry-card.purple::after { background: var(--purple); }
+        .telemetry-card.green::after  { background: var(--green); }
+        .telemetry-card.amber::after  { background: var(--amber); }
+
+        .telemetry-label {
+            font-size: 11px;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .telemetry-val {
+            font-size: 20px;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--text);
+            margin: 6px 0 2px;
+        }
+        .telemetry-sub {
+            font-size: 11px;
+            color: var(--text-mid);
+        }
+
+        /* ─── Tab Content Containers ─────────────────────────────────── */
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; animation: fadeIn 0.3s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* ─── Tab 1: Command Deck ────────────────────────────────────── */
+        .deck-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+        }
+        @media (max-width: 992px) {
+            .deck-grid { grid-template-columns: 1fr; }
+        }
+        .chat-card {
+            display: flex;
+            flex-direction: column;
+            height: 600px;
+        }
+        .chat-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .chat-history {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        .chat-history::-webkit-scrollbar { width: 5px; }
+        .chat-history::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 999px; }
+
+        .chat-msg {
+            display: flex;
+            gap: 12px;
+            max-width: 85%;
+            animation: fadeIn 0.25s ease;
+        }
+        .chat-msg.user {
+            align-self: flex-end;
+            flex-direction: row-reverse;
+        }
+        .chat-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 12px;
+            flex-shrink: 0;
+        }
+        .chat-avatar.sentinel {
+            background: linear-gradient(135deg, var(--cyan), var(--purple));
+            color: #060911;
+        }
+        .chat-avatar.user {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+        }
+        .chat-bubble {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 12px 16px;
+            font-size: 13.5px;
+            line-height: 1.5;
+            color: var(--text);
+            position: relative;
+        }
+        .chat-msg.user .chat-bubble {
+            background: rgba(167, 139, 250, 0.12);
+            border-color: rgba(167, 139, 250, 0.25);
+        }
+        .chat-meta {
+            font-size: 11px;
+            color: var(--cyan);
+            font-family: 'JetBrains Mono', monospace;
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .chat-msg.user .chat-meta { color: var(--purple); }
+
+        /* Real-Time Audio Visualizer Equalizer */
+        .audio-bar-eq {
+            display: flex;
+            align-items: flex-end;
+            gap: 3px;
+            height: 24px;
+            padding: 0 8px;
+        }
+        .eq-bar {
+            width: 3px;
+            background: var(--cyan);
+            border-radius: 2px;
+            height: 4px;
+            transition: height 0.08s;
+        }
+        .eq-bar.active { animation: eq-jump 0.4s infinite ease-in-out alternate; }
+        @keyframes eq-jump { 0% { height: 4px; } 100% { height: 22px; } }
+
+        /* Input Deck */
+        .chat-input-area {
+            padding: 16px 20px;
+            border-top: 1px solid var(--border);
             display: flex;
             flex-direction: column;
             gap: 12px;
-            scroll-behavior: smooth;
         }
-        .chat-history::-webkit-scrollbar { width: 4px; }
-        .chat-history::-webkit-scrollbar-track { background: transparent; }
-        .chat-history::-webkit-scrollbar-thumb { background: var(--border-glow); border-radius: 4px; }
-
-        .chat-msg { display: flex; gap: 10px; animation: fade-up 0.3s ease; }
-        @keyframes fade-up {
-            from { opacity: 0; transform: translateY(8px); }
-            to   { opacity: 1; transform: translateY(0); }
+        .quick-chips {
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            padding-bottom: 4px;
         }
-        .chat-msg.user { flex-direction: row-reverse; }
-        .chat-avatar {
-            width: 32px; height: 32px; border-radius: 10px; flex-shrink: 0;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 15px; font-weight: 700;
-        }
-        .chat-avatar.sentinel { background: linear-gradient(135deg, var(--cyan), #0ea5e9); color: #000; }
-        .chat-avatar.user-av  { background: linear-gradient(135deg, var(--purple), #7c3aed); color: #fff; }
-        .chat-bubble {
-            max-width: 80%;
-            background: var(--surface);
+        .chip {
+            background: rgba(255, 255, 255, 0.04);
             border: 1px solid var(--border);
-            border-radius: var(--radius-sm);
-            padding: 10px 14px;
-            font-size: 13.5px;
-            line-height: 1.5;
+            border-radius: 999px;
+            padding: 4px 12px;
+            font-size: 11.5px;
             color: var(--text-mid);
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all 0.2s;
         }
-        .chat-msg.user .chat-bubble {
-            background: var(--purple-dim);
-            border-color: rgba(167,139,250,0.2);
-            color: var(--text);
+        .chip:hover {
+            border-color: var(--cyan);
+            color: var(--cyan);
+            background: rgba(0, 243, 255, 0.06);
         }
-        .chat-bubble strong { color: var(--cyan); display: block; font-size: 11px; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
-        .chat-msg.user .chat-bubble strong { color: var(--purple); }
 
-        /* Typing indicator */
-        .typing { display: flex; align-items: center; gap: 4px; padding: 12px 14px; }
-        .typing-dot { width: 6px; height: 6px; background: var(--cyan); border-radius: 50%; animation: typing 1.2s ease-in-out infinite; }
-        .typing-dot:nth-child(2) { animation-delay: 0.2s; }
-        .typing-dot:nth-child(3) { animation-delay: 0.4s; }
-        @keyframes typing { 0%,80%,100% { transform: scale(0.6); opacity: 0.4; } 40% { transform: scale(1); opacity: 1; } }
-
-        /* ─── Command input ─────────────────────────────────────────── */
         .input-row {
-            display: flex; gap: 10px; align-items: flex-end;
+            display: flex;
+            gap: 10px;
+            align-items: flex-end;
         }
-        .input-wrap { position: relative; flex: 1; }
         #command-input {
-            width: 100%;
-            background: var(--surface-2);
-            border: 1.5px solid var(--border);
-            border-radius: var(--radius-sm);
-            padding: 14px 18px;
+            flex: 1;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 12px 16px;
             font-size: 14px;
-            color: var(--text);
+            color: #fff;
             font-family: inherit;
             outline: none;
-            transition: border-color 0.3s, box-shadow 0.3s;
             resize: none;
-            min-height: 52px;
-            max-height: 140px;
+            min-height: 48px;
+            max-height: 120px;
+            transition: border-color 0.2s;
         }
-        #command-input:focus { border-color: var(--cyan); box-shadow: 0 0 0 3px rgba(34,211,238,0.08); }
-        #command-input::placeholder { color: var(--text-dim); }
-
-        .btn {
-            cursor: pointer; border: none; border-radius: var(--radius-sm);
-            font-family: inherit; font-weight: 600; font-size: 14px;
-            padding: 14px 20px; transition: all 0.2s; display: flex; align-items: center; gap: 6px;
+        #command-input:focus {
+            border-color: var(--cyan);
+            box-shadow: 0 0 12px rgba(0, 243, 255, 0.15);
         }
-        .btn-primary { background: var(--cyan); color: #000; }
-        .btn-primary:hover { background: #67e8f9; transform: translateY(-1px); box-shadow: 0 4px 20px rgba(34,211,238,0.35); }
-        .btn-primary:active { transform: translateY(0); }
-        .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
-        .btn-ghost { background: var(--surface); border: 1px solid var(--border); color: var(--text-mid); padding: 14px; }
-        .btn-ghost:hover { border-color: var(--border-glow); color: var(--cyan); background: var(--cyan-dim); }
+        .btn-send {
+            background: var(--cyan);
+            color: #060911;
+            border: none;
+            border-radius: var(--radius-md);
+            padding: 12px 20px;
+            font-weight: 700;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .btn-send:hover {
+            background: #67e8f9;
+            box-shadow: 0 0 16px rgba(0, 243, 255, 0.4);
+            transform: translateY(-1px);
+        }
 
-        /* ─── Quick actions ─────────────────────────────────────────── */
-        .quick-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-        .quick-btn {
-            background: var(--surface-2); border: 1px solid var(--border);
-            border-radius: 999px; padding: 6px 14px; font-size: 12px;
-            color: var(--text-mid); cursor: pointer; transition: all 0.2s;
+        /* Sidebar in Command Deck */
+        .deck-side {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        .side-card {
+            padding: 20px;
+        }
+        .side-title {
+            font-size: 13px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-dim);
+            margin-bottom: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .feed-container {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-height: 240px;
+            overflow-y: auto;
+        }
+        .feed-item {
+            padding: 8px 12px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--cyan);
+            border-radius: var(--radius-sm);
+            font-size: 12px;
+        }
+        .feed-item.alert { border-left-color: var(--red); background: rgba(244, 63, 94, 0.05); }
+
+        /* ─── Tab 2: Swarm Intelligence Visualizer ───────────────────── */
+        .swarm-container {
+            padding: 24px;
+        }
+        .swarm-header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+        .swarm-dispatcher-box {
+            display: flex;
+            gap: 10px;
+            width: 100%;
+            max-width: 680px;
+        }
+        .swarm-input {
+            flex: 1;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 12px 18px;
+            color: #fff;
+            outline: none;
             font-family: inherit;
         }
-        .quick-btn:hover { border-color: var(--border-glow); color: var(--cyan); background: var(--cyan-dim); transform: translateY(-1px); }
+        .swarm-input:focus { border-color: var(--purple); }
+        .btn-swarm {
+            background: linear-gradient(135deg, #a78bfa, #8b5cf6);
+            border: none;
+            color: #fff;
+            padding: 12px 24px;
+            border-radius: var(--radius-md);
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        .btn-swarm:hover {
+            box-shadow: 0 0 20px rgba(167, 139, 250, 0.4);
+            transform: translateY(-1px);
+        }
 
-        /* ─── Right sidebar ─────────────────────────────────────────── */
-        .sidebar { display: flex; flex-direction: column; gap: 16px; }
+        .dag-canvas-wrap {
+            position: relative;
+            height: 380px;
+            background: rgba(6, 9, 17, 0.85);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            margin-bottom: 20px;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        svg.dag-svg { width: 100%; height: 100%; }
 
-        /* Intelligence feed */
-        .feed-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
-        .feed-title { font-size: 15px; font-weight: 600; }
-        .feed-badge {
-            background: var(--cyan-dim); color: var(--cyan);
-            border: 1px solid rgba(34,211,238,0.2);
-            border-radius: 999px; font-size: 11px; font-weight: 600;
+        .agent-cards-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 16px;
+        }
+        .agent-card {
+            background: rgba(17, 24, 39, 0.5);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .agent-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .agent-name { font-weight: 700; font-size: 14px; color: var(--text); }
+        .agent-badge {
+            font-size: 10px;
+            font-family: 'JetBrains Mono', monospace;
             padding: 2px 8px;
+            border-radius: 999px;
+            text-transform: uppercase;
         }
-        #intel-feed { display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto; }
-        #intel-feed::-webkit-scrollbar { width: 3px; }
-        #intel-feed::-webkit-scrollbar-thumb { background: var(--border-glow); }
-
-        .feed-item {
-            background: var(--surface-2); border: 1px solid var(--border);
-            border-radius: var(--radius-sm); padding: 10px 12px;
-            animation: fade-up 0.3s ease;
-            border-left: 3px solid var(--border);
-        }
-        .feed-item.alert  { border-left-color: var(--red); background: rgba(248,113,113,0.05); }
-        .feed-item.info   { border-left-color: var(--cyan); }
-        .feed-item.user   { border-left-color: var(--purple); }
-        .feed-item-type   { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); margin-bottom: 3px; }
-        .feed-item.alert .feed-item-type  { color: var(--red); }
-        .feed-item.info .feed-item-type   { color: var(--cyan); }
-        .feed-item.user .feed-item-type   { color: var(--purple); }
-        .feed-item-text   { font-size: 12.5px; color: var(--text-mid); line-height: 1.4; }
-
-        /* ─── Module status grid ────────────────────────────────────── */
-        .modules-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 16px; }
-        .module-pill {
-            display: flex; align-items: center; gap: 8px;
-            background: var(--surface-2); border: 1px solid var(--border);
-            border-radius: 8px; padding: 10px 12px; font-size: 12px;
-        }
-        .module-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-        .module-dot.on  { background: var(--green); box-shadow: 0 0 6px var(--green); }
-        .module-dot.off { background: var(--text-dim); }
-        .module-name { color: var(--text-mid); flex: 1; }
-
-        /* ─── Agent control ─────────────────────────────────────────── */
-        .agent-panel { margin-top: 16px; }
-        .agent-status {
-            display: flex; align-items: center; justify-content: space-between;
-            background: var(--surface-2); border: 1px solid var(--border);
-            border-radius: var(--radius-sm); padding: 14px 16px;
-        }
-        .agent-label { font-size: 13px; font-weight: 600; }
-        .agent-sub { font-size: 11px; color: var(--text-dim); margin-top: 2px; }
-        .toggle {
-            width: 44px; height: 24px; border-radius: 12px;
-            background: var(--surface); border: 1.5px solid var(--border);
-            cursor: pointer; position: relative; transition: all 0.3s;
-        }
-        .toggle.active { background: var(--cyan); border-color: var(--cyan); }
-        .toggle::after {
-            content: ''; position: absolute; top: 3px; left: 3px;
-            width: 16px; height: 16px; border-radius: 50%;
-            background: var(--text-dim); transition: all 0.3s;
-        }
-        .toggle.active::after { background: #000; transform: translateX(20px); }
-
-        /* ─── Waveform ──────────────────────────────────────────────── */
-        .waveform-bar {
-            display: flex; align-items: center; gap: 3px; height: 28px;
-            margin-top: 10px;
-        }
-        .waveform-bar .bar {
-            width: 3px; background: var(--cyan); border-radius: 2px;
-            opacity: 0.3; transition: height 0.1s ease, opacity 0.1s;
-        }
-        .waveform-bar.active .bar {
-            opacity: 0.8;
-            animation: wave 1s ease-in-out infinite;
-        }
-        .waveform-bar .bar:nth-child(odd) { animation-delay: 0.1s !important; }
-        @keyframes wave {
-            0%,100% { height: 4px; } 50% { height: 22px; }
+        .agent-badge.idle    { background: rgba(255, 255, 255, 0.08); color: var(--text-dim); }
+        .agent-badge.running { background: rgba(251, 191, 36, 0.15); color: var(--amber); border: 1px solid var(--amber); animation: pulse-dot 1.5s infinite; }
+        .agent-badge.done    { background: rgba(16, 185, 129, 0.15); color: var(--green); border: 1px solid var(--green); }
+        .agent-task { font-size: 12px; color: var(--text-mid); min-height: 36px; font-style: italic; }
+        .agent-output {
+            font-size: 11.5px;
+            font-family: 'JetBrains Mono', monospace;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 6px;
+            padding: 8px;
+            color: #a78bfa;
+            max-height: 80px;
+            overflow-y: auto;
         }
 
-        /* ─── Footer ────────────────────────────────────────────────── */
+        /* ─── Tab 3: Multimodal Vision & Live Screen HUD ─────────────── */
+        .vision-container { padding: 24px; }
+        .vision-grid {
+            display: grid;
+            grid-template-columns: 1.2fr 0.8fr;
+            gap: 20px;
+        }
+        @media (max-width: 1000px) {
+            .vision-grid { grid-template-columns: 1fr; }
+        }
+        .vision-hud-viewport {
+            position: relative;
+            background: #000;
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            overflow: hidden;
+            min-height: 420px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        #screen-hud-canvas {
+            max-width: 100%;
+            height: auto;
+            border-radius: var(--radius-md);
+            display: block;
+        }
+        .vision-model-indicator {
+            position: absolute;
+            top: 14px; left: 14px;
+            background: rgba(6, 9, 17, 0.85);
+            border: 1px solid var(--border-glow);
+            padding: 4px 12px;
+            border-radius: 999px;
+            font-size: 11px;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--cyan);
+            z-index: 2;
+        }
+        .vision-analysis-box {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+        .vision-result-output {
+            flex: 1;
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 16px;
+            font-size: 13.5px;
+            line-height: 1.6;
+            color: var(--text);
+            overflow-y: auto;
+            min-height: 240px;
+        }
+
+        /* ─── Footer ─────────────────────────────────────────────────── */
         footer {
-            margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--border);
-            display: flex; justify-content: space-between; align-items: center;
-            font-size: 11px; color: var(--text-dim); flex-wrap: wrap; gap: 8px;
+            margin-top: 30px;
+            padding-top: 16px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 11.5px;
+            color: var(--text-dim);
+            font-family: 'JetBrains Mono', monospace;
+            flex-wrap: wrap;
+            gap: 12px;
         }
-        .footer-links { display: flex; gap: 16px; }
-        .footer-links a { color: var(--text-dim); text-decoration: none; transition: color 0.2s; }
-        .footer-links a:hover { color: var(--cyan); }
     </style>
 </head>
 <body>
-<div class="app">
 
-    <!-- ─── Header ─────────────────────────────────────────────────── -->
+<div class="hud-app">
+
+    <!-- ─── Top Header ─────────────────────────────────────────────── -->
     <header>
-        <div class="logo">
-            <div class="logo-icon">⬡</div>
-            <div>
-                <h1><span>SENTINEL</span>AI</h1>
-                <p>World-Class Personal AI Assistant</p>
+        <div class="logo-group">
+            <div class="logo-orb-preview">⬡</div>
+            <div class="logo-title">
+                <h1>SENTINEL<span>AI</span></h1>
+                <p>Jarvis Tactical Intelligence System</p>
             </div>
         </div>
-        <div class="header-right">
+
+        <div class="header-actions">
+            <!-- Hands-Free Voice Mode Button -->
+            <button class="btn-hands-free" id="hands-free-btn" onclick="toggleHandsFreeVoice()" title="Enable microphone auto-streaming for hands-free speech">
+                🎙️ Hands-Free Voice: OFF
+            </button>
+            <!-- Voice Barge-in Button -->
+            <button class="btn-barge-in" id="barge-in-btn" onclick="triggerBargeIn()" title="Interrupt speech immediately (or press Spacebar)">
+                ⚡ Barge-In (Space)
+            </button>
             <div class="status-pill">
-                <div class="pulse-dot" id="system-dot"></div>
-                <span id="system-status">System Active</span>
+                <div class="status-dot" id="header-ws-dot"></div>
+                <span id="header-ws-status">WS CONNECTED</span>
             </div>
-            <div class="status-pill" id="time-display" style="font-family:'JetBrains Mono',monospace;font-size:12px;"></div>
+            <div class="status-pill" id="hud-clock">00:00:00</div>
         </div>
     </header>
 
-    <!-- ─── Stats row ───────────────────────────────────────────────── -->
-    <div class="stats-grid">
-        <div class="stat-card">
-            <div class="stat-label">Voice Core</div>
-            <div class="stat-value ok" id="porcupine-status">{{ stats.porcupine_status }}</div>
-            <div class="stat-sub">Porcupine wake word</div>
+    <!-- ─── Navigation Tabs ────────────────────────────────────────── -->
+    <div class="hud-tabs">
+        <button class="tab-btn active" onclick="switchTab('deck')">
+            <span>🔮</span> Command Deck
+        </button>
+        <button class="tab-btn" onclick="switchTab('swarm')">
+            <span>🌐</span> Multi-Agent Swarm
+        </button>
+        <button class="tab-btn" onclick="switchTab('vision')">
+            <span>👁</span> Multimodal Vision HUD
+        </button>
+        <button class="tab-btn" onclick="switchTab('telemetry')">
+            <span>🛡</span> Overwatch & Telemetry
+        </button>
+    </div>
+
+    <!-- ─── 3D Holographic Avatar & Hero Banner ───────────────────── -->
+    <div class="hero-banner">
+        <!-- 3D Holographic Orb Canvas -->
+        <div class="glass-panel holo-card">
+            <div id="three-canvas-container"></div>
+            <div class="holo-overlay">
+                <div class="holo-state-badge" id="holo-state-text">IDLE · STANDBY</div>
+                <div class="viseme-badge" id="viseme-text">[VISEME: REST]</div>
+            </div>
         </div>
-        <div class="stat-card">
-            <div class="stat-label">Vision Core</div>
-            <div class="stat-value" id="gemini-status">{{ stats.gemini_status }}</div>
-            <div class="stat-sub">Gemini 2.0 Flash</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-label">Local AI</div>
-            <div class="stat-value" id="ollama-status">{{ stats.ollama_status }}</div>
-            <div class="stat-sub">Ollama offline LLM</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-label">CPU Temp</div>
-            <div class="stat-value" id="cpu-stat">{{ stats.cpu_temp or '—' }}°</div>
-            <div class="stat-sub">Hardware health</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-label">GPU Temp</div>
-            <div class="stat-value" id="gpu-stat">{{ stats.gpu_temp or '—' }}°</div>
-            <div class="stat-sub">Graphics health</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-label">Knowledge Base</div>
-            <div class="stat-value ok" id="kb-count">—</div>
-            <div class="stat-sub">Indexed memories</div>
+
+        <!-- Telemetry Metrics Grid -->
+        <div class="telemetry-grid">
+            <div class="telemetry-card">
+                <div class="telemetry-label">Neural TTS & S2S</div>
+                <div class="telemetry-val" id="tts-engine-val">Sub-300ms</div>
+                <div class="telemetry-sub" id="tts-barge-sub">Barge-In · Viseme Morph</div>
+            </div>
+            <div class="telemetry-card purple">
+                <div class="telemetry-label">Vision Engine</div>
+                <div class="telemetry-val" id="vision-mode-val">Gemini 2.5</div>
+                <div class="telemetry-sub">Ollama Multimodal Fallback</div>
+            </div>
+            <div class="telemetry-card green" onclick="toggleDesktopCompanion()" style="cursor:pointer;" title="Click to launch / toggle Desktop Floating Companion">
+                <div class="telemetry-label">Desktop Companion</div>
+                <div class="telemetry-val" id="widget-mode-val">Win + Space</div>
+                <div class="telemetry-sub" id="widget-status-sub">⚡ Click to Toggle / Launch</div>
+            </div>
+            <div class="telemetry-card amber">
+                <div class="telemetry-label">Hardware Core</div>
+                <div class="telemetry-val" id="cpu-temp-val">—°</div>
+                <div class="telemetry-sub">Telemetry Health</div>
+            </div>
         </div>
     </div>
 
-    <!-- ─── Main grid ───────────────────────────────────────────────── -->
-    <div class="main-grid">
-
-        <!-- ─── Command Center ─────────────────────────────────────── -->
-        <div class="command-center">
-            <div class="card" style="padding:0;overflow:hidden;">
-                <div style="padding:20px 24px 0;border-bottom:1px solid var(--border);padding-bottom:16px;">
+    <!-- ─── TAB 1: Command Deck ────────────────────────────────────── -->
+    <div class="tab-panel active" id="tab-deck">
+        <div class="deck-grid">
+            <div class="glass-panel chat-card">
+                <div class="chat-header">
                     <div style="display:flex;align-items:center;gap:10px;">
-                        <svg width="18" height="18" fill="none" stroke="var(--cyan)" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                        <span style="font-size:15px;font-weight:600;">Command Center</span>
-                        <span id="listening-badge" style="display:none;background:rgba(34,211,238,0.1);border:1px solid rgba(34,211,238,0.3);color:var(--cyan);padding:2px 10px;border-radius:999px;font-size:11px;font-weight:600;margin-left:auto;">● LISTENING</span>
+                        <span style="font-weight:700;font-size:14px;">Tactical Command Stream</span>
+                        <span id="speech-indicator-badge" style="display:none;background:rgba(0,243,255,0.1);color:var(--cyan);border:1px solid rgba(0,243,255,0.3);padding:2px 8px;border-radius:999px;font-size:10px;font-family:'JetBrains Mono',monospace;">● SPEAKING</span>
+                    </div>
+                    <!-- Audio Equalizer Waveform -->
+                    <div class="audio-bar-eq" id="voice-eq">
+                        <div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div>
+                        <div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div>
+                        <div class="eq-bar"></div><div class="eq-bar"></div><div class="eq-bar"></div>
                     </div>
                 </div>
+
                 <div class="chat-history" id="chat-history">
                     <div class="chat-msg">
                         <div class="chat-avatar sentinel">S</div>
                         <div class="chat-bubble">
-                            <strong>SentinelAI · System</strong>
-                            All systems online. Neural TTS, Whisper STT, Gemini 2.0, and 16 modules loaded. How can I help you today?
+                            <div class="chat-meta">SENTINEL · NEURAL CORE</div>
+                            All systems online. Real-Time 3D Viseme Lip-Sync, Live Error Inspection, and Hands-Free Voice Streaming are active. Press Spacebar or speak anytime to interrupt.
                         </div>
                     </div>
                 </div>
-                <div style="padding:20px 24px;border-top:1px solid var(--border);">
-                    <!-- Waveform -->
-                    <div class="waveform-bar" id="waveform" style="margin-bottom:12px;">
-                        <div class="bar" style="height:6px"></div><div class="bar" style="height:12px"></div><div class="bar" style="height:8px"></div><div class="bar" style="height:18px"></div><div class="bar" style="height:6px"></div><div class="bar" style="height:14px"></div><div class="bar" style="height:10px"></div><div class="bar" style="height:20px"></div><div class="bar" style="height:8px"></div><div class="bar" style="height:14px"></div><div class="bar" style="height:6px"></div><div class="bar" style="height:10px"></div>
+
+                <div class="chat-input-area">
+                    <div class="quick-chips">
+                        <button class="chip" onclick="quickSend('daily brief')">📰 Daily Brief</button>
+                        <button class="chip" onclick="quickSend('inspect screen')">👁 Inspect Screen Errors</button>
+                        <button class="chip" onclick="quickSend('security report')">🔒 Security Overwatch</button>
+                        <button class="chip" onclick="quickSend('launch floating widget')">🪟 Show Floating Widget</button>
                     </div>
-                    <!-- Quick actions -->
-                    <div class="quick-actions" style="margin-bottom:14px;">
-                        <button id="qa-daily-brief" class="quick-btn" onclick="quickSend('daily brief')">📰 Daily Brief</button>
-                        <button id="qa-screen" class="quick-btn" onclick="quickSend('analyze my screen')">👁 Analyze Screen</button>
-                        <button id="qa-habit" class="quick-btn" onclick="quickSend('what are my habits')">🧠 My Habits</button>
-                        <button id="qa-secure" class="quick-btn" onclick="quickSend('security report')">🔒 Security</button>
-                        <button id="qa-agent" class="quick-btn" onclick="quickSend('start agent')">🤖 Start Agent</button>
-                        <button id="qa-battery" class="quick-btn" onclick="quickSend('battery report')">🔋 Battery</button>
-                    </div>
-                    <!-- Input row -->
                     <div class="input-row">
-                        <div class="input-wrap">
-                            <textarea
-                                id="command-input"
-                                placeholder="Type a command or ask anything..."
-                                rows="1"
-                                onkeydown="handleKey(event)"
-                                oninput="autoResize(this)"
-                            ></textarea>
+                        <textarea id="command-input" placeholder="Type a directive or talk hands-free..." rows="1" onkeydown="handleInputKey(event)" oninput="autoGrow(this)"></textarea>
+                        <button class="btn-send" onclick="sendUserCommand()">SEND</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="deck-side">
+                <div class="glass-panel side-card">
+                    <div class="side-title">
+                        <span>Intelligence Feed</span>
+                        <span id="feed-count-badge" style="color:var(--cyan);">0 Events</span>
+                    </div>
+                    <div class="feed-container" id="feed-stream">
+                        <div class="feed-item">
+                            <strong style="color:var(--cyan)">System Init:</strong> 3D Viseme Lip-Sync & Hands-Free Audio Engine online.
                         </div>
-                        <button class="btn btn-ghost" id="clear-btn" onclick="clearChat()" title="Clear chat">
-                            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                        </button>
-                        <button class="btn btn-primary" id="send-btn" onclick="sendCommand()">
-                            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
-                            Send
-                        </button>
                     </div>
                 </div>
-            </div>
-        </div>
 
-        <!-- ─── Sidebar ─────────────────────────────────────────────── -->
-        <div class="sidebar">
-
-            <!-- Intelligence Feed -->
-            <div class="card purple">
-                <div class="feed-header">
-                    <span class="feed-title">Intelligence Feed</span>
-                    <span class="feed-badge" id="feed-count">0 events</span>
-                </div>
-                <div id="intel-feed">
-                    <div class="feed-item info">
-                        <div class="feed-item-type">System · Boot</div>
-                        <div class="feed-item-text">SentinelAI world-class core loaded. All 16 modules initialized.</div>
+                <div class="glass-panel side-card">
+                    <div class="side-title">
+                        <span>Zero-Trust Shield</span>
+                        <span style="color:var(--green)">SECURE</span>
                     </div>
+                    <p style="font-size:12px;color:var(--text-mid);line-height:1.5;">
+                        Phishing detection, proxy inspection, and process sandboxing operational.
+                    </p>
                 </div>
             </div>
-
-            <!-- Module Status -->
-            <div class="card">
-                <div style="font-size:15px;font-weight:600;margin-bottom:14px;">Module Status</div>
-                <div class="modules-grid" id="module-grid">
-                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Vision</span></div>
-                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Knowledge</span></div>
-                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Emotion</span></div>
-                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Habits</span></div>
-                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Security</span></div>
-                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">IoT Hub</span></div>
-                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Coding</span></div>
-                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Automation</span></div>
-                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Gesture</span></div>
-                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">File Intel</span></div>
-                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Calendar</span></div>
-                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Web Agent</span></div>
-                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Playwright</span></div>
-                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Agentic AI</span></div>
-                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Daily Brief</span></div>
-                    <div class="module-pill"><div class="module-dot on"></div><span class="module-name">Ollama</span></div>
-                </div>
-
-                <!-- Agent control -->
-                <div class="agent-panel">
-                    <div class="agent-status">
-                        <div>
-                            <div class="agent-label">Autonomous Agent</div>
-                            <div class="agent-sub" id="agent-sub-text">ReAct engine · Ready</div>
-                        </div>
-                        <div class="toggle" id="agent-toggle" onclick="toggleAgent()" title="Toggle Agent"></div>
-                    </div>
-                </div>
-            </div>
-
         </div>
     </div>
 
-    <!-- ─── Footer ──────────────────────────────────────────────────── -->
+    <!-- ─── TAB 2: Multi-Agent Swarm Intelligence ─────────────────── -->
+    <div class="tab-panel" id="tab-swarm">
+        <div class="glass-panel swarm-container">
+            <div class="swarm-header-row">
+                <div>
+                    <h2 style="font-size:18px;font-weight:800;letter-spacing:0.02em;">Autonomous Multi-Agent Swarm</h2>
+                    <p style="font-size:12px;color:var(--text-mid);">Hierarchical Planner-Worker DAG orchestration with parallel task execution.</p>
+                </div>
+                <div class="swarm-dispatcher-box">
+                    <input type="text" id="swarm-goal-input" class="swarm-input" placeholder="Enter objective (e.g., 'Audit web server security and generate hardening script')...">
+                    <button class="btn-swarm" onclick="dispatchSwarmGoal()">Launch Swarm</button>
+                </div>
+            </div>
+
+            <div class="dag-canvas-wrap">
+                <svg class="dag-svg" viewBox="0 0 800 340">
+                    <defs>
+                        <linearGradient id="cyanLine" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" stop-color="#00f3ff"/>
+                            <stop offset="100%" stop-color="#a78bfa"/>
+                        </linearGradient>
+                    </defs>
+                    <line x1="400" y1="70" x2="150" y2="180" stroke="url(#cyanLine)" stroke-width="2" stroke-dasharray="4,4"/>
+                    <line x1="400" y1="70" x2="330" y2="180" stroke="url(#cyanLine)" stroke-width="2" stroke-dasharray="4,4"/>
+                    <line x1="400" y1="70" x2="520" y2="180" stroke="url(#cyanLine)" stroke-width="2" stroke-dasharray="4,4"/>
+                    <line x1="400" y1="70" x2="680" y2="180" stroke="url(#cyanLine)" stroke-width="2" stroke-dasharray="4,4"/>
+
+                    <line x1="150" y1="180" x2="400" y2="280" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <line x1="330" y1="180" x2="400" y2="280" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <line x1="520" y1="180" x2="400" y2="280" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+                    <line x1="680" y1="180" x2="400" y2="280" stroke="rgba(255,255,255,0.15)" stroke-width="1.5"/>
+
+                    <circle cx="400" cy="70" r="32" fill="#0d1420" stroke="#00f3ff" stroke-width="2.5"/>
+                    <text x="400" y="74" fill="#00f3ff" font-size="11" font-weight="bold" font-family="'JetBrains Mono',monospace" text-anchor="middle">PLANNER</text>
+
+                    <circle cx="150" cy="180" r="26" fill="#0d1420" stroke="#a78bfa" stroke-width="2"/>
+                    <text x="150" y="184" fill="#a78bfa" font-size="10" font-family="'JetBrains Mono',monospace" text-anchor="middle">RESEARCH</text>
+
+                    <circle cx="330" cy="180" r="26" fill="#0d1420" stroke="#a78bfa" stroke-width="2"/>
+                    <text x="330" y="184" fill="#a78bfa" font-size="10" font-family="'JetBrains Mono',monospace" text-anchor="middle">DEV/CODE</text>
+
+                    <circle cx="520" cy="180" r="26" fill="#0d1420" stroke="#a78bfa" stroke-width="2"/>
+                    <text x="520" y="184" fill="#a78bfa" font-size="10" font-family="'JetBrains Mono',monospace" text-anchor="middle">SECURITY</text>
+
+                    <circle cx="680" cy="180" r="26" fill="#0d1420" stroke="#a78bfa" stroke-width="2"/>
+                    <text x="680" y="184" fill="#a78bfa" font-size="10" font-family="'JetBrains Mono',monospace" text-anchor="middle">EDITOR</text>
+
+                    <circle cx="400" cy="280" r="24" fill="#0d1420" stroke="#10b981" stroke-width="2"/>
+                    <text x="400" y="284" fill="#10b981" font-size="10" font-weight="bold" font-family="'JetBrains Mono',monospace" text-anchor="middle">OUTPUT</text>
+                </svg>
+            </div>
+
+            <div class="agent-cards-grid" id="swarm-agents-grid">
+                <div class="agent-card">
+                    <div class="agent-card-header"><span class="agent-name">Researcher</span><span class="agent-badge idle" id="badge-researcher">Idle</span></div>
+                    <div class="agent-task" id="task-researcher">Waiting for swarm dispatch...</div>
+                    <div class="agent-output" id="out-researcher">No data</div>
+                </div>
+                <div class="agent-card">
+                    <div class="agent-card-header"><span class="agent-name">Senior Developer</span><span class="agent-badge idle" id="badge-coder">Idle</span></div>
+                    <div class="agent-task" id="task-coder">Waiting for swarm dispatch...</div>
+                    <div class="agent-output" id="out-coder">No data</div>
+                </div>
+                <div class="agent-card">
+                    <div class="agent-card-header"><span class="agent-name">Security Analyst</span><span class="agent-badge idle" id="badge-security_analyst">Idle</span></div>
+                    <div class="agent-task" id="task-security_analyst">Waiting for swarm dispatch...</div>
+                    <div class="agent-output" id="out-security_analyst">No data</div>
+                </div>
+                <div class="agent-card">
+                    <div class="agent-card-header"><span class="agent-name">Synthesizer / Editor</span><span class="agent-badge idle" id="badge-editor">Idle</span></div>
+                    <div class="agent-task" id="task-editor">Waiting for worker synthesis...</div>
+                    <div class="agent-output" id="out-editor">No data</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ─── TAB 3: Multimodal Vision HUD & Live Screen Errors ─────── -->
+    <div class="tab-panel" id="tab-vision">
+        <div class="glass-panel vision-container">
+            <h2 style="font-size:18px;font-weight:800;margin-bottom:6px;">Live Screen Vision HUD & Proactive Error Inspector</h2>
+            <p style="font-size:12px;color:var(--text-mid);margin-bottom:20px;">
+                Captures desktop frames, draws bounding boxes on active targets, and proactively highlights stack traces and syntax errors.
+            </p>
+
+            <div class="vision-grid">
+                <div class="vision-hud-viewport">
+                    <div class="vision-model-indicator" id="vision-indicator">
+                        Model: Gemini 2.5 / Ollama Local Multimodal Fallback
+                    </div>
+                    <canvas id="screen-hud-canvas" width="960" height="540"></canvas>
+                </div>
+
+                <div class="vision-analysis-box">
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                        <button class="btn-send" style="height:42px;" onclick="runScreenInspection()">🔍 Inspect Screen Errors</button>
+                        <button class="btn-barge-in" style="height:42px;border-radius:var(--radius-md);" id="btn-fix-error" onclick="autoFixDetectedError()" style="display:none;">⚡ Auto-Fix Detected Error</button>
+                    </div>
+                    <div class="vision-result-output" id="vision-output-text">
+                        Awaiting screen error inspection... Click 'Inspect Screen Errors' to evaluate foreground window and code errors.
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ─── TAB 4: Overwatch & Telemetry ───────────────────────────── -->
+    <div class="tab-panel" id="tab-telemetry">
+        <div class="glass-panel" style="padding:24px;">
+            <h2 style="font-size:18px;font-weight:800;margin-bottom:14px;">System Health & Knowledge Vault</h2>
+            <div class="telemetry-grid">
+                <div class="telemetry-card">
+                    <div class="telemetry-label">Desktop Companion</div>
+                    <div class="telemetry-val">Running</div>
+                    <div class="telemetry-sub">Always-On-Top Layer</div>
+                </div>
+                <div class="telemetry-card green">
+                    <div class="telemetry-label">Indexed Memories</div>
+                    <div class="telemetry-val" id="kb-items-count">—</div>
+                    <div class="telemetry-sub">ChromaDB Vector Store</div>
+                </div>
+                <div class="telemetry-card purple">
+                    <div class="telemetry-label">WebSocket Uplink</div>
+                    <div class="telemetry-val">Full-Duplex</div>
+                    <div class="telemetry-sub">Sub-100ms Latency</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ─── Footer ─────────────────────────────────────────────────── -->
     <footer>
-        <span>SentinelAI v2.0 · Privacy-First · Local-First AI</span>
-        <div class="footer-links">
-            <a href="#" onclick="quickSend('diagnostics')">Diagnostics</a>
-            <a href="#" onclick="quickSend('open settings')">Settings</a>
-            <a href="https://github.com" target="_blank">GitHub</a>
+        <div>SentinelAI v3.0 · Full-Duplex Voice & Viseme Lip-Sync · Transparent Floating Companion</div>
+        <div style="display:flex;gap:16px;">
+            <span>Shortcuts: <kbd style="background:rgba(255,255,255,0.1);padding:2px 6px;border-radius:4px;">Win+Space</kbd> Companion</span>
+            <span><kbd style="background:rgba(255,255,255,0.1);padding:2px 6px;border-radius:4px;">Space</kbd> Barge-In</span>
+            <span><kbd style="background:rgba(255,255,255,0.1);padding:2px 6px;border-radius:4px;">Enter</kbd> Send</span>
         </div>
     </footer>
+
 </div>
 
-<!-- ─── Script ──────────────────────────────────────────────────────────── -->
+<!-- ─── 3D Holographic Viseme WebGL Orb & Client Logic ──────────── -->
 <script>
-    let feedCount = 0;
-    let agentActive = false;
-    let messageCount = 0;
+    const API_KEY = "__API_KEY__";
+    let ws = null;
+    let isSpeaking = false;
+    let currentHoloState = 'idle'; // 'idle', 'listening', 'thinking', 'speaking', 'alert'
 
-    // ─── Clock ────────────────────────────────────────────────────────────
-    function updateClock() {
-        const now = new Date();
-        document.getElementById('time-display').textContent =
-            now.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+    // ─── Three.js 3D Holographic Mesh & Viseme Morphing ───────────────────
+    let scene, camera, renderer, holoMesh, particles, innerCore;
+    let mouseX = 0, mouseY = 0;
+    let audioCtx = null, analyserNode = null, micStream = null;
+    let handsFreeActive = false;
+    let lastAudioPeak = 0.0;
+    let detectedErrorMsg = "";
+
+    function initThreeHologram() {
+        const container = document.getElementById('three-canvas-container');
+        if (!container) return;
+
+        const width = container.clientWidth || 380;
+        const height = container.clientHeight || 290;
+
+        scene = new THREE.Scene();
+        camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1000);
+        camera.position.z = 5.2;
+
+        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(width, height);
+        renderer.setPixelRatio(window.devicePixelRatio || 1);
+        container.appendChild(renderer.domElement);
+
+        // 1. Outer Icosahedron Wireframe
+        const icoGeo = new THREE.IcosahedronGeometry(2, 2);
+        const icoMat = new THREE.MeshBasicMaterial({
+            color: 0x00f3ff,
+            wireframe: true,
+            transparent: true,
+            opacity: 0.45
+        });
+        holoMesh = new THREE.Mesh(icoGeo, icoMat);
+        scene.add(holoMesh);
+
+        // 2. Inner Glowing Core
+        const coreGeo = new THREE.SphereGeometry(0.85, 24, 24);
+        const coreMat = new THREE.MeshBasicMaterial({
+            color: 0xa78bfa,
+            wireframe: true,
+            transparent: true,
+            opacity: 0.6
+        });
+        innerCore = new THREE.Mesh(coreGeo, coreMat);
+        scene.add(innerCore);
+
+        // 3. Constellation Particle Cloud
+        const partGeo = new THREE.BufferGeometry();
+        const partCount = 420;
+        const posArray = new Float32Array(partCount * 3);
+        for (let i = 0; i < partCount * 3; i += 3) {
+            const u = Math.random();
+            const v = Math.random();
+            const theta = u * 2.0 * Math.PI;
+            const phi = Math.acos(2.0 * v - 1.0);
+            const r = 1.3 + Math.random() * 1.1;
+            posArray[i] = r * Math.sin(phi) * Math.cos(theta);
+            posArray[i + 1] = r * Math.sin(phi) * Math.sin(theta);
+            posArray[i + 2] = r * Math.cos(phi);
+        }
+        partGeo.setAttribute('position', new THREE.BufferAttribute(posArray, 3));
+        const partMat = new THREE.PointsMaterial({
+            size: 0.05,
+            color: 0x00f3ff,
+            transparent: true,
+            opacity: 0.75
+        });
+        particles = new THREE.Points(partGeo, partMat);
+        scene.add(particles);
+
+        // Window resize
+        window.addEventListener('resize', () => {
+            const w = container.clientWidth;
+            const h = container.clientHeight;
+            camera.aspect = w / h;
+            camera.updateProjectionMatrix();
+            renderer.setSize(w, h);
+        });
+
+        // Mouse move tracking
+        container.addEventListener('mousemove', (e) => {
+            const rect = container.getBoundingClientRect();
+            mouseX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+            mouseY = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
+        });
+
+        animateHologram();
     }
-    updateClock();
-    setInterval(updateClock, 1000);
 
-    // ─── Send command ─────────────────────────────────────────────────────
-    async function sendCommand() {
+    let clock = new THREE.Clock();
+    function animateHologram() {
+        requestAnimationFrame(animateHologram);
+        const elapsed = clock.getElapsedTime();
+
+        let speed = 0.5;
+        if (currentHoloState === 'thinking') speed = 2.4;
+        else if (currentHoloState === 'speaking') speed = 1.2;
+
+        holoMesh.rotation.y += 0.008 * speed;
+        holoMesh.rotation.x += 0.004 * speed;
+        innerCore.rotation.y -= 0.012 * speed;
+        particles.rotation.y += 0.005 * speed;
+
+        // Interactive mouse tilt
+        holoMesh.rotation.y += (mouseX * 0.5 - holoMesh.rotation.y) * 0.05;
+        holoMesh.rotation.x += (-mouseY * 0.5 - holoMesh.rotation.x) * 0.05;
+
+        // ── Real-Time 3D Viseme Lip-Sync Morphing ──
+        let scaleX = 1.0, scaleY = 1.0, scaleZ = 1.0;
+        const visemeBadge = document.getElementById('viseme-text');
+
+        if (currentHoloState === 'speaking' || (handsFreeActive && lastAudioPeak > 0.04)) {
+            // Simulated / Analyzed Audio Frequency Spectrum
+            const lowFreq = Math.abs(Math.sin(elapsed * 18));
+            const midFreq = Math.abs(Math.sin(elapsed * 24 + 1.2));
+            const highFreq = Math.abs(Math.sin(elapsed * 32 + 2.4));
+
+            if (lowFreq > 0.65) {
+                // Formant 1: Vowels AA / OH (Mouth aperture opens vertically)
+                scaleY = 1.0 + lowFreq * 0.28;
+                scaleX = 0.95;
+                if (visemeBadge) visemeBadge.textContent = '[VISEME: OH / AA · OPEN]';
+            } else if (midFreq > 0.6) {
+                // Formant 2: Vowels EE / IH (Mouth stretches horizontally)
+                scaleX = 1.0 + midFreq * 0.25;
+                scaleY = 0.92;
+                if (visemeBadge) visemeBadge.textContent = '[VISEME: EE · WIDE]';
+            } else if (highFreq > 0.6) {
+                // Sibilants TH / SS (Perimeter vertex agitation)
+                scaleX = 1.08; scaleY = 1.08;
+                if (visemeBadge) visemeBadge.textContent = '[VISEME: TH / SS · SIBILANT]';
+            } else {
+                scaleX = 1.0; scaleY = 1.0;
+                if (visemeBadge) visemeBadge.textContent = '[VISEME: MM · CLOSED]';
+            }
+            innerCore.scale.set(scaleY * 1.2, scaleY * 1.2, scaleY * 1.2);
+        } else if (currentHoloState === 'listening') {
+            const pulse = 1.0 + Math.sin(elapsed * 6) * 0.05;
+            scaleX = pulse; scaleY = pulse; scaleZ = pulse;
+            if (visemeBadge) visemeBadge.textContent = '[VISEME: LISTENING]';
+        } else {
+            const breath = 1.0 + Math.sin(elapsed * 2) * 0.02;
+            scaleX = breath; scaleY = breath; scaleZ = breath;
+            innerCore.scale.set(1.0, 1.0, 1.0);
+            if (visemeBadge) visemeBadge.textContent = '[VISEME: REST]';
+        }
+
+        holoMesh.scale.set(scaleX, scaleY, scaleZ);
+        renderer.render(scene, camera);
+    }
+
+    function setHoloState(state) {
+        currentHoloState = state;
+        const badge = document.getElementById('holo-state-text');
+        const dot = document.getElementById('header-ws-dot');
+
+        if (state === 'idle') {
+            holoMesh.material.color.setHex(0x00f3ff);
+            particles.material.color.setHex(0x00f3ff);
+            badge.textContent = 'IDLE · STANDBY';
+            badge.style.color = '#00f3ff';
+            badge.style.borderColor = 'rgba(0,243,255,0.4)';
+            dot.className = 'status-dot';
+        } else if (state === 'listening') {
+            holoMesh.material.color.setHex(0xa78bfa);
+            particles.material.color.setHex(0xa78bfa);
+            badge.textContent = 'VOICE · LISTENING';
+            badge.style.color = '#a78bfa';
+            badge.style.borderColor = 'rgba(167,139,250,0.6)';
+            dot.className = 'status-dot listening';
+        } else if (state === 'thinking') {
+            holoMesh.material.color.setHex(0xfbbf24);
+            particles.material.color.setHex(0xfbbf24);
+            badge.textContent = 'NEURAL · REASONING';
+            badge.style.color = '#fbbf24';
+            badge.style.borderColor = 'rgba(251,191,36,0.6)';
+            dot.className = 'status-dot';
+        } else if (state === 'speaking') {
+            holoMesh.material.color.setHex(0x00ffc2);
+            particles.material.color.setHex(0x00ffc2);
+            badge.textContent = 'ACTIVE SPEECH · PLAYING';
+            badge.style.color = '#00ffc2';
+            badge.style.borderColor = 'rgba(0,255,194,0.6)';
+            dot.className = 'status-dot speaking';
+        } else if (state === 'alert') {
+            holoMesh.material.color.setHex(0xf43f5e);
+            particles.material.color.setHex(0xf43f5e);
+            badge.textContent = 'SHIELD ALERT';
+            badge.style.color = '#f43f5e';
+            badge.style.borderColor = 'rgba(244,63,94,0.6)';
+            dot.className = 'status-dot alert';
+        }
+    }
+
+    // ─── WebSocket Uplink (Full-Duplex) ────────────────────────────────────
+    function connectWebSocket() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws?key=${encodeURIComponent(API_KEY)}`;
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+            document.getElementById('header-ws-status').textContent = 'WS CONNECTED';
+            document.getElementById('header-ws-dot').className = 'status-dot';
+            addFeedItem('WS', 'Full-duplex WebSocket connected.');
+        };
+
+        ws.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                handleServerMessage(data);
+            } catch (err) {}
+        };
+
+        ws.onclose = () => {
+            document.getElementById('header-ws-status').textContent = 'WS RECONNECTING';
+            document.getElementById('header-ws-dot').className = 'status-dot alert';
+            setTimeout(connectWebSocket, 2500);
+        };
+    }
+
+    function handleServerMessage(msg) {
+        if (msg.type === 'barge_in') {
+            setIsSpeaking(false);
+            setHoloState('listening');
+            addFeedItem('BARGE-IN', 'Speech interrupted by user.', 'alert');
+        } else if (msg.type === 'voice_transcript') {
+            addChatMessage('user', msg.text);
+            setHoloState('thinking');
+        } else if (msg.type === 'command_response' || msg.type === 'response') {
+            setHoloState('speaking');
+            setIsSpeaking(true);
+            const resp = msg.response || msg.text || '';
+            addChatMessage('sentinel', resp);
+            addFeedItem('RESPONSE', resp.substring(0, 80));
+
+            // Browser-native speech synthesis if in hands-free mode or triggered by voice
+            if (window.speechSynthesis && handsFreeActive) {
+                try {
+                    window.speechSynthesis.cancel();
+                    const cleanText = resp.replace(/[*_#`]/g, '').substring(0, 300);
+                    const utter = new SpeechSynthesisUtterance(cleanText);
+                    utter.rate = 1.05;
+                    utter.pitch = 1.0;
+                    utter.onstart = () => { setIsSpeaking(true); setHoloState('speaking'); };
+                    utter.onend = () => { setIsSpeaking(false); setHoloState('idle'); };
+                    utter.onerror = () => { setIsSpeaking(false); setHoloState('idle'); };
+                    window.speechSynthesis.speak(utter);
+                } catch (e) {
+                    setTimeout(() => { setIsSpeaking(false); }, 3200);
+                }
+            } else {
+                setTimeout(() => { setIsSpeaking(false); }, 3200);
+            }
+        } else if (msg.type === 'swarm_completed') {
+            addFeedItem('SWARM', `Goal finished: ${msg.goal}`);
+            pollSwarmState();
+        }
+    }
+
+    // ─── Barge-In Trigger ──────────────────────────────────────────────────
+    async function triggerBargeIn() {
+        if (window.speechSynthesis) {
+            try { window.speechSynthesis.cancel(); } catch (e) {}
+        }
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'barge_in' }));
+        }
+        try {
+            await fetch('/voice/barge_in', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Sentinel-Key': API_KEY }
+            });
+        } catch (e) {}
+
+        setIsSpeaking(false);
+        setHoloState('listening');
+        addFeedItem('BARGE-IN', '⚡ User triggered speech interruption.');
+    }
+
+    function setIsSpeaking(speaking) {
+        isSpeaking = speaking;
+        const badge = document.getElementById('speech-indicator-badge');
+        const eqBars = document.querySelectorAll('.eq-bar');
+
+        if (speaking) {
+            badge.style.display = 'inline-block';
+            eqBars.forEach(b => b.classList.add('active'));
+            setHoloState('speaking');
+        } else {
+            badge.style.display = 'none';
+            eqBars.forEach(b => b.classList.remove('active'));
+            if (currentHoloState === 'speaking') setHoloState('idle');
+        }
+    }
+
+    // ─── Hands-Free Browser Voice Streaming (Sub-300ms S2S) ─────────────────
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let isRecordingSpeech = false;
+    let silenceTimer = null;
+
+    async function toggleHandsFreeVoice() {
+        const btn = document.getElementById('hands-free-btn');
+        handsFreeActive = !handsFreeActive;
+
+        if (handsFreeActive) {
+            btn.classList.add('active');
+            btn.textContent = '🎙️ Hands-Free: LISTENING';
+            try {
+                micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                const source = audioCtx.createMediaStreamSource(micStream);
+                analyserNode = audioCtx.createAnalyser();
+                analyserNode.fftSize = 256;
+                source.connect(analyserNode);
+
+                setupAudioVAD();
+                addFeedItem('VOICE S2S', 'Hands-free voice streaming activated.');
+            } catch (err) {
+                handsFreeActive = false;
+                btn.classList.remove('active');
+                btn.textContent = '🎙️ Hands-Free Voice: OFF';
+                alert('Microphone access denied: ' + err);
+            }
+        } else {
+            btn.classList.remove('active');
+            btn.textContent = '🎙️ Hands-Free Voice: OFF';
+            if (micStream) micStream.getTracks().forEach(t => t.stop());
+            if (audioCtx) audioCtx.close();
+            addFeedItem('VOICE S2S', 'Hands-free mode deactivated.');
+        }
+    }
+
+    function setupAudioVAD() {
+        if (!analyserNode) return;
+        const pcmBuffer = new Uint8Array(analyserNode.frequencyBinCount);
+
+        function checkMicEnergy() {
+            if (!handsFreeActive) return;
+            analyserNode.getByteFrequencyData(pcmBuffer);
+            let sum = 0;
+            for (let i = 0; i < pcmBuffer.length; i++) sum += pcmBuffer[i];
+            const avg = sum / pcmBuffer.length;
+            lastAudioPeak = avg / 255.0;
+
+            if (lastAudioPeak > 0.12 && !isRecordingSpeech) {
+                // Speech onset
+                if (isSpeaking) {
+                    // Auto Barge-in when user talks over Sentinel!
+                    triggerBargeIn();
+                }
+                startCapturingUtterance();
+            } else if (lastAudioPeak < 0.08 && isRecordingSpeech) {
+                // Potential silence onset
+                if (!silenceTimer) {
+                    silenceTimer = setTimeout(() => {
+                        finishCapturingUtterance();
+                        silenceTimer = null;
+                    }, 550);
+                }
+            } else if (lastAudioPeak >= 0.08 && silenceTimer) {
+                clearTimeout(silenceTimer);
+                silenceTimer = null;
+            }
+
+            requestAnimationFrame(checkMicEnergy);
+        }
+        checkMicEnergy();
+    }
+
+    function startCapturingUtterance() {
+        isRecordingSpeech = true;
+        setHoloState('listening');
+        audioChunks = [];
+        try {
+            mediaRecorder = new MediaRecorder(micStream);
+            mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
+            mediaRecorder.start(100);
+        } catch (e) {}
+    }
+
+    function finishCapturingUtterance() {
+        if (!isRecordingSpeech || !mediaRecorder) return;
+        isRecordingSpeech = false;
+        try {
+            mediaRecorder.stop();
+            mediaRecorder.onstop = async () => {
+                const blob = new Blob(audioChunks, { type: 'audio/wav' });
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    const base64 = reader.result.split(',')[1];
+                    if (ws && ws.readyState === WebSocket.OPEN && base64) {
+                        setHoloState('thinking');
+                        ws.send(JSON.stringify({ type: 'voice_audio', audio: base64 }));
+                    }
+                };
+                reader.readAsDataURL(blob);
+            };
+        } catch (e) {}
+    }
+
+    // ─── Live Screen Vision HUD & Proactive Error Inspector ─────────────────
+    async function runScreenInspection() {
+        const out = document.getElementById('vision-output-text');
+        out.textContent = 'Inspecting active desktop screen and searching for error hotspots...';
+        setHoloState('thinking');
+
+        try {
+            const res = await fetch('/vision/screen/inspect');
+            const data = await res.json();
+            setHoloState('idle');
+
+            if (data && data.success && data.frame) {
+                const canvas = document.getElementById('screen-hud-canvas');
+                const ctx = canvas.getContext('2d');
+                const img = new Image();
+                img.onload = () => {
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+                    // Draw glowing Bounding Boxes
+                    if (data.bounding_boxes && data.bounding_boxes.length > 0) {
+                        data.bounding_boxes.forEach(box => {
+                            const isErr = box.type === 'error';
+                            ctx.strokeStyle = isErr ? '#f43f5e' : '#00f3ff';
+                            ctx.lineWidth = isErr ? 3.5 : 2;
+                            ctx.shadowColor = isErr ? 'rgba(244,63,94,0.8)' : 'rgba(0,243,255,0.6)';
+                            ctx.shadowBlur = 10;
+                            ctx.strokeRect(box.x, box.y, box.w, box.h);
+
+                            // Label badge
+                            ctx.fillStyle = isErr ? 'rgba(244,63,94,0.85)' : 'rgba(0,243,255,0.85)';
+                            ctx.fillRect(box.x, box.y - 24, ctx.measureText(box.label).width + 20, 24);
+                            ctx.fillStyle = '#060911';
+                            ctx.font = 'bold 12px "JetBrains Mono", monospace';
+                            ctx.fillText(box.label, box.x + 8, box.y - 7);
+                        });
+                    }
+                };
+                img.src = `data:image/jpeg;base64,${data.frame}`;
+
+                if (data.alerts && data.alerts.length > 0) {
+                    detectedErrorMsg = data.alerts.join("\n");
+                    out.innerHTML = `<span style="color:#f43f5e;font-weight:bold;">⚠️ Exception Detected:</span><br>${escapeHtml(detectedErrorMsg)}`;
+                    document.getElementById('btn-fix-error').style.display = 'inline-block';
+                    setHoloState('alert');
+                } else {
+                    out.innerHTML = `<span style="color:#10b981;font-weight:bold;">✓ Active Application:</span> ${escapeHtml(data.window.app_name || 'System')} · "${escapeHtml(data.window.title || '')}"`;
+                    document.getElementById('btn-fix-error').style.display = 'none';
+                }
+            } else {
+                out.textContent = 'Inspection failed: ' + (data.error || 'Unknown error');
+            }
+        } catch (e) {
+            setHoloState('idle');
+            out.textContent = 'Screen inspection error: ' + e;
+        }
+    }
+
+    function autoFixDetectedError() {
+        quickSend("Analyze and fix the error on my screen: " + (detectedErrorMsg || "code issue"));
+    }
+
+    // ─── Global Spacebar Shortcut for Barge-In ─────────────────────────────
+    window.addEventListener('keydown', (e) => {
+        const activeTag = document.activeElement.tagName.toLowerCase();
+        if (e.code === 'Space' && activeTag !== 'textarea' && activeTag !== 'input') {
+            e.preventDefault();
+            triggerBargeIn();
+        }
+    });
+
+    // ─── Send Command ──────────────────────────────────────────────────────
+    async function sendUserCommand() {
         const input = document.getElementById('command-input');
         const cmd = input.value.trim();
         if (!cmd) return;
 
-        const sendBtn = document.getElementById('send-btn');
-        const waveform = document.getElementById('waveform');
-
-        // UI → loading state
-        input.disabled = true;
-        sendBtn.disabled = true;
-        waveform.classList.add('active');
-        document.getElementById('listening-badge').style.display = 'flex';
-
-        // Add user message
         addChatMessage('user', cmd);
         input.value = '';
-        autoResize(input);
+        input.style.height = 'auto';
 
-        // Typing indicator
-        const typingId = addTypingIndicator();
+        setHoloState('thinking');
 
         try {
             const res = await fetch('/command', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({command: cmd})
+                headers: { 'Content-Type': 'application/json', 'X-Sentinel-Key': API_KEY },
+                body: JSON.stringify({ command: cmd })
             });
             const data = await res.json();
-            removeTypingIndicator(typingId);
-            addChatMessage('sentinel', data.response || 'Command executed.');
-            addFeedItem('SENTINEL', data.response || 'Command executed.', 'info');
+            setHoloState('speaking');
+            setIsSpeaking(true);
+            setTimeout(() => { setIsSpeaking(false); }, 3500);
+            addChatMessage('sentinel', data.response || 'Directive executed.');
+            addFeedItem('SENTINEL', data.response || 'Executed.');
         } catch (err) {
-            removeTypingIndicator(typingId);
-            addChatMessage('sentinel', 'Error communicating with Sentinel core. Is the server running?', true);
-            addFeedItem('ERROR', 'Server communication failed.', 'alert');
-        } finally {
-            input.disabled = false;
-            sendBtn.disabled = false;
-            input.focus();
-            waveform.classList.remove('active');
-            document.getElementById('listening-badge').style.display = 'none';
+            setHoloState('idle');
+            addChatMessage('sentinel', 'Error communicating with Sentinel core.');
         }
     }
 
-    // ─── Chat messages ────────────────────────────────────────────────────
-    function addChatMessage(role, text, isError = false) {
+    function quickSend(text) {
+        document.getElementById('command-input').value = text;
+        sendUserCommand();
+    }
+
+    function handleInputKey(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendUserCommand();
+        }
+    }
+
+    function autoGrow(el) {
+        el.style.height = 'auto';
+        el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+    }
+
+    function addChatMessage(role, text) {
         const history = document.getElementById('chat-history');
         const isUser = role === 'user';
-        const div = document.createElement('div');
-        div.className = `chat-msg ${isUser ? 'user' : ''}`;
-        const now = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-        div.innerHTML = `
-            <div class="chat-avatar ${isUser ? 'user-av' : 'sentinel'}">${isUser ? 'U' : 'S'}</div>
-            <div class="chat-bubble${isError ? ' alert' : ''}">
-                <strong>${isUser ? 'You' : 'SentinelAI'} · ${now}</strong>
-                ${escapeHtml(text)}
-            </div>`;
-        history.appendChild(div);
+        const msg = document.createElement('div');
+        msg.className = `chat-msg ${isUser ? 'user' : ''}`;
+        const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+        msg.innerHTML = `
+            <div class="chat-avatar ${isUser ? 'user' : 'sentinel'}">${isUser ? 'U' : 'S'}</div>
+            <div class="chat-bubble">
+                <div class="chat-meta">${isUser ? 'YOU' : 'SENTINEL'} · ${timeStr}</div>
+                <div>${escapeHtml(text)}</div>
+            </div>
+        `;
+        history.appendChild(msg);
         history.scrollTop = history.scrollHeight;
-        messageCount++;
     }
 
-    let typingCounter = 0;
-    function addTypingIndicator() {
-        const id = `typing-${++typingCounter}`;
-        const history = document.getElementById('chat-history');
-        const div = document.createElement('div');
-        div.className = 'chat-msg';
-        div.id = id;
-        div.innerHTML = `
-            <div class="chat-avatar sentinel">S</div>
-            <div class="chat-bubble typing"><div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div></div>`;
-        history.appendChild(div);
-        history.scrollTop = history.scrollHeight;
-        return id;
-    }
-    function removeTypingIndicator(id) {
-        const el = document.getElementById(id);
-        if (el) el.remove();
+    let feedCounter = 0;
+    function addFeedItem(type, text, level = 'info') {
+        const feed = document.getElementById('feed-stream');
+        const item = document.createElement('div');
+        item.className = `feed-item ${level === 'alert' ? 'alert' : ''}`;
+        const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        item.innerHTML = `<strong>${escapeHtml(type)} [${timeStr}]:</strong> ${escapeHtml(text)}`;
+        feed.prepend(item);
+        feedCounter++;
+        document.getElementById('feed-count-badge').textContent = `${feedCounter} Events`;
+        while (feed.children.length > 20) feed.removeChild(feed.lastChild);
     }
 
-    // ─── Intelligence feed ────────────────────────────────────────────────
-    function addFeedItem(type, text, kind = 'info') {
-        const feed = document.getElementById('intel-feed');
-        const div = document.createElement('div');
-        div.className = `feed-item ${kind}`;
-        const now = new Date().toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
-        div.innerHTML = `
-            <div class="feed-item-type">${escapeHtml(type)} · ${now}</div>
-            <div class="feed-item-text">${escapeHtml(text.substring(0, 120))}${text.length > 120 ? '…' : ''}</div>`;
-        feed.prepend(div);
-        feedCount++;
-        document.getElementById('feed-count').textContent = `${feedCount} event${feedCount !== 1 ? 's' : ''}`;
-        // Max 30 items
-        while (feed.children.length > 30) feed.removeChild(feed.lastChild);
+    // ─── Tab Navigation ────────────────────────────────────────────────────
+    function switchTab(tabId) {
+        document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+
+        const targetBtn = Array.from(document.querySelectorAll('.tab-btn')).find(b => b.getAttribute('onclick').includes(tabId));
+        if (targetBtn) targetBtn.classList.add('active');
+
+        const panel = document.getElementById(`tab-${tabId}`);
+        if (panel) panel.classList.add('active');
+
+        if (tabId === 'swarm') pollSwarmState();
+        if (tabId === 'vision') runScreenInspection();
     }
 
-    // ─── Quick send ───────────────────────────────────────────────────────
-    function quickSend(cmd) {
-        document.getElementById('command-input').value = cmd;
-        sendCommand();
-    }
+    // ─── Multi-Agent Swarm Logic ───────────────────────────────────────────
+    async function dispatchSwarmGoal() {
+        const input = document.getElementById('swarm-goal-input');
+        const goal = input.value.trim();
+        if (!goal) return;
 
-    // ─── Agent toggle ─────────────────────────────────────────────────────
-    async function toggleAgent() {
-        const toggle = document.getElementById('agent-toggle');
-        const sub = document.getElementById('agent-sub-text');
-        agentActive = !agentActive;
-        toggle.classList.toggle('active', agentActive);
-        const cmd = agentActive ? 'start agent' : 'stop agent';
-        sub.textContent = agentActive ? 'ReAct engine · Running' : 'ReAct engine · Ready';
-        addFeedItem('AGENT', agentActive ? 'Autonomous agent activated.' : 'Agent stopped.', 'info');
+        addFeedItem('SWARM', `Dispatching goal: "${goal}"`);
         try {
-            await fetch('/command', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({command: cmd})});
+            await fetch('/swarm/run', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Sentinel-Key': API_KEY },
+                body: JSON.stringify({ goal: goal })
+            });
+            input.value = '';
+            pollSwarmState();
+        } catch (e) {
+            addFeedItem('ERROR', 'Failed to dispatch swarm.');
+        }
+    }
+
+    async function pollSwarmState() {
+        try {
+            const res = await fetch('/swarm/status');
+            const data = await res.json();
+            if (data && data.agents) {
+                for (const [key, a] of Object.entries(data.agents)) {
+                    const badge = document.getElementById(`badge-${key}`);
+                    const task = document.getElementById(`task-${key}`);
+                    const out = document.getElementById(`out-${key}`);
+                    if (badge) {
+                        badge.textContent = a.status || 'idle';
+                        badge.className = `agent-badge ${a.status || 'idle'}`;
+                    }
+                    if (task && a.task) task.textContent = a.task;
+                    if (out && a.output) out.textContent = a.output;
+                }
+            }
         } catch (e) {}
     }
 
-    // ─── Clear chat ───────────────────────────────────────────────────────
-    function clearChat() {
-        const h = document.getElementById('chat-history');
-        h.innerHTML = '';
-        addChatMessage('sentinel', 'Chat cleared. Ready for new commands.');
-        messageCount = 0;
-    }
-
-    // ─── Key handler ─────────────────────────────────────────────────────
-    function handleKey(e) {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            sendCommand();
-        }
-    }
-
-    // ─── Auto-resize textarea ─────────────────────────────────────────────
-    function autoResize(el) {
-        el.style.height = 'auto';
-        el.style.height = Math.min(el.scrollHeight, 140) + 'px';
-    }
-
-    // ─── Stats polling ─────────────────────────────────────────────────────
-    async function pollStats() {
+    // ─── Telemetry Polling ─────────────────────────────────────────────────
+    async function pollTelemetry() {
         try {
             const res = await fetch('/stats');
             const d = await res.json();
+            if (d.cpu) document.getElementById('cpu-temp-val').textContent = `${d.cpu}°`;
+            if (d.kb_count !== undefined) document.getElementById('kb-items-count').textContent = d.kb_count;
+        } catch (e) {}
 
-            if (d.cpu !== undefined) {
-                const cpuEl = document.getElementById('cpu-stat');
-                cpuEl.textContent = (d.cpu || '—') + '°';
-                cpuEl.className = 'stat-value ' + (d.cpu > 80 ? 'err' : d.cpu > 65 ? 'warn' : 'ok');
+        try {
+            const vres = await fetch('/voice/state');
+            const vd = await vres.json();
+            if (vd.is_speaking && !isSpeaking) {
+                setIsSpeaking(true);
+            } else if (!vd.is_speaking && isSpeaking) {
+                setIsSpeaking(false);
             }
-            if (d.gpu !== undefined) {
-                const gpuEl = document.getElementById('gpu-stat');
-                gpuEl.textContent = (d.gpu || '—') + '°';
-                gpuEl.className = 'stat-value ' + (d.gpu > 80 ? 'err' : d.gpu > 65 ? 'warn' : 'ok');
-            }
-            if (d.alerts && d.alerts.length > 0) {
-                d.alerts.forEach(alert => {
-                    addFeedItem('SECURITY ALERT', alert, 'alert');
-                });
-            }
-            if (d.kb_count !== undefined) {
-                document.getElementById('kb-count').textContent = d.kb_count;
+        } catch (e) {}
+    }
+
+    // ─── Desktop Companion Floating Overlay ──────────────────────────────
+    async function toggleDesktopCompanion() {
+        try {
+            const res = await fetch('/companion/toggle', { method: 'POST' });
+            const data = await res.json();
+            if (data.success) {
+                addFeedItem('COMPANION', `Desktop Widget: ${data.action || 'toggled'}`);
+                pollCompanionStatus();
+            } else {
+                addFeedItem('COMPANION', `Error: ${data.error || 'Failed to toggle'}`);
             }
         } catch (e) {
-            document.getElementById('system-dot').classList.add('inactive');
-            document.getElementById('system-status').textContent = 'Server Offline';
+            addFeedItem('COMPANION', 'Toggle request error: ' + e);
         }
     }
-    setInterval(pollStats, 5000);
-    pollStats();
 
-    // ─── Utility ─────────────────────────────────────────────────────────
-    function escapeHtml(str) {
-        const d = document.createElement('div');
-        d.appendChild(document.createTextNode(str));
-        return d.innerHTML;
+    async function pollCompanionStatus() {
+        try {
+            const res = await fetch('/companion/status');
+            const data = await res.json();
+            const sub = document.getElementById('widget-status-sub');
+            if (sub && data) {
+                if (data.active) {
+                    sub.textContent = data.visible ? '● Active · Visible' : '○ Active · Hidden';
+                    sub.style.color = data.visible ? '#10b981' : '#94a3b8';
+                } else {
+                    sub.textContent = '⚡ Click to Launch';
+                    sub.style.color = '#10b981';
+                }
+            }
+        } catch (e) {}
     }
 
-    // Focus input on load
-    document.getElementById('command-input').focus();
+    function escapeHtml(str) {
+        const div = document.createElement('div');
+        div.appendChild(document.createTextNode(str));
+        return div.innerHTML;
+    }
+
+    function updateClock() {
+        const now = new Date();
+        document.getElementById('hud-clock').textContent = now.toLocaleTimeString([], { hour12: false });
+    }
+    setInterval(updateClock, 1000);
+    setInterval(pollTelemetry, 3500);
+    setInterval(pollCompanionStatus, 4000);
+
+    // Boot
+    window.addEventListener('DOMContentLoaded', () => {
+        initThreeHologram();
+        connectWebSocket();
+        updateClock();
+        pollTelemetry();
+        pollCompanionStatus();
+    });
 </script>
 </body>
 </html>

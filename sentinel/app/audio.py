@@ -9,9 +9,13 @@ import time
 import wave
 import numpy as np
 import pyaudio
-import soundfile as sf
 import logging
 from typing import Optional, Tuple
+
+try:
+    import soundfile as sf
+except ImportError:
+    sf = None
 
 from sentinel.app.config import (
     REFERENCE_WAV, LIVENESS_WAV, OWNER_EMBED_PATH,
@@ -120,6 +124,8 @@ def record_until_silence(filename: str,
 
 def trim_wav_silence(filename: str, threshold=0.02):
     """Trim silence from start and end."""
+    if not sf:
+        return
     try:
         data, sr = sf.read(filename)
         if hasattr(data, "ndim") and data.ndim > 1:
@@ -137,20 +143,32 @@ def trim_wav_silence(filename: str, threshold=0.02):
         logger.error(f"Trim failed: {e}")
 
 def compute_embedding(filename: str) -> np.ndarray:
-    """Compute speaker embedding (dummy/simple mfcc stats)."""
+    """Compute deterministic speaker embedding using normalized spectral energy bins."""
+    if not sf:
+        return np.zeros(80, dtype=np.float32)
     try:
         x, sr = sf.read(filename)
-        if x.ndim > 1: x = x.mean(axis=1)
+        if x.ndim > 1:
+            x = x.mean(axis=1)
         x = x.astype(np.float32)
-        
-        # Simple stats as embedding (mean/std of magnitude spectrum)
-        spec = np.abs(np.fft.rfft(x, n=512))
-        mu = spec.mean()
-        sigma = spec.std()
-        
-        # Real implementation would use MFCC/Mel Filterbank
-        # Placeholder for 80-dim embedding
-        return np.random.randn(80).astype(np.float32) 
+
+        if len(x) == 0:
+            return np.zeros(80, dtype=np.float32)
+
+        # Compute FFT magnitude spectrum
+        spec = np.abs(np.fft.rfft(x, n=1024))
+        # Partition into 80 frequency bands
+        if len(spec) >= 80:
+            splits = np.array_split(spec, 80)
+            embed = np.array([float(np.mean(s)) for s in splits], dtype=np.float32)
+        else:
+            embed = np.pad(spec, (0, 80 - len(spec)), mode='constant').astype(np.float32)
+
+        # L2-normalize the embedding vector
+        norm = float(np.linalg.norm(embed))
+        if norm > 1e-6:
+            embed /= norm
+        return embed
     except Exception as e:
         logger.error(f"Embedding failed: {e}")
         return np.zeros(80, dtype=np.float32)

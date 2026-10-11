@@ -48,20 +48,26 @@ ROTATION_LOG_PATH = os.path.join(APPDATA_DIR, "key_rotations.log")
 # Audit log for governance actions
 AUDIT_LOG_PATH = os.path.join(APPDATA_DIR, "audit.log")
 
-# ── UI Constants (Modern "Jarvis" Light Theme) ──────────────────────────────
-MODERN_BG = "#FFFFFF"         # Pure White
-MODERN_SURFACE = "#F8FAFC"    # Slate 50
-MODERN_ACCENT = "#0EA5E9"     # Sky 500 (Jarvis Blue)
-MODERN_GLOW = "#E0F2FE"       # Sky 100
-MODERN_TEXT = "#0F172A"       # Slate 900
-MODERN_TEXT_MUTED = "#64748B" # Slate 500
-MODERN_SUCCESS = "#10B981"    # Emerald 500
-MODERN_WARNING = "#F59E0B"    # Amber 500
-MODERN_DANGER = "#EF4444"     # Rose 500
+# ── UI Constants (Futuristic Cyberpunk / JARVIS Dark Theme) ─────────────────
+MODERN_BG = "#080C14"             # Deep Space Obsidian
+MODERN_SURFACE = "#0F172A"        # Slate 900 Glass Card
+MODERN_SURFACE_ALT = "#1E293B"    # Slate 800 Highlight Card
+MODERN_SURFACE_BORDER = "#1E293B" # Subtle border
+MODERN_ACCENT = "#00E5FF"         # Electric Neon Cyan
+MODERN_ACCENT_HOVER = "#38BDF8"   # Bright Sky Cyan
+MODERN_ACCENT_PURPLE = "#8B5CF6"  # Cosmic Violet
+MODERN_GLOW = "#083344"           # Deep Cyan Glow
+MODERN_TEXT = "#F8FAFC"           # Crisp Diamond White
+MODERN_TEXT_MUTED = "#94A3B8"     # Soft Slate Text
+MODERN_SUCCESS = "#10B981"        # Emerald Neon
+MODERN_WARNING = "#F59E0B"        # Amber Neon
+MODERN_DANGER = "#EF4444"         # Rose Crimson
 
-MODERN_FONT = ("Segoe UI Variable Display", 10)
-MODERN_FONT_BOLD = ("Segoe UI Variable Display", 10, "bold")
-MODERN_FONT_LARGE = ("Segoe UI Variable Display", 16, "bold")
+MODERN_FONT = ("Segoe UI Variable Text", 10)
+MODERN_FONT_BOLD = ("Segoe UI Variable Text", 10, "bold")
+MODERN_FONT_LARGE = ("Segoe UI Variable Display", 15, "bold")
+MODERN_FONT_TITLE = ("Segoe UI Variable Display", 18, "bold")
+MODERN_FONT_MONO = ("Consolas", 9)
 
 # ── Voice Settings (Better Jarvis Voice) ───────────────────────────────────────
 DEFAULT_VOICE = "en-US-JennyNeural"  # Friendly female neural voice

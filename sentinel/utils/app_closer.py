@@ -18,6 +18,13 @@ def _normalize(name: str) -> str:
     return (name or "").lower().strip()
 
 
+_CRITICAL_SYSTEM_PROCESSES: Set[str] = {
+    "system", "smss", "csrss", "wininit", "services", "lsass", "svchost",
+    "winlogon", "explorer", "dwm", "spoolsv", "taskhostw", "runtimebroker",
+    "sihost", "ctfmon", "fontdrvhost", "conhost", "python", "pythonw",
+}
+
+
 def _resolve_exe_path(name: str) -> Optional[str]:
     """Best-effort path to the app's .exe using the main app's registry index if present."""
     try:
@@ -106,11 +113,13 @@ def _kill_via_psutil(name: str, exe_path: Optional[str]) -> int:
             pstem = _normalize(Path(pexe).stem) if pexe else pname
             if not pname and not pstem:
                 continue
+            if pname in _CRITICAL_SYSTEM_PROCESSES or pstem in _CRITICAL_SYSTEM_PROCESSES:
+                continue
             if pname in stems or pstem in stems:
                 proc.terminate()
                 killed += 1
                 continue
-            if any(t and t in pname for t in stems if len(t) >= 3):
+            if any(t and t in pname for t in stems if len(t) >= 4):
                 proc.terminate()
                 killed += 1
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
@@ -121,6 +130,9 @@ def _kill_via_psutil(name: str, exe_path: Optional[str]) -> int:
 
 
 def _taskkill_image(im: str) -> bool:
+    if _normalize(Path(im).stem) in _CRITICAL_SYSTEM_PROCESSES:
+        logger.warning("Refusing to taskkill critical system process: %s", im)
+        return False
     flags = 0
     if hasattr(subprocess, "CREATE_NO_WINDOW"):
         flags = subprocess.CREATE_NO_WINDOW

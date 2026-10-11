@@ -11,15 +11,11 @@ WebXR server for AR hardware integration (Meta Quest/Apple Vision Pro):
 """
 
 import os
-import time
 import logging
 import threading
-import json
-import asyncio
 from typing import Optional, Dict, Any, List, Callable
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 
 from sentinel.app.config import APPDATA_DIR
 
@@ -192,7 +188,7 @@ class WebXRServer:
     def _run_server(self):
         """Run the Flask server for WebXR."""
         try:
-            from flask import Flask, send_file, jsonify, request
+            from flask import Flask, jsonify, request
         except ImportError:
             logger.error("Flask not available for WebXR server")
             return
@@ -436,3 +432,4 @@ def stop_spatial_ar():
     global _spatial_interface
     if _spatial_interface:
         _spatial_interface.stop()
+        _spatial_interface = None

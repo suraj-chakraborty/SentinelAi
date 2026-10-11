@@ -9,7 +9,7 @@ import time
 import threading
 import logging
 import psutil
-from typing import Dict
+from typing import Dict, Optional
 
 from sentinel.app.state import get_state
 

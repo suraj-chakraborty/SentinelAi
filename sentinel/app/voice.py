@@ -61,6 +61,31 @@ def _speak_fallback(text: str, emotion: str, block: bool):
     else:
         threading.Thread(target=_run, daemon=True).start()
 
+def stop_speaking():
+    """Immediately halt any active or queued speech."""
+    try:
+        get_tts().stop_speaking()
+    except Exception as e:
+        logger.error(f"Failed to stop speech: {e}")
+
+def is_speaking() -> bool:
+    """Return True if TTS playback is currently active."""
+    try:
+        return get_tts().is_speaking
+    except Exception:
+        return False
+
+def trigger_barge_in() -> bool:
+    """
+    Barge-in: Interrupt active speech immediately when user begins speaking.
+    Returns True if an active speech playback was interrupted.
+    """
+    if is_speaking():
+        logger.info("⚡ Voice Barge-In triggered! Halting TTS playback.")
+        stop_speaking()
+        return True
+    return False
+
 # ── Speech Recognition (STT) ──────────────────────────────────────────────
 
 def transcribe(filename: str) -> str:
