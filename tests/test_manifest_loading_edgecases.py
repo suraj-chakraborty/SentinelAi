@@ -136,8 +136,12 @@ class TestManifestLoadingEdgecases(unittest.TestCase):
             with open(os.path.join(plugins_root, "DepFail", "plugin.py"), "w", encoding="utf-8") as f:
                 f.write("from sentinel.core.plugin_system import PluginBase\nclass DepFail(PluginBase):\n    def __init__(self, orchestrator=None): super().__init__(orchestrator)\n    def can_handle(self, c): return False\n    def execute(self, c, e): return 'dep ok'\n")
             old_dir = ps_mod.PLUGINS_DIR
+            old_builtin = getattr(ps_mod, 'BUILTIN_PLUGINS_DIR', None)
             try:
                 ps_mod.PLUGINS_DIR = plugins_root
+                if old_builtin is not None:
+                    ps_mod.BUILTIN_PLUGINS_DIR = os.path.join(tmpdir, "builtin_empty_dep_fail")
+                    os.makedirs(ps_mod.BUILTIN_PLUGINS_DIR, exist_ok=True)
                 class DummyOrchestrator: pass
                 ps = PluginSystem(orchestrator=DummyOrchestrator())
                 with mock.patch.object(PluginSystem, "_install_requirements", return_value=False):
@@ -145,6 +149,8 @@ class TestManifestLoadingEdgecases(unittest.TestCase):
                     self.assertEqual(loaded, 0)
             finally:
                 ps_mod.PLUGINS_DIR = old_dir
+                if old_builtin is not None:
+                    ps_mod.BUILTIN_PLUGINS_DIR = old_builtin
 
 
 if __name__ == '__main__':

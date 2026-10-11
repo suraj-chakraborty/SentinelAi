@@ -37,7 +37,9 @@ class TestScreenMemoryDB(unittest.TestCase):
     def setUp(self):
         import tempfile
         self.temp_dir = tempfile.mkdtemp()
-        from sentinel.memory.screen_memory_db import ScreenMemoryDB
+        from sentinel.memory.screen_memory_db import ScreenMemoryDB, CHROMADB_OK
+        if not CHROMADB_OK:
+            self.skipTest("chromadb is not available")
         self.db = ScreenMemoryDB(persist_directory=self.temp_dir)
 
     def test_add_and_search(self):

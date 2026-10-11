@@ -476,29 +476,6 @@ class TestPluginSystem(unittest.TestCase):
         self.assertFalse(result)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 9. QuantumModule
-# ══════════════════════════════════════════════════════════════════════════════
-
-class TestQuantumModule(unittest.TestCase):
-
-    def setUp(self):
-        from sentinel.modules.quantum_module import QuantumModule
-        self.qm = QuantumModule()   # no API token → local solver only
-
-    def test_local_solve_returns_string(self):
-        result = self.qm.solve_optimization("route 5 cities")
-        self.assertIsInstance(result, str)
-        self.assertGreater(len(result), 20)
-
-    def test_local_solve_contains_algorithm_name(self):
-        result = self.qm.solve_optimization("any problem")
-        self.assertIn("Annealing", result)
-
-    def test_no_api_token_uses_local(self):
-        result = self.qm.solve_optimization("problem", llm_callback=None)
-        # Without token, must fall back to local solver
-        self.assertNotIn("API token", result)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

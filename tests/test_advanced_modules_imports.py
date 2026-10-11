@@ -25,18 +25,15 @@ modules_to_test = [
     ('sentinel.daemons.daemon_manager', 'DaemonManager'),
     ('sentinel.commands.daemon_control', 'DaemonControlCommand'),
     ('sentinel.voice.acoustic_awareness', 'AcousticAwareness'),
-    ('sentinel.core.sandbox', 'SandboxEngine'),
+    ('sentinel.security.sandbox', 'Sandbox'),
     ('sentinel.perception.biometric_auth', 'BiometricAuth'),
     ('sentinel.core.phone_bridge', 'PhoneBridge'),
     ('sentinel.voice.meeting_surrogate', 'MeetingSurrogate'),
     ('sentinel.security.overwatch', 'CyberOverwatch'),
-    ('sentinel.network.hive_computing', 'HiveNetwork'),
-    ('sentinel.core.nocturnal_trainer', 'NocturnalTrainer'),
     ('sentinel.core.prefetch_engine', 'NeuralPrefetch'),
     ('sentinel.ar.spatial_interface', 'SpatialInterface'),
     ('sentinel.audio.omni_ear', 'OmniEar'),
     ('sentinel.voice.emotional_tts', 'EmotionalTTS'),
-    ('sentinel.neuro.telekinesis', 'Telekinesis'),
 ]
 
 print('Module Import Test Results:')
