@@ -3,13 +3,11 @@ from __future__ import annotations
 from sentinel.app.config import AUDIT_LOG_PATH
 
 def is_admin(request) -> bool:
-    """Simple admin check for HTTP request. Looks for header or query param role=admin."""
+    """Admin check for HTTP request. Requires explicit authenticated header."""
     try:
         role = None
-        if hasattr(request, 'headers'):
+        if hasattr(request, 'headers') and request.headers is not None:
             role = request.headers.get('X-Role') or request.headers.get('X-ROLE')
-        if not role:
-            role = getattr(request, 'query_params', None).get('role') if request else None
         return str(role).lower() == 'admin'
     except Exception:
         return False
@@ -64,9 +62,7 @@ def require_role(role: str):
                 request = kwargs['request']
             from fastapi.responses import JSONResponse
             try:
-                r = request.headers.get('X-Role') if request and hasattr(request, 'headers') else None
-                if not r:
-                    r = request.query_params.get('role') if request else None
+                r = request.headers.get('X-Role') or request.headers.get('X-ROLE') if request and hasattr(request, 'headers') else None
                 if not r or str(r).lower() != str(role).lower():
                     return JSONResponse({"detail": "Forbidden"}, status_code=403)
             except Exception:

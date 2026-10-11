@@ -6,14 +6,18 @@ Captures screenshots and extracts text via OCR.
 """
 
 import os
-import time
 import logging
 from datetime import datetime
 from typing import Optional, Tuple
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+try:
+    from PIL import Image
+    PIL_OK = True
+except ImportError:
+    Image = None
+    PIL_OK = False
 
 try:
     import pytesseract

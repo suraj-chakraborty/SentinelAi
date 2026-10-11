@@ -29,13 +29,11 @@ Usage
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import time
 import uuid
 from typing import List, Optional
-import os as _os
 
 logger = logging.getLogger("LongTermMemory")
 
@@ -68,9 +66,9 @@ class LongTermMemory:
         self._summaries_col = None
         self._facts_col = None
         # Privacy opt-out controls memory usage
-        self._privacy_opt_out = (_os.getenv("SENTINEL_MEMORY_PRIVACY_OPT_OUT", "0").lower() in ("1", "true", "yes"))
+        self._privacy_opt_out = (os.getenv("SENTINEL_MEMORY_PRIVACY_OPT_OUT", "0").lower() in ("1", "true", "yes"))
         # In-memory fallback toggle (for Phase 2: lightweight test/dev backend)
-        self._in_memory = (_os.getenv("SENTINEL_LT_MEM_BACKEND", "" ).lower() == "memory")
+        self._in_memory = (os.getenv("SENTINEL_LT_MEM_BACKEND", "" ).lower() == "memory")
         self._mem_summaries: List[str] = []
         self._mem_facts: List[str] = []
         self._mem_summaries_times: List[float] = []

@@ -227,10 +227,10 @@ class ComputerUseAgent:
 
             elif action_type == "open_app":
                 name = action.get("name", "")
-                import subprocess
-                subprocess.Popen(name, shell=True)
+                from sentinel.utils.app_launcher import launch_app
+                ok = launch_app(name)
                 time.sleep(1.5)  # Wait for app to open
-                return f"Opened: {name}", True
+                return (f"Opened: {name}", True) if ok else (f"Failed to open: {name}", False)
 
             elif action_type == "wait":
                 secs = min(float(action.get("seconds", 1)), 10)

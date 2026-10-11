@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 logger = logging.getLogger("ContextManager")
 
 class ContextManager:
-    def __init__(self, storage_path: str = None):
+    def __init__(self, storage_path: Optional[str] = None):
         self.context: Dict[str, Any] = {
             "last_app": None,
             "last_intent": None,

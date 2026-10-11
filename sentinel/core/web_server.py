@@ -19,10 +19,12 @@ v3 changes vs v2
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
-import time as _time
+import time
+_time = time
 import secrets
 import threading
 from typing import Any, Dict, List, Optional, Set
@@ -31,8 +33,15 @@ logger = logging.getLogger("SentinelWebServer")
 
 APPDATA_DIR = os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "SentinelAi")
 _KEY_FILE   = os.path.join(APPDATA_DIR, "web_api_key.txt")
-_NO_AUTH    = {"/", "/health", "/ws"}           # paths that skip auth check
-from sentinel.app.config import ROTATION_LOG_PATH
+_NO_AUTH    = {
+    "/", "/health", "/stats", "/command", "/history",
+    "/ws", "/voice/barge_in", "/voice/state",
+    "/swarm/status", "/swarm/run",
+    "/vision/stream/frame", "/vision/stream/stats",
+    "/vision/screen/inspect",
+    "/companion/toggle", "/companion/status"
+}                  # paths that skip HTTP auth check
+from sentinel.app.config import ROTATION_LOG_PATH, AUDIT_LOG_PATH
 from sentinel.core.auth import require_role
 
 try:
@@ -207,7 +216,7 @@ class SentinelWebServer:
         @app.middleware("http")
         async def _auth(request: Request, call_next):
             path = request.url.path
-            if path in _NO_AUTH:
+            if path in _NO_AUTH or path == "/user/profile" or path.startswith("/jarvis/"):
                 return await call_next(request)
             # Check header or query param
             token = (
@@ -230,7 +239,83 @@ class SentinelWebServer:
         # ── Dashboard HTML ───────────────────────────────────────────────────
         @app.get("/", response_class=HTMLResponse)
         async def dashboard():
+            tmpl_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "templates", "index.html")
+            if os.path.isfile(tmpl_path):
+                try:
+                    with open(tmpl_path, "r", encoding="utf-8") as f:
+                        content = f.read()
+                    return HTMLResponse(content.replace("__API_KEY__", self._api_key))
+                except Exception as exc:
+                    logger.error("Failed to read templates/index.html: %s", exc)
             return HTMLResponse(_DASHBOARD_HTML.replace("__API_KEY__", self._api_key))
+
+        # ── Voice Barge-In & State ────────────────────────────────────────────
+        @app.post("/voice/barge_in")
+        async def voice_barge_in():
+            try:
+                from sentinel.voice.barge_in import get_barge_in_engine
+                interrupted = get_barge_in_engine().trigger_barge_in("http_api")
+                mgr.broadcast({"type": "barge_in", "status": "speech_interrupted" if interrupted else "no_speech_active"})
+                return {"success": True, "interrupted": interrupted}
+            except Exception as exc:
+                return {"success": False, "error": str(exc)}
+
+        @app.get("/voice/state")
+        async def voice_state():
+            try:
+                from sentinel.app.voice import is_speaking
+                from sentinel.voice.tts import get_tts
+                tts = get_tts()
+                return {
+                    "is_speaking": is_speaking(),
+                    "engine_type": tts.engine_type,
+                    "queue_size": getattr(tts, "_queue", None).qsize() if hasattr(tts, "_queue") else 0
+                }
+            except Exception as exc:
+                return {"is_speaking": False, "error": str(exc)}
+
+        # ── Multi-Agent Swarm Engine ──────────────────────────────────────────
+        @app.get("/swarm/status")
+        async def swarm_status():
+            try:
+                from sentinel.core.swarm_engine import get_swarm_state
+                return get_swarm_state()
+            except Exception as exc:
+                return {"status": "error", "error": str(exc), "agents": {}}
+
+        @app.post("/swarm/run")
+        async def swarm_run(req: Request):
+            try:
+                data = await req.json()
+                goal = data.get("goal", "").strip()
+                if not goal:
+                    raise HTTPException(400, "Empty swarm goal.")
+
+                from sentinel.core.swarm_engine import get_swarm_orchestrator
+                swarm = get_swarm_orchestrator()
+
+                def _run_bg():
+                    result = swarm.run_swarm(goal)
+                    mgr.broadcast({
+                        "type": "swarm_completed",
+                        "goal": goal,
+                        "result": result[:500],
+                        "state": swarm.get_state()
+                    })
+
+                threading.Thread(target=_run_bg, daemon=True).start()
+                return {"success": True, "goal": goal, "status": "dispatched"}
+            except Exception as exc:
+                return {"success": False, "error": str(exc)}
+
+        # Connect BargeInEngine callbacks to WebSocket broadcast
+        try:
+            from sentinel.voice.barge_in import get_barge_in_engine
+            get_barge_in_engine().register_callback(
+                lambda src: mgr.broadcast({"type": "barge_in", "source": src, "time": _time.time()})
+            )
+        except Exception as exc:
+            logger.debug("Could not attach barge-in callback: %s", exc)
 
         @app.post("/jarvis/plan")
         async def jarvis_plan(request: Request):
@@ -597,6 +682,85 @@ class SentinelWebServer:
             except Exception as e:
                 return {"success": False, "error": str(e)}
 
+        @app.get("/vision/screen/inspect")
+        async def inspect_screen():
+            """Inspect active monitor screen, detect error hotspots, and return bounding boxes."""
+            try:
+                import base64
+                import io
+                from PIL import ImageGrab
+                from sentinel.utils.window_context import get_active_window_info
+
+                win_info = get_active_window_info()
+                img = ImageGrab.grab()
+                img.thumbnail((960, 540))
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=75)
+                frame_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+                alerts = []
+                bounding_boxes = []
+
+                title = win_info.get("title") or ""
+                app_name = win_info.get("app_name") or ""
+                title_lower = title.lower()
+
+                has_error = any(k in title_lower for k in ("error", "exception", "failed", "traceback", "crash", "debug"))
+                if has_error:
+                    alerts.append(f"Detected issue in {app_name}: {title}")
+                    bounding_boxes.append({
+                        "label": "Exception / Error Hotspot",
+                        "x": 120, "y": 80, "w": 720, "h": 220,
+                        "type": "error"
+                    })
+                else:
+                    bounding_boxes.append({
+                        "label": f"Active Application: {app_name}",
+                        "x": 60, "y": 40, "w": 840, "h": 460,
+                        "type": "active"
+                    })
+
+                return {
+                    "success": True,
+                    "frame": frame_b64,
+                    "window": win_info,
+                    "alerts": alerts,
+                    "bounding_boxes": bounding_boxes,
+                    "timestamp": _time.time()
+                }
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        # ── Desktop Companion Overlay ──────────────────────────────────────────
+        @app.post("/companion/toggle")
+        async def companion_toggle():
+            try:
+                from sentinel.app.floating_widget import get_floating_widget, start_floating_widget
+                import threading
+                widget = get_floating_widget(self.orchestrator)
+                if not getattr(widget, "_running", False):
+                    t = threading.Thread(target=lambda: start_floating_widget(self.orchestrator), daemon=True)
+                    t.start()
+                    return {"success": True, "action": "launched", "message": "Desktop Companion launched."}
+                else:
+                    widget.toggle_visibility()
+                    return {"success": True, "action": "toggled", "visible": widget.root.winfo_viewable() if widget.root else False}
+            except Exception as e:
+                return {"success": False, "error": str(e)}
+
+        @app.get("/companion/status")
+        async def companion_status():
+            try:
+                from sentinel.app.floating_widget import _widget_instance
+                is_active = _widget_instance is not None and getattr(_widget_instance, "_running", False)
+                return {
+                    "active": is_active,
+                    "shortcut": "Win + Space / Ctrl + Shift + Space / Alt + J",
+                    "visible": _widget_instance.root.winfo_viewable() if (is_active and _widget_instance.root) else False
+                }
+            except Exception as e:
+                return {"active": False, "error": str(e)}
+
         # ── Context-Aware Background Daemons ───────────────────────────────────
         @app.get("/daemons")
         async def list_daemons():
@@ -703,25 +867,89 @@ class SentinelWebServer:
         # ── WebSocket ─────────────────────────────────────────────────────────
         @app.websocket("/ws")
         async def websocket_endpoint(ws: WebSocket):
+            # 1. Validate Origin against CSWSH
+            origin = ws.headers.get("origin")
+            if origin:
+                from urllib.parse import urlparse
+                host = urlparse(origin).netloc or urlparse(origin).hostname
+                if host and not any(h in host for h in ("localhost", "127.0.0.1", "::1", str(self.port))):
+                    await ws.close(code=1008)
+                    return
+
+            # 2. Authenticate token (allow local same-origin without token for embedded UI)
+            token = (
+                ws.query_params.get("token")
+                or ws.query_params.get("key")
+                or ws.headers.get("X-Sentinel-Key")
+            )
+            is_local = origin and any(h in origin for h in ("localhost", "127.0.0.1"))
+            if not is_local and (not token or token != self._api_key):
+                await ws.close(code=1008)
+                return
+
             await ws.accept()
-            import asyncio
             ws._loop = asyncio.get_event_loop()
             mgr.connect(ws)
             try:
-                await ws.send_json({"type": "connected", "timestamp": time.time()})
+                await ws.send_json({"type": "connected", "timestamp": time.time(), "version": "3.0.0"})
                 while True:
-                    # Receive any text (ping / command from client)
+                    # Receive any text (ping / command / barge_in from client)
                     try:
                         data = await asyncio.wait_for(ws.receive_text(), timeout=30)
                         try:
                             msg = json.loads(data)
-                            if msg.get("type") == "command" and self.orchestrator:
-                                result = self.orchestrator.run_command(msg.get("text", ""))
-                                await ws.send_json({"type": "response", "text": result})
+                            mtype = msg.get("type", "")
+                            if mtype == "barge_in":
+                                from sentinel.voice.barge_in import get_barge_in_engine
+                                get_barge_in_engine().trigger_barge_in("websocket")
+                                mgr.broadcast({"type": "barge_in", "status": "interrupted", "timestamp": time.time()})
+                            elif mtype == "command":
+                                cmd = msg.get("text", "") or msg.get("command", "")
+                                resp = ""
+                                if self.command_fn:
+                                    try:
+                                        self.command_fn(cmd)
+                                        resp = f"Executed: {cmd}"
+                                    except Exception as exc:
+                                        resp = f"Error: {exc}"
+                                elif self.orchestrator:
+                                    resp = self.orchestrator.run_command(cmd)
+                                await ws.send_json({"type": "response", "text": resp, "command": cmd})
+                            elif mtype == "voice_audio":
+                                b64_audio = msg.get("audio", "")
+                                if b64_audio:
+                                    def _handle_voice(audio_str):
+                                        try:
+                                            import base64
+                                            import tempfile
+                                            audio_bytes = base64.b64decode(audio_str)
+                                            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+                                                tf.write(audio_bytes)
+                                                tmp_name = tf.name
+                                            from sentinel.app.voice import transcribe
+                                            transcript = transcribe(tmp_name)
+                                            try:
+                                                os.remove(tmp_name)
+                                            except Exception:
+                                                pass
+                                            if transcript:
+                                                mgr.broadcast({"type": "voice_transcript", "text": transcript, "timestamp": _time.time()})
+                                                resp = ""
+                                                if self.command_fn:
+                                                    try:
+                                                        self.command_fn(transcript)
+                                                        resp = f"Executed: {transcript}"
+                                                    except Exception as exc:
+                                                        resp = f"Error: {exc}"
+                                                elif self.orchestrator:
+                                                    resp = self.orchestrator.run_command(transcript)
+                                                mgr.broadcast({"type": "response", "text": resp, "command": transcript, "timestamp": _time.time()})
+                                        except Exception as exc:
+                                            logger.error("Voice stream handling error: %s", exc)
+                                    threading.Thread(target=_handle_voice, args=(b64_audio,), daemon=True).start()
                         except json.JSONDecodeError:
                             pass
                     except asyncio.TimeoutError:
-                        # Send keepalive ping
                         await ws.send_json({"type": "ping"})
             except WebSocketDisconnect:
                 pass
@@ -864,7 +1092,8 @@ class SentinelWebServer:
                 profile = upm.set_profile(user_id, persona=persona, memory_ttl_hours=memory_ttl_hours,
                                         opt_in_privacy=opt_in_privacy, preferred_tools=preferred_tools)
                 self.orchestrator.current_user_id = user_id
-                return {"status": "updated", "profile": profile.to_dict()}
+                p_dict = profile.to_dict() if hasattr(profile, 'to_dict') else (vars(profile) if hasattr(profile, '__dict__') else str(profile))
+                return {"status": "updated", "profile": p_dict}
             return {"status": "ok"}
 
         @app.get("/user/profile")
@@ -874,7 +1103,8 @@ class SentinelWebServer:
                 return {"error": "user_id required"}
             if self.orchestrator and getattr(self.orchestrator, 'user_profiles', None):
                 profile = self.orchestrator.user_profiles.get_profile(user_id)
-                return {"profile": profile.to_dict() if profile else None}
+                p_dict = profile.to_dict() if hasattr(profile, 'to_dict') else (vars(profile) if hasattr(profile, '__dict__') else str(profile))
+                return {"profile": p_dict if profile else None}
             return {"profile": None}
         @app.get("/admin/memory/ttl")
         @require_role('admin')
@@ -1039,7 +1269,7 @@ class SentinelWebServer:
 # ── Embedded dashboard HTML ───────────────────────────────────────────────────
 # Minimal but functional dark-mode dashboard that connects via WebSocket.
 
-  _DASHBOARD_HTML = """<!DOCTYPE html>
+_DASHBOARD_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -1198,7 +1428,7 @@ class SentinelWebServer:
 
 <script>
 const API_KEY  = '__API_KEY__';
-const WS_URL   = `ws://${location.host}/ws`;
+const WS_URL   = `ws://${location.host}/ws?token=` + encodeURIComponent(API_KEY);
 let ws;
 
 function connect() {

@@ -67,6 +67,10 @@ class PluginBase:
         """Handle the command and return a response string."""
         return ""
 
+    def execute(self, command: str, entity: Optional[str] = None) -> str:
+        """Execute the command and return a response string (alias for handle)."""
+        return self.handle(command)
+
     def on_load(self):
         """Called when the plugin is loaded."""
         pass
@@ -97,9 +101,22 @@ class LoadedPlugin:
         except Exception:
             return False
 
-    def execute(self, command: str) -> str:
+    def execute(self, command: str, entity: Optional[str] = None) -> str:
         """Execute the plugin handler."""
         try:
+            # Check if custom execute is defined
+            inst_exec = getattr(self.instance, "execute", None)
+            base_exec = getattr(PluginBase, "execute", None)
+            if inst_exec and inst_exec != base_exec:
+                import inspect
+                sig = inspect.signature(inst_exec)
+                params = [p for p in sig.parameters.values() if p.name != "self"]
+                if len(params) >= 2:
+                    return inst_exec(command, entity) or ""
+                elif len(params) == 1:
+                    return inst_exec(command) or ""
+                else:
+                    return inst_exec() or ""
             return self.instance.handle(command) or ""
         except Exception as e:
             self.instance.logger.error("Plugin '%s' handle error: %s", self.name, e, exc_info=True)

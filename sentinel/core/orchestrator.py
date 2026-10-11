@@ -55,7 +55,6 @@ class SentinelOrchestrator:
         from sentinel.modules.security_shield          import SecurityShieldModule
         from sentinel.modules.daily_brief              import DailyBriefModule
         from sentinel.modules.lora_collector           import LoRACollector
-        from sentinel.modules.quantum_module           import QuantumModule
         from sentinel.utils.notifier                   import WindowsNotifier
 
         self.system_monitor   = self._init("SystemMonitor",   SystemMonitor)
@@ -79,7 +78,6 @@ class SentinelOrchestrator:
         self.security_shield  = self._init("SecurityShield",  self._shield_factory)
         self.daily_brief      = self._init("DailyBrief",      DailyBriefModule, self)
         self.lora_collector   = self._init("LoRACollector",   LoRACollector)
-        self.quantum          = self._init("QuantumModule",   QuantumModule)
 
         # ── Intelligence engines ──────────────────────────────────────────────
         from sentinel.core.agentic_engine  import AgenticEngine
@@ -157,7 +155,7 @@ class SentinelOrchestrator:
         self.acoustic_awareness = self._init_optional("sentinel.voice.acoustic_awareness", "AcousticAwareness")
         
         # Module 7: Sandboxed Code Execution
-        self.sandbox = self._init_optional("sentinel.core.sandbox", "SandboxEngine")
+        self.sandbox = self._init_optional("sentinel.security.sandbox", "Sandbox")
         
         # Module 8: Biometric Auth
         self.biometric_auth = self._init_optional("sentinel.perception.biometric_auth", "BiometricAuth")
@@ -171,26 +169,17 @@ class SentinelOrchestrator:
         # Module 11: Kernel-Level Cybersecurity
         self.cyber_overwatch = self._init_optional("sentinel.security.overwatch", "CyberOverwatch")
         
-        # Module 12: Distributed Hive Computing
-        self.hive_computing = self._init_optional("sentinel.network.hive_computing", "HiveNetwork")
-        
-        # Module 13: Nocturnal Fine-Tuning
-        self.nocturnal_trainer = self._init_optional("sentinel.core.nocturnal_trainer", "NocturnalTrainer")
-        
-        # Module 14: Neural Pre-Fetching
+        # Module 12: Neural Pre-Fetching
         self.neural_prefetch = self._init_optional("sentinel.core.prefetch_engine", "NeuralPrefetch")
         
-        # Module 15: Spatial AR Integration
+        # Module 13: Spatial AR Integration
         self.spatial_ar = self._init_optional("sentinel.ar.spatial_interface", "SpatialInterface")
         
-        # Module 16: System-Wide Audio Intelligence (Omni-Ear)
+        # Module 14: System-Wide Audio Intelligence (Omni-Ear)
         self.omni_ear = self._init_optional("sentinel.audio.omni_ear", "OmniEar")
         
-        # Module 17-18: Biomimetic Emotional TTS
+        # Module 15: Biomimetic Emotional TTS
         self.emotional_tts = self._init_optional("sentinel.voice.emotional_tts", "EmotionalTTS")
-        
-        # Module 19-20: Digital Telekinesis
-        self.telekinesis = self._init_optional("sentinel.neuro.telekinesis", "Telekinesis")
 
         # ── Start background services ─────────────────────────────────────────
         self._start_background_services()
@@ -274,6 +263,14 @@ class SentinelOrchestrator:
 
         # Start proactive intelligence loop
         self._start_proactive_loop()
+
+        # Start autonomous vital overwatch daemon
+        try:
+            from sentinel.core.proactive_sentinel import ProactiveSentinel
+            self.proactive_sentinel = ProactiveSentinel(self)
+            self.proactive_sentinel.start()
+        except Exception as ps_err:
+            logger.debug(f"ProactiveSentinel not started: {ps_err}")
 
     # ── Jarvis (Phase 2 MVP) ───────────────────────────────────────────────
     def start_jarvis(self, goal: str) -> dict:

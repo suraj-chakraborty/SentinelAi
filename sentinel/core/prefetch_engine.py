@@ -21,8 +21,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from collections import defaultdict
 
-import psutil
-
 from sentinel.app.config import APPDATA_DIR
 
 logger = logging.getLogger("NeuralPrefetch")
@@ -428,3 +426,4 @@ def stop_neural_prefetch():
     global _neural_prefetch
     if _neural_prefetch:
         _neural_prefetch.stop()
+        _neural_prefetch = None

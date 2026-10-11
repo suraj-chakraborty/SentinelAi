@@ -10,12 +10,14 @@ import logging
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from pathlib import Path
-import json
+import importlib.util
 
 try:
     import chromadb
     from chromadb.config import Settings
-    CHROMADB_OK = True
+    CHROMADB_OK = importlib.util.find_spec("sentence_transformers") is not None
+    if not CHROMADB_OK:
+        logging.warning("sentence_transformers not available - screen memory DB disabled")
 except ImportError:
     CHROMADB_OK = False
     logging.warning("chromadb not available - screen memory DB disabled")

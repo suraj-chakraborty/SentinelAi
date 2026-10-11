@@ -17,7 +17,7 @@ INTENT_TO_PLUGIN: Dict[Intent, str] = {
     Intent.RESTART: "system_control",
     Intent.SYSTEM_STATUS: "system_control",
     Intent.DEACTIVATE: "deactivate",
-    Intent.AUTONOMOUS_AGENT: "smart_response",  # Changed from ai_agent - won't auto-execute
+    Intent.AUTONOMOUS_AGENT: "ai_agent",
     Intent.COMPUTER_USE: "computer_use",
     Intent.SEARCH_WEB: "search_web",
     Intent.TAKE_SCREENSHOT: "screen_vision",
@@ -27,6 +27,26 @@ INTENT_TO_PLUGIN: Dict[Intent, str] = {
     Intent.CALCULATE: "smart_response",  # Handle calculations locally
     Intent.GET_WEATHER: "smart_response",  # Don't open browser for weather
     Intent.GET_NEWS: "smart_response",  # Don't open browser for news
+    Intent.KB_QUERY: "search_memory",
+    Intent.GIT_COPILOT: "git_copilot",
+    Intent.MEETING_COPILOT: "meeting_command",
+    Intent.FOCUS_SHIELD: "focus_command",
+    Intent.UI_AUTOMATION: "ui_automation",
+    Intent.WEB_AUTOMATION: "web_automation",
+    Intent.SWARM_MISSION: "swarm_command",
+    Intent.S2S_STREAM: "s2s_command",
+    Intent.SPATIAL_IOT: "spatial_command",
+    Intent.CONTINUOUS_VISION: "live_vision_command",
+    Intent.MOBILE_HUB: "mobile_command",
+    Intent.VOICE_CLONE: "voice_profile_command",
+    Intent.AGENT_MOOD: "mood_command",
+    Intent.AVATAR_CONTROL: "avatar_command",
+    Intent.AIR_GESTURE: "gesture_command",
+    Intent.DREAM_STATE: "dream_command",
+    Intent.NPU_ACCEL: "npu_command",
+    Intent.BIOMETRIC_VITALS: "vitals_command",
+    Intent.CODE_WHISPERER: "code_whisperer_command",
+    Intent.TASK_DISPATCHER: "dispatcher_command",
 }
 
 class CommandRouter:
@@ -71,13 +91,34 @@ class CommandRouter:
                     module = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(module)
                     
-                    # Assuming each plugin has a class named after its file in PascalCase
-                    # e.g., open_app.py -> OpenApp
-                    class_name = "".join(word.title() for word in plugin_name.split("_"))
-                    if hasattr(module, class_name):
-                        plugin_class = getattr(module, class_name)
-                        self.plugins[plugin_name] = plugin_class(self.orchestrator)
-                        logger.info(f"Loaded core command plugin: {plugin_name}")
+                    # Look for PascalCase, PascalCaseCommand, or classes defined in module
+                    import inspect
+                    plugin_class = None
+                    candidates = [
+                        "".join(word.title() for word in plugin_name.split("_")),
+                        "".join(word.title() for word in plugin_name.split("_")) + "Command",
+                    ]
+                    for cand in candidates:
+                        if hasattr(module, cand):
+                            plugin_class = getattr(module, cand)
+                            break
+                    if not plugin_class:
+                        for _, cls in inspect.getmembers(module, inspect.isclass):
+                            if cls.__module__ == module.__name__ and hasattr(cls, "execute"):
+                                plugin_class = cls
+                                break
+
+                    if plugin_class:
+                        try:
+                            sig = inspect.signature(plugin_class.__init__)
+                            params = [p for p in sig.parameters.values() if p.name != "self"]
+                            if len(params) >= 1:
+                                self.plugins[plugin_name] = plugin_class(self.orchestrator)
+                            else:
+                                self.plugins[plugin_name] = plugin_class()
+                            logger.info(f"Loaded core command plugin: {plugin_name}")
+                        except Exception as init_e:
+                            logger.error(f"Failed to instantiate plugin {plugin_name}: {init_e}")
                 except Exception as e:
                     logger.error(f"Failed to load plugin {plugin_name}: {e}")
 
@@ -103,37 +144,53 @@ class CommandRouter:
 
         logger.info(f"Routing command: '{cleaned}' | Intent: {intent.name} | Entity: {entity}")
 
+        result = None
+
         # 4. Route to core plugin (map intent → module name)
         plugin_key = INTENT_TO_PLUGIN.get(intent, intent.value)
         if plugin_key in self.plugins:
             try:
                 # Use the plugin name string as key (as it's derived from file name)
-                return self.plugins[plugin_key].execute(cleaned, entity)
+                result = self.plugins[plugin_key].execute(cleaned, entity)
             except Exception as e:
                 logger.error(f"Error executing plugin {plugin_key}: {e}")
-                return f"Sorry, I encountered an error while processing that command: {e}"
+                result = f"Sorry, I encountered an error while processing that command: {e}"
 
         # 4b. Manifest-based extensions when no core handler matched this intent
-        if self._plugin_system:
+        elif self._plugin_system:
             try:
                 ext_result = self._plugin_system.dispatch(cleaned)
                 if ext_result:
-                    return ext_result
+                    result = ext_result
             except Exception as e:
                 logger.error("Extension plugin dispatch error: %s", e)
 
         # 5. Fallback: AI (specifically check if it's an autonomous goal)
-        if intent == Intent.AUTONOMOUS_AGENT or intent == Intent.UNKNOWN:
+        if result is None and (intent == Intent.AUTONOMOUS_AGENT or intent == Intent.UNKNOWN):
             # If unknown but looks like a complex task, try autonomous agent
             result = self.ai_fallback(cleaned)
             
             # If AI also couldn't handle it well, try to generate a plugin
             if result and self._should_auto_generate(raw_command):
                 self._try_generate_plugin(raw_command)
-            
-            return result
 
-        return None
+        # 6. Record interaction in Episodic Memory
+        if result:
+            try:
+                from sentinel.memory.episodic_logger import get_episodic_logger
+                from sentinel.utils.window_context import get_active_window_info
+                win = get_active_window_info()
+                get_episodic_logger().log_turn(
+                    user_command=raw_command,
+                    intent=intent.name,
+                    response=str(result),
+                    active_app=win.get("app_name", ""),
+                    active_window=win.get("title", "")
+                )
+            except Exception as log_err:
+                logger.debug(f"Episodic logging error: {log_err}")
+
+        return result
 
     def ai_fallback(self, command: str) -> str:
         """
@@ -171,7 +228,6 @@ class CommandRouter:
             
             if success:
                 if self._plugin_system and not self._dynamic_loader:
-                    from sentinel.core.dynamic_plugin_loader import create_dynamic_loader
                     self._dynamic_loader = create_dynamic_loader(self._plugin_system)
                 
                 if self._dynamic_loader:

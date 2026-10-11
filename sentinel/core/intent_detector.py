@@ -93,6 +93,34 @@ class Intent(Enum):
     # ── Session ───────────────────────────────────────────────────────────────
     DEACTIVATE       = "deactivate"
     DESCRIBE_SCREEN  = "describe_screen"
+
+    # ── Advanced JARVIS Capabilities ──────────────────────────────────────────
+    GIT_COPILOT      = "git_copilot"
+    MEETING_COPILOT  = "meeting_copilot"
+    FOCUS_SHIELD     = "focus_shield"
+    UI_AUTOMATION    = "ui_automation"
+    WEB_AUTOMATION   = "web_automation"
+
+    # ── Frontier Capabilities ────────────────────────────────────────────────
+    SWARM_MISSION    = "swarm_mission"
+    S2S_STREAM       = "s2s_stream"
+    SPATIAL_IOT      = "spatial_iot"
+    CONTINUOUS_VISION = "continuous_vision"
+    MOBILE_HUB       = "mobile_hub"
+
+    # ── Custom Voice Cloning & Emotional Resonance ───────────────────────────
+    VOICE_CLONE      = "voice_clone"
+    AGENT_MOOD       = "agent_mood"
+
+    # ── Frontier 2.0 Capabilities ────────────────────────────────────────────
+    AVATAR_CONTROL   = "avatar_control"
+    AIR_GESTURE      = "air_gesture"
+    DREAM_STATE      = "dream_state"
+    NPU_ACCEL        = "npu_accel"
+    BIOMETRIC_VITALS = "biometric_vitals"
+    CODE_WHISPERER   = "code_whisperer"
+    TASK_DISPATCHER  = "task_dispatcher"
+
     UNKNOWN          = "unknown"
 
 
@@ -102,10 +130,10 @@ class Intent(Enum):
 
 _KEYWORD_RULES: List[Tuple[int, Intent, List[str]]] = [
     # Session
-    (0, Intent.DEACTIVATE,       ["exit sentinel", "quit sentinel", "deactivate", "goodbye sentinel", "shut yourself down", "destroy yourself"]),
+    (0, Intent.DEACTIVATE,       ["exit sentinel", "quit sentinel", "deactivate", "goodbye sentinel", "shut yourself down", "destroy yourself", "exit system", "quit system", "bye", "goodbye"]),
     # System destructive — high priority
-    (1, Intent.SHUTDOWN,         ["shutdown computer", "shut down computer", "turn off computer", "power off", "shutdown pc", "shut down pc"]),
-    (1, Intent.RESTART,          ["restart computer", "reboot computer", "restart pc", "reboot pc", "restart windows", "reboot"]),
+    (1, Intent.SHUTDOWN,         ["shutdown computer", "shut down computer", "turn off computer", "power off", "shutdown pc", "shut down pc", "shutdown", "shut down", "turn off pc"]),
+    (1, Intent.RESTART,          ["restart computer", "reboot computer", "restart pc", "reboot pc", "restart windows", "reboot", "restart the system", "restart system", "restart"]),
     (1, Intent.LOCK_PC,          ["lock computer", "lock pc", "lock screen", "lock the screen"]),
     # App control
     (2, Intent.OPEN_APP,         ["open ", "launch ", "start ", "run "]),
@@ -113,7 +141,7 @@ _KEYWORD_RULES: List[Tuple[int, Intent, List[str]]] = [
     (2, Intent.BROWSE_URL,       ["go to ", "navigate to ", "open website", "browse to ", "visit "]),
     # Perception
     (4, Intent.TAKE_SCREENSHOT,  ["screenshot", "take a screenshot", "capture screen", "screen capture"]),
-    (3, Intent.DESCRIBE_SCREEN,  ["what is on my screen", "analyze my screen", "describe the screen", "what am i looking at"]),
+    (3, Intent.DESCRIBE_SCREEN,  ["what is on my screen", "what's on my screen", "analyze my screen", "describe the screen", "what am i looking at", "look at my screen", "look at the screen", "look at this", "inspect active window", "describe active window"]),
     # Media
     (3, Intent.PLAY_MUSIC,       ["play music", "play song", "play some music", "start music", "resume music", "resume song"]),
     (3, Intent.PAUSE_MUSIC,      ["pause music", "stop music", "pause song"]),
@@ -148,8 +176,8 @@ _KEYWORD_RULES: List[Tuple[int, Intent, List[str]]] = [
     # Notes
     (4, Intent.TAKE_NOTE,        ["take a note", "note that", "jot down", "write down", "add a note"]),
     (4, Intent.READ_NOTE,        ["read my notes", "show my notes", "what notes", "open notes"]),
-    # Knowledge base
-    (4, Intent.KB_QUERY,         ["what do you know about", "remember that", "do you know about", "recall"]),
+    # Knowledge base / Episodic recall
+    (4, Intent.KB_QUERY,         ["what do you know about", "remember that", "do you know about", "recall", "what did we do yesterday", "what did i do yesterday", "recent commands", "what was that command", "command history"]),
     (4, Intent.KB_ADD,           ["remember this", "save this to memory", "learn this", "add to knowledge"]),
     # Clipboard
     (4, Intent.CLIPBOARD_READ,   ["read clipboard", "what's in clipboard", "paste", "what did i copy"]),
@@ -161,8 +189,32 @@ _KEYWORD_RULES: List[Tuple[int, Intent, List[str]]] = [
     # Agents
     (5, Intent.SWARM_TASK,       ["swarm", "multiple agents", "research and write", "team of agents"]),
     (5, Intent.AUTONOMOUS_AGENT, ["automate", "organize my", "arrange my", "on my desktop", "in that folder", "install software", "fill out this form"]),
+    # Advanced JARVIS Capabilities (priority 1: must match before generic 'start ' or 'open ')
+    (1, Intent.GIT_COPILOT,      ["commit changes", "git commit", "save to git", "commit with message", "git status", "git changes", "terminal error", "build error", "stack trace"]),
+    (1, Intent.MEETING_COPILOT,  ["start meeting", "join meeting", "listen to meeting", "stop meeting", "end meeting", "meeting notes", "meeting summary", "action items"]),
+    (1, Intent.FOCUS_SHIELD,     ["start focus", "enable focus", "focus mode", "deep focus", "stop focus", "end focus", "posture check", "how long have i worked"]),
+    (1, Intent.UI_AUTOMATION,    ["snap window", "snap left", "snap right", "tile window", "tile left", "tile right", "organize downloads", "center window"]),
+    (1, Intent.WEB_AUTOMATION,   ["scrape", "check flights", "compare prices", "open website", "navigate to", "browse to"]),
+
+    # Frontier Capabilities
+    (1, Intent.SWARM_MISSION,    ["nightly audit", "swarm mission", "run swarm", "codebase health", "tech intelligence", "swarm research"]),
+    (1, Intent.S2S_STREAM,       ["start live speech", "enable live stream", "fast voice mode", "translate live", "in-call translation"]),
+    (1, Intent.SPATIAL_IOT,      ["desk lighting", "focus lights", "sync desk", "cinema mode", "movie mode", "switch audio to", "hand off audio"]),
+    (1, Intent.CONTINUOUS_VISION, ["start screen watcher", "watch my screen", "continuous vision", "monitor my coding", "where is the"]),
+    (1, Intent.MOBILE_HUB,       ["who called", "missed calls", "phone messages", "text messages", "phone status", "mobile bridge"]),
+    (1, Intent.VOICE_CLONE,      ["record voice sample", "record my voice", "clone my voice", "sample my voice", "reset agent voice", "voice profile", "use my voice"]),
+    (1, Intent.AGENT_MOOD,       ["cute anger", "pout", "tsundere mode", "flirt with me", "be flirty", "flirt mode", "say something sweet", "be playful", "why are you pouting", "what is your mood", "what do you think"]),
+    (1, Intent.AVATAR_CONTROL,   ["show avatar", "hide avatar", "toggle avatar", "avatar expression", "avatar mood", "holographic avatar", "orb mode", "avatar status"]),
+    (1, Intent.AIR_GESTURE,      ["start air gestures", "stop air gestures", "enable gestures", "disable gestures", "gesture status", "air gestures", "camera gestures"]),
+    (1, Intent.DREAM_STATE,      ["enter dream state", "start dream state", "exit dream state", "stop dream state", "dream status", "morning briefing", "night mode", "dream state"]),
+    (1, Intent.NPU_ACCEL,        ["npu status", "gpu status", "accelerator status", "benchmark npu", "thermal status", "quantization advice", "neural accelerator"]),
+    (1, Intent.BIOMETRIC_VITALS, ["check my vitals", "wellness status", "start vitals", "stop vitals", "posture check", "eye strain", "heart rate", "stress level", "wellness score"]),
+    (1, Intent.CODE_WHISPERER,   ["start pair programming", "pair programming", "code whisperer", "explain this code", "explain the code", "debug this error", "rubber duck", "refactor this", "write a function"]),
+    (1, Intent.TASK_DISPATCHER,  ["task dispatcher", "dispatch task", "queue task", "mesh devices", "dispatcher status", "connected devices", "register device", "cancel task"]),
+
     # System status
     (5, Intent.SYSTEM_STATUS,    ["system status", "cpu usage", "ram usage", "memory usage", "disk space", "how hot", "system info", "battery"]),
+
     # Search (low priority — very broad)
     (9, Intent.SEARCH_WEB,       ["search", "look up", "google", "find out", "tell me about"]),
 ]
@@ -349,6 +401,12 @@ class IntentDetector:
 
     def _keyword_match(self, cmd: str) -> Optional[Intent]:
         """Check each rule's phrase list; return the first match in priority order."""
+        if cmd in ("exit", "quit", "deactivate", "bye", "goodbye"):
+            return Intent.DEACTIVATE
+        if cmd in ("shutdown", "shut down", "power off"):
+            return Intent.SHUTDOWN
+        if cmd in ("restart", "reboot"):
+            return Intent.RESTART
         for _priority, intent, phrases in _KEYWORD_RULES:
             for phrase in phrases:
                 if phrase in cmd:

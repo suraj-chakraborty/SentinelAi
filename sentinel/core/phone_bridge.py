@@ -336,3 +336,4 @@ def stop_phone_bridge():
     global _phone_bridge
     if _phone_bridge:
         _phone_bridge.stop()
+        _phone_bridge = None

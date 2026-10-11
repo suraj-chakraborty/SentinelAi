@@ -19,7 +19,7 @@ class UserProfile:
         return asdict(self)
 
     @staticmethod
-    def from_dict(data: dict) -> "UserProfile":
+    def from_dict(data: dict) -> Optional[UserProfile]:
         if not data:
             return None
         return UserProfile(

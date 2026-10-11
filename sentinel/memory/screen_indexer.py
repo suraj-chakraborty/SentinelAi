@@ -5,7 +5,6 @@ Background daemon that periodically captures screens and indexes them
 into the semantic screen memory for recall.
 """
 
-import os
 import time
 import logging
 import threading
@@ -139,3 +138,4 @@ def stop_screen_indexer():
     global _screen_indexer
     if _screen_indexer:
         _screen_indexer.stop()
+        _screen_indexer = None
