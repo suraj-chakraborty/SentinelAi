@@ -289,3 +289,4 @@ def stop_daemon_manager():
     global _daemon_manager
     if _daemon_manager:
         _daemon_manager.stop()
+        _daemon_manager = None

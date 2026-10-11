@@ -1,8 +1,17 @@
 import os
-import pypdf
-import docx
 import logging
 from datetime import datetime, timedelta
+
+try:
+    import pypdf
+except ImportError:
+    pypdf = None
+
+try:
+    import docx
+except ImportError:
+    docx = None
+
 
 class FileIntelligenceModule:
     def __init__(self, knowledge_base):
@@ -34,11 +43,17 @@ class FileIntelligenceModule:
         try:
             content = ""
             if filepath.lower().endswith('.pdf'):
+                if not pypdf:
+                    self.logger.warning("pypdf is not installed. Skipping PDF extraction.")
+                    return False
                 with open(filepath, 'rb') as f:
                     reader = pypdf.PdfReader(f)
                     for page in reader.pages:
                         content += page.extract_text() or ""
             elif filepath.lower().endswith('.docx'):
+                if not docx:
+                    self.logger.warning("python-docx is not installed. Skipping DOCX extraction.")
+                    return False
                 doc = docx.Document(filepath)
                 for para in doc.paragraphs:
                     content += para.text + "\n"

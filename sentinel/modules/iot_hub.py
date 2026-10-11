@@ -1,8 +1,11 @@
-import paho.mqtt.client as mqtt
+try:
+    import paho.mqtt.client as mqtt
+except ImportError:
+    mqtt = None
+
 import requests
 import os
 import logging
-import json
 
 class IoTHubModule:
     def __init__(self):
@@ -36,6 +39,8 @@ class IoTHubModule:
 
     def publish_mqtt(self, topic, message):
         """Publishes a message to an MQTT broker."""
+        if mqtt is None:
+            return False, "paho-mqtt library not installed."
         try:
             client = mqtt.Client()
             client.connect(self.mqtt_host, self.mqtt_port, 60)

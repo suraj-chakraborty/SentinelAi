@@ -1,7 +1,6 @@
 import time
 import threading
 import logging
-import psutil
 from datetime import datetime
 try:
     import pygetwindow as gw

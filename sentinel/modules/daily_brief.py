@@ -1,36 +1,66 @@
+"""
+sentinel/modules/daily_brief.py
+───────────────────────────────
+Executive Morning & Session Briefing for SentinelAI.
+Compiles calendar schedule, system health, and pending priorities.
+"""
+
 from datetime import datetime
 import logging
+import psutil
+
+logger = logging.getLogger("DailyBrief")
+
 
 class DailyBriefModule:
-    def __init__(self, orchestrator):
+    def __init__(self, orchestrator=None):
         self.orchestrator = orchestrator
-        self.logger = logging.getLogger("DailyBrief")
+        self.logger = logger
 
-    def generate_brief(self):
-        """Generates a comprehensive daily brief for the user."""
+    def generate_brief(self) -> str:
+        """Generates a natural, comprehensive executive brief."""
+        now = datetime.now()
+        hour = now.hour
+        if hour < 12:
+            time_greeting = "Good morning, sir."
+        elif hour < 17:
+            time_greeting = "Good afternoon, sir."
+        else:
+            time_greeting = "Good evening, sir."
+
+        date_str = now.strftime("%A, %B %d")
+
+        brief_segments = [f"{time_greeting} Today is {date_str}."]
+
+        # 1. Calendar schedule
         try:
-            # 1. Calendar Events
-            meets = self.orchestrator.calendar_module.get_upcoming_meets(hours=12)
-            meet_summary = f"You have {len(meets)} meetings scheduled for today." if meets else "No meetings scheduled for today."
-            
-            # 2. System Health
-            cpu = self.orchestrator.system_monitor.get_cpu_temp()
-            health = f"System health is optimal (CPU at {cpu}°C)." if cpu and cpu < 70 else "System ran a bit hot recently."
-            
-            # 3. Document Summary
-            # Scan downloads for the last 24 hours
-            recent_files = self.orchestrator.file_intel.scan_directory(
-                self.orchestrator.file_intel.knowledge_base.db_path, # Using DB path as a proxy for scanned docs
-                hours=24
-            )
-            file_info = f"I've indexed {len(recent_files)} new documents since yesterday." if recent_files else ""
-
-            # 4. Habit Insight
-            # Query RAG for patterns
-            habit_insight = self.orchestrator.knowledge_base.query_knowledge("What are my usual habits?")
-            
-            brief = f"Good morning! {meet_summary} {health} {file_info} {habit_insight}"
-            return brief
+            if hasattr(self.orchestrator, "calendar_module") and self.orchestrator.calendar_module:
+                meets = self.orchestrator.calendar_module.get_upcoming_meets(hours=12)
+                if meets:
+                    brief_segments.append(f"You have {len(meets)} meetings scheduled for today.")
+                else:
+                    brief_segments.append("Your calendar is clear for today.")
         except Exception as e:
-            self.logger.error(f"Error generating brief: {e}")
-            return "Good morning! I was unable to compile your full brief, but I'm ready for your commands."
+            self.logger.debug(f"Calendar check in brief: {e}")
+
+        # 2. System telemetry
+        try:
+            cpu_pct = int(psutil.cpu_percent(interval=0.2))
+            ram = psutil.virtual_memory()
+            brief_segments.append(
+                f"System vitals are running clean: CPU at {cpu_pct} percent, with {ram.percent} percent memory utilized."
+            )
+        except Exception:
+            brief_segments.append("System telemetry is operational.")
+
+        # 3. Battery check if laptop
+        try:
+            battery = psutil.sensors_battery()
+            if battery is not None:
+                power_status = "plugged in" if battery.power_plugged else "on battery power"
+                brief_segments.append(f"Power is {power_status} at {int(battery.percent)} percent.")
+        except Exception:
+            pass
+
+        brief_segments.append("All Sentinel systems are online and standing by.")
+        return " ".join(brief_segments)

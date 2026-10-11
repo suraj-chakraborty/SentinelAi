@@ -1,9 +1,16 @@
 import os
 import pickle
 import logging
-from google.auth.transport.requests import Request
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
+try:
+    from google.auth.transport.requests import Request
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    from googleapiclient.discovery import build
+    GOOGLE_CALENDAR_OK = True
+except ImportError:
+    Request = None
+    InstalledAppFlow = None
+    build = None
+    GOOGLE_CALENDAR_OK = False
 from datetime import datetime, timedelta
 
 # If modifying these SCOPES, delete the file token.pickle.

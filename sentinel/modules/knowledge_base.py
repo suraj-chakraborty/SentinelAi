@@ -1,5 +1,9 @@
-import chromadb
-from chromadb.utils import embedding_functions
+try:
+    import chromadb
+    from chromadb.utils import embedding_functions
+    _CHROMADB_AVAILABLE = True
+except ImportError:
+    _CHROMADB_AVAILABLE = False
 import os
 import logging
 import uuid
@@ -23,12 +27,17 @@ class KnowledgeBaseModule:
     def __init__(self, db_path="sentinel_db", master_key=None, llm_callback=None):
         self.db_path = os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "SentinelAi", db_path)
         os.makedirs(self.db_path, exist_ok=True)
-        self.client = chromadb.PersistentClient(path=self.db_path)
-        self.embedding_fn = embedding_functions.DefaultEmbeddingFunction()
-        self.collection = self.client.get_or_create_collection(
-            name="personal_knowledge",
-            embedding_function=self.embedding_fn
-        )
+        if _CHROMADB_AVAILABLE:
+            self.client = chromadb.PersistentClient(path=self.db_path)
+            self.embedding_fn = embedding_functions.DefaultEmbeddingFunction()
+            self.collection = self.client.get_or_create_collection(
+                name="personal_knowledge",
+                embedding_function=self.embedding_fn
+            )
+        else:
+            self.client = None
+            self.embedding_fn = None
+            self.collection = None
         self.logger = logging.getLogger("KnowledgeBaseModule")
         self.master_key = master_key
         self.llm_callback = llm_callback

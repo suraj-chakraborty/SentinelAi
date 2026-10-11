@@ -1,6 +1,5 @@
 import librosa
 import numpy as np
-import os
 import logging
 
 class EmotionModule:
@@ -19,9 +18,8 @@ class EmotionModule:
             energy = np.mean(librosa.feature.rms(y=y))
             spectral_centroid = np.mean(librosa.feature.spectral_centroid(y=y, sr=sr))
             
-            # Simple heuristic (High pitch + high energy = stressed/excited, low = calm)
-            # This is a placeholder for a real ML model like RAVDESS-trained CNN
-            if avg_pitch > 200 and energy > 0.05:
+            # Simple heuristic (High pitch/spectral energy + high volume = stressed/excited, low = calm)
+            if (avg_pitch > 200 or spectral_centroid > 2500) and energy > 0.05:
                 return "Stressed/Excited"
             elif avg_pitch < 150 and energy < 0.02:
                 return "Calm/Sad"

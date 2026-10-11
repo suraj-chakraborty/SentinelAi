@@ -1,5 +1,15 @@
-import cv2
-import mediapipe as mp
+try:
+    import cv2
+    _CV2_AVAILABLE = True
+except ImportError:
+    _CV2_AVAILABLE = False
+
+try:
+    import mediapipe as mp
+    _MP_AVAILABLE = True
+except ImportError:
+    _MP_AVAILABLE = False
+
 import pyautogui
 import threading
 import logging
@@ -15,7 +25,8 @@ class GestureModule:
         
         # Delayed initialization to catch errors
         try:
-            import mediapipe as mp
+            if not _MP_AVAILABLE:
+                raise ImportError("mediapipe not installed")
             # Try multiple import paths for solutions
             if hasattr(mp, 'solutions'):
                 self.mp_hands = mp.solutions.hands
@@ -69,7 +80,6 @@ class GestureModule:
         prev_x, prev_y = 0, 0
         smoothing = 5
         last_click_time = 0
-        scroll_threshold = 0.05
         
         while self.is_running:
             success, img = self.cap.read()

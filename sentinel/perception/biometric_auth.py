@@ -21,7 +21,12 @@ from dataclasses import dataclass
 from datetime import datetime
 import json
 
-import cv2
+try:
+    import cv2
+    _CV2_AVAILABLE = True
+except ImportError:
+    cv2 = None
+    _CV2_AVAILABLE = False
 
 from sentinel.app.config import APPDATA_DIR
 
@@ -342,7 +347,6 @@ class BiometricAuth:
             self.on_lock()
         
         try:
-            from sentinel.core.intent_detector import Intent
             from sentinel.commands.system_control import get_system_control
             ctrl = get_system_control()
             ctrl.execute("lock")
@@ -413,3 +417,4 @@ def stop_biometric_auth():
     global _biometric_auth
     if _biometric_auth:
         _biometric_auth.stop()
+        _biometric_auth = None

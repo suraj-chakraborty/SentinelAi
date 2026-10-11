@@ -209,7 +209,7 @@ class CyberOverwatch:
         self._threat_queue: queue.Queue = queue.Queue()
         self._threat_history: List[ThreatEvent] = []
         
-        self._suspended_pids: set = set
+        self._suspended_pids: set = set()
         
         self._scan_interval_sec = 2
         self._max_history = 100
@@ -357,19 +357,27 @@ class CyberOverwatch:
     def quarantine_process(self, pid: int) -> bool:
         """Quarantine a malicious process and its files."""
         try:
-            proc = psutil.Process(pid)
-            exe_path = proc.exe()
-            
+            exe_path = None
+            try:
+                proc = psutil.Process(pid)
+                exe_path = proc.exe()
+            except Exception:
+                pass
+
+            # Terminate the process FIRST to release the Windows executable file lock
+            self.terminate_process(pid)
+
             if exe_path and os.path.exists(exe_path):
                 exe_name = os.path.basename(exe_path)
                 quarantine_path = os.path.join(QUARANTINE_DIR, f"{exe_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
                 
                 import shutil
-                shutil.move(exe_path, quarantine_path)
-                
-                logger.info(f"Quarantined: {exe_path} -> {quarantine_path}")
+                try:
+                    shutil.move(exe_path, quarantine_path)
+                    logger.info(f"Quarantined: {exe_path} -> {quarantine_path}")
+                except Exception as move_err:
+                    logger.warning(f"Could not move quarantined binary: {move_err}")
             
-            self.terminate_process(pid)
             return True
         except Exception as e:
             logger.error(f"Failed to quarantine process {pid}: {e}")
@@ -459,4 +467,5 @@ def start_overwatch() -> CyberOverwatch:
 def stop_overwatch():
     global _overwatch
     if _overwatch:
-        overwatch.stop()
+        _overwatch.stop()
+        _overwatch = None

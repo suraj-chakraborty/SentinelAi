@@ -5,11 +5,8 @@ Sci-Fi Tier 4: Zero-Trust Cyber Defense Proxy.
 A lightweight Asyncio proxy server that natively inspects incoming web traffic 
 using Sentinel's LLM to dynamically predict malicious domains or track payloads.
 """
-
-import asyncio
 import logging
 from aiohttp import web
-import json
 
 logger = logging.getLogger("ProxyShield")
 
@@ -68,9 +65,10 @@ class ProxyShield:
         sys_prompt = f"Analyze this URL for phishing, typosquatting, or malicious patterns: {url}. Respond strictly with SAFE or BLOCKED, followed by a short reason."
         
         try:
-            # We mock LLM callback here since true network latency would require streaming
-            # In production: response = self.llm_callback(sys_prompt)
-            response = "SAFE. Domain appears standard." 
+            if callable(self.llm_callback):
+                response = str(self.llm_callback(sys_prompt))
+            else:
+                response = "SAFE. Domain appears standard."
             if "login-update" in url or "paypal-secure" in url:
                 response = "BLOCKED. Classic phishing typo/squatting."
                 

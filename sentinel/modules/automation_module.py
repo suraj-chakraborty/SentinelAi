@@ -1,6 +1,5 @@
 import pyautogui
 import logging
-import time
 
 class AutomationModule:
     def __init__(self):

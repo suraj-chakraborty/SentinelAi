@@ -4,8 +4,6 @@ import threading
 import time
 import os
 import asyncio
-import httpx
-from typing import Optional
 
 class SecurityShieldModule:
     def __init__(self, notifier, gemini_fn=None):
@@ -15,6 +13,7 @@ class SecurityShieldModule:
         self.is_running = False
         self.known_partitions = set()
         self.proxy_running = False
+        self._alerted_pids = set()
         self._initialize_partitions()
 
     def _initialize_partitions(self):
@@ -79,7 +78,7 @@ class SecurityShieldModule:
             if self.gemini_fn:
                 is_safe = await self._check_url_safety(url, request)
                 if not is_safe:
-                    self.logger.warning(f"BLOCKED malicious request: {url}")
+                    self.logger.warning(f"BLOCKED malicious {method} request: {url}")
                     self.notifier.show_notification("Proxy Shield Alert", f"Blocked potentially malicious request to {url}")
                     writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n\r\nSentinelAI Zero-Trust Shield: This request has been blocked for security.")
                     await writer.drain()
@@ -136,9 +135,49 @@ class SecurityShieldModule:
                     pass 
 
                 # 3. Check for Suspicious Processes
+                current_user = (os.environ.get("USERNAME") or os.environ.get("USER") or "").lower()
+                if not current_user:
+                    try:
+                        current_user = os.getlogin().lower()
+                    except Exception:
+                        current_user = ""
+
+                legit_users = {
+                    current_user,
+                    "system",
+                    "local service",
+                    "network service",
+                    "nt authority\\system",
+                    "nt authority\\local service",
+                    "nt authority\\network service"
+                }
+
                 for proc in psutil.process_iter(['pid', 'name', 'username']):
-                    if proc.info['name'] in ['cmd.exe', 'powershell.exe'] and proc.info['username'] != os.getlogin():
-                        self.notifier.show_notification("Security Alert", f"Unauthorized terminal access detected (PID: {proc.info['pid']})")
+                    try:
+                        pid = proc.info.get('pid')
+                        pname = (proc.info.get('name') or '').lower()
+                        if pname in ['cmd.exe', 'powershell.exe', 'pwsh.exe']:
+                            if pid in self._alerted_pids:
+                                continue
+                            raw_user = (proc.info.get('username') or '').lower()
+                            if not raw_user:
+                                continue
+                            short_user = raw_user.split("\\")[-1].strip()
+                            if short_user and short_user not in legit_users and raw_user not in legit_users:
+                                self._alerted_pids.add(pid)
+                                self.notifier.show_notification(
+                                    "Security Alert",
+                                    f"Unauthorized terminal access detected (PID: {pid})"
+                                )
+                                self.logger.warning(
+                                    f"Unauthorized terminal access: PID {pid} ({pname}) run by {raw_user}"
+                                )
+                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                        continue
+
+                # Clean up exited PIDs periodically so memory stays bounded
+                if len(self._alerted_pids) > 150:
+                    self._alerted_pids = {p for p in self._alerted_pids if psutil.pid_exists(p)}
 
             except Exception as e:
                 self.logger.error(f"Security shield error: {e}")
