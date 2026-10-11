@@ -15,7 +15,12 @@ from dataclasses import dataclass
 from datetime import datetime
 
 import numpy as np
-import cv2
+try:
+    import cv2
+    _CV2_AVAILABLE = True
+except ImportError:
+    cv2 = None
+    _CV2_AVAILABLE = False
 
 from sentinel.app.config import APPDATA_DIR
 
@@ -60,6 +65,9 @@ class LiveVisionStream:
 
     def start(self) -> bool:
         """Start the video capture stream."""
+        if not _CV2_AVAILABLE or cv2 is None:
+            logger.warning("cv2 is not installed; video capture unavailable")
+            return False
         if self._running:
             logger.warning("Vision stream already running")
             return True
@@ -222,6 +230,7 @@ def stop_vision_stream():
     global _live_stream
     if _live_stream:
         _live_stream.stop()
+        _live_stream = None
 
 
 def get_vision_frame() -> Optional[str]:
