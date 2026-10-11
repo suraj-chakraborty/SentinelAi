@@ -66,23 +66,26 @@ def _get_whisper_model() -> "WhisperModel":
 def transcribe(wav_path: str) -> str:
     """
     Transcribe audio file to text.
-    Priority: faster-whisper (local) → Google STT (online) → Vosk (offline)
+    Priority: faster-whisper (local, private, offline) → Google STT (online fallback) → Vosk (offline fallback)
     """
     if not os.path.exists(wav_path):
         logger.error(f"Audio file not found: {wav_path}")
         return ""
 
-    # 1. Try Google STT first when network is available for lower latency on short commands
-    if _GOOGLE_STT_AVAILABLE and _has_network():
-        result = _transcribe_google(wav_path)
-        if result:
-            return result
-
-    # 2. Try faster-whisper (local, offline)
+    # 1. Try faster-whisper (local, offline, high accuracy) first
     if _WHISPER_AVAILABLE:
         result = _transcribe_whisper(wav_path)
         if result:
             return result
+
+    # 2. Try Google STT (fallback)
+    if _GOOGLE_STT_AVAILABLE:
+        try:
+            result = _transcribe_google(wav_path)
+            if result:
+                return result
+        except Exception as exc:
+            logger.debug("Google STT failed: %s", exc)
 
     # 3. Try Vosk (offline fallback, needs model downloaded)
     if _VOSK_AVAILABLE:

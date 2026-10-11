@@ -14,13 +14,11 @@ import os
 import time
 import logging
 import threading
-import queue
 import json
 import uuid
 from typing import Optional, Dict, Any, List, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-import tempfile
 
 import numpy as np
 
@@ -204,8 +202,8 @@ Do not dominate the conversation - respond only when addressed or relevant."""
         logger.info(f"Meeting started: {self._meeting_id}")
         
         try:
-            from sentinel.voice.tts import speak
-            speak(f"I have joined the meeting. I'll take notes and respond on your behalf.")
+            from sentinel.app.voice import speak
+            speak("I have joined the meeting. I'll take notes and respond on your behalf.")
         except Exception:
             pass
         
@@ -236,7 +234,7 @@ Do not dominate the conversation - respond only when addressed or relevant."""
         logger.info(f"Meeting ended: {self._meeting_id}, duration: {duration:.1f}min")
         
         try:
-            from sentinel.voice.tts import speak
+            from sentinel.app.voice import speak
             speak(f"Meeting ended. I recorded {len(self._transcript)} entries and {len(self._action_items)} action items.")
         except Exception:
             pass

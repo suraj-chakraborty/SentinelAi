@@ -16,6 +16,7 @@ import logging
 import os
 import time
 import queue
+from typing import Tuple
 
 logger = logging.getLogger("SentinelTTS")
 
@@ -73,16 +74,46 @@ class TTSEngine:
         self._worker = threading.Thread(target=self._process_queue, daemon=True)
         self._worker.start()
         self._tts_disabled = False
-        self._stop_event = None  # For interrupting speech
+        self._stop_event = threading.Event()  # For interrupting speech
+        self._is_active_speaking = False
         logger.info(f"TTSEngine started. edge-tts={'✓' if _EDGE_TTS_AVAILABLE else '✗'}, pygame={'✓' if _PYGAME_AVAILABLE else '✗'}, pyttsx3={'✓' if _PYTTSX3_AVAILABLE else '✗'}")
 
-    def stop_speaking(self):
-        """Stop current speech immediately."""
+    @property
+    def engine_type(self) -> str:
+        """Returns the active TTS engine type."""
+        if _EDGE_TTS_AVAILABLE and _PYGAME_AVAILABLE:
+            return "edge-tts (Neural)"
+        elif _PYTTSX3_AVAILABLE:
+            return "pyttsx3 (Offline SAPI5)"
+        return "none"
+
+    @property
+    def is_speaking(self) -> bool:
+        """Returns True if audio is actively playing or speech is queued."""
+        if self._is_active_speaking or not self._queue.empty():
+            return True
         try:
-            import pygame
-            if pygame.mixer.get_init():
+            if _PYGAME_AVAILABLE and pygame.mixer.get_init():
+                return bool(pygame.mixer.music.get_busy())
+        except Exception:
+            pass
+        return False
+
+    def clear_queue(self):
+        """Purge all pending utterances from the queue."""
+        with self._queue.mutex:
+            self._queue.queue.clear()
+            self._queue.all_tasks_done.notify_all()
+            self._queue.unfinished_tasks = 0
+
+    def stop_speaking(self):
+        """Stop current speech immediately and drop queued phrases."""
+        self._stop_event.set()
+        self.clear_queue()
+        try:
+            if _PYGAME_AVAILABLE and pygame.mixer.get_init():
                 pygame.mixer.music.stop()
-                logger.info("Speech stopped")
+                logger.info("Speech playback stopped and queue cleared")
         except Exception as e:
             logger.error(f"Failed to stop speech: {e}")
 
@@ -92,6 +123,11 @@ class TTSEngine:
             return
         if self._tts_disabled:
             return
+        
+        # When user initiates new explicit speech, reset stop event if queue was empty
+        if self._queue.empty():
+            self._stop_event.clear()
+
         text = str(text)[:500]
         if _PYTTSX3_AVAILABLE and (block or len(text) <= 40):
             if block:
@@ -105,17 +141,22 @@ class TTSEngine:
 
     def speak_low_priority(self, text: str):
         """Speaks only if queue is empty (don't interrupt)."""
-        if self._queue.empty():
+        if self._queue.empty() and not self.is_speaking:
             self.speak(text)
 
     def _process_queue(self):
         while True:
             text, emotion, force_local = self._queue.get()
             try:
+                if self._stop_event.is_set():
+                    # Dropped due to interruption
+                    continue
+                self._is_active_speaking = True
                 self._do_speak(text, emotion, force_local=force_local)
             except Exception as e:
                 logger.error(f"TTS error: {e}")
             finally:
+                self._is_active_speaking = False
                 self._queue.task_done()
 
     def _do_speak(self, text: str, emotion: str, force_local: bool = False):
@@ -132,21 +173,47 @@ class TTSEngine:
         else:
             logger.error("No TTS engine available.")
 
+    def get_voice_config(self) -> Tuple[str, str, str, str]:
+        """Resolves active voice, pitch, rate, and volume, including custom cloned profiles and mood styling."""
+        from sentinel.app.config import load_settings
+        settings = load_settings()
+        voice = settings.get("voice", self.preferred_voice)
+        base_pitch = settings.get("voice_pitch", "+0Hz")
+        base_rate = settings.get("voice_rate", "+0%")
+
+        mood_pitch = "+0Hz"
+        mood_rate = "+0%"
+        volume = "+0%"
+        try:
+            from sentinel.modules.mood_engine import get_mood_engine
+            mood_style = get_mood_engine().get_tts_styling()
+            mood_pitch = mood_style.get("pitch", "+0Hz")
+            mood_rate = mood_style.get("rate", "+0%")
+            volume = mood_style.get("volume", "+0%")
+        except Exception:
+            pass
+
+        effective_pitch = mood_pitch if mood_pitch != "+0Hz" else base_pitch
+        effective_rate = mood_rate if mood_rate != "+0%" else base_rate
+        return voice, effective_pitch, effective_rate, volume
+
     def _speak_edge(self, text: str, emotion: str):
         """Synthesize speech with edge-tts and play with pygame."""
-        # Mapping for rate/volume adjustments based on emotion
-        STYLING = {
-            "Stressed/Excited": ("+30%", "+10%"),
-            "Calm/Sad":         ("-20%", "-5%"),
-            "Neutral":          ("+0%",  "+0%"),
-        }
-        rate, volume = STYLING.get(emotion, STYLING["Neutral"])
-        voice = self.preferred_voice
+        voice, pitch, rate, volume = self.get_voice_config()
+
+        # Inflect on emotion tag if explicitly passed
+        if emotion == "Stressed/Excited":
+            rate = "+25%"
+        elif emotion == "Calm/Sad":
+            rate = "-15%"
+
+        if self._stop_event.is_set():
+            return
         
         tmp_file = os.path.join(_TTS_CACHE_DIR, f"tts_{threading.get_ident()}.mp3")
 
         async def _synthesize():
-            communicate = edge_tts.Communicate(text, voice, rate=rate, volume=volume)
+            communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch, volume=volume)
             await communicate.save(tmp_file)
 
         # Run async synthesis in a new event loop (thread-safe)
@@ -155,6 +222,12 @@ class TTSEngine:
             loop.run_until_complete(_synthesize())
         finally:
             loop.close()
+
+        if self._stop_event.is_set():
+            if os.path.exists(tmp_file):
+                try: os.remove(tmp_file)
+                except Exception: pass
+            return
 
         # Playback
         if _PYGAME_AVAILABLE and os.path.exists(tmp_file):

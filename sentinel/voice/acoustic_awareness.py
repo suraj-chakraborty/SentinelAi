@@ -14,7 +14,6 @@ import threading
 import queue
 import numpy as np
 from typing import Optional, Callable, Dict, Any
-from dataclasses import dataclass
 from datetime import datetime
 
 from sentinel.app.config import APPDATA_DIR
@@ -329,3 +328,4 @@ def stop_acoustic_awareness():
     global _acoustic_awareness
     if _acoustic_awareness:
         _acoustic_awareness.stop()
+        _acoustic_awareness = None

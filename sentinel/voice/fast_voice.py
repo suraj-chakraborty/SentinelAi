@@ -12,8 +12,7 @@ Features:
 
 import logging
 import threading
-import time
-from typing import Optional, Callable, Dict, Any
+from typing import Optional, Callable, Any
 
 logger = logging.getLogger("FastVoice")
 

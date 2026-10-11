@@ -23,6 +23,11 @@ from pathlib import Path
 
 import numpy as np
 
+try:
+    import pyaudio
+except ImportError:
+    pyaudio = None
+
 from sentinel.app.config import APPDATA_DIR
 
 logger = logging.getLogger("OmniEar")
@@ -410,7 +415,8 @@ def start_omni_ear(whisper_model: str = "base") -> OmniEar:
 def stop_omni_ear():
     global _omni_ear
     if _omni_ear:
-        ear.stop()
+        _omni_ear.stop()
+        _omni_ear = None
 
 
 def search_audio_history(query: str, days_back: Optional[int] = None) -> List[Dict[str, Any]]:

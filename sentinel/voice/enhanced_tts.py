@@ -15,7 +15,7 @@ import asyncio
 import logging
 import threading
 import time
-from typing import Optional, Dict, Any
+from typing import Optional
 
 logger = logging.getLogger("EnhancedTTS")
 
@@ -63,20 +63,27 @@ class EnhancedTTS:
         self._init_engines()
 
     def _init_engines(self):
+        import importlib.util
         # Check edge-tts
         try:
-            import edge_tts
-            self._edge_available = True
-            logger.info("Edge-TTS neural voices available")
-        except ImportError:
+            self._edge_available = importlib.util.find_spec("edge_tts") is not None
+            if self._edge_available:
+                logger.info("Edge-TTS neural voices available")
+            else:
+                logger.warning("Edge-TTS not available")
+        except Exception:
+            self._edge_available = False
             logger.warning("Edge-TTS not available")
 
         # Check Coqui TTS
         try:
-            import TTS
-            self._coqui_available = True
-            logger.info("Coqui TTS available")
-        except ImportError:
+            self._coqui_available = importlib.util.find_spec("TTS") is not None
+            if self._coqui_available:
+                logger.info("Coqui TTS available")
+            else:
+                logger.warning("Coqui TTS not available")
+        except Exception:
+            self._coqui_available = False
             logger.warning("Coqui TTS not available")
 
         # Check pygame for playback
