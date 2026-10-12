@@ -6,15 +6,16 @@ Monitors the screen at 2-3 FPS with lightweight frame diffing, provides live cod
 syntax/error observation without prompting, and locates UI elements for walkthroughs.
 """
 
+import logging
 import threading
 import time
-import logging
-from typing import Optional, Callable, Tuple
+from collections.abc import Callable
 
 logger = logging.getLogger("ContinuousScreenAgent")
 
 try:
     from PIL import ImageGrab
+
     _IMAGING_AVAILABLE = True
 except ImportError:
     _IMAGING_AVAILABLE = False
@@ -26,16 +27,12 @@ class ContinuousScreenAgent:
     Detects real-time IDE syntax errors and visual UI coordinates.
     """
 
-    def __init__(
-        self,
-        fps: float = 2.0,
-        on_code_issue_detected: Optional[Callable[[str], None]] = None
-    ):
+    def __init__(self, fps: float = 2.0, on_code_issue_detected: Callable[[str], None] | None = None):
         self.fps = fps
         self.on_code_issue_detected = on_code_issue_detected
 
         self._running = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._last_frame_hash = None
 
     def start(self):
@@ -55,13 +52,14 @@ class ContinuousScreenAgent:
             self._thread = None
         logger.info("ContinuousScreenAgent stopped.")
 
-    def find_ui_element(self, element_name: str) -> Optional[Tuple[int, int, int, int]]:
+    def find_ui_element(self, element_name: str) -> tuple[int, int, int, int] | None:
         """
         Locates UI element on screen by matching text or accessibility bounding box.
         Returns (x, y, width, height) coordinates for interactive walkthrough pointers.
         """
         try:
             from sentinel.automation.uia_automation import get_uia
+
             uia = get_uia()
             hwnd = uia.find_element_by_name(element_name)
             if hwnd:
@@ -93,6 +91,7 @@ class ContinuousScreenAgent:
 
                 # Lightweight check for active window context
                 from sentinel.utils.window_context import get_active_window_info
+
                 win = get_active_window_info()
                 title = win.get("title", "").lower()
 
@@ -101,8 +100,10 @@ class ContinuousScreenAgent:
                     msg = f"Observed issue in active window: '{win['title']}'."
                     logger.info(f"[LIVE SCREEN AGENT] {msg}")
                     if self.on_code_issue_detected:
-                        try: self.on_code_issue_detected(msg)
-                        except Exception: pass
+                        try:
+                            self.on_code_issue_detected(msg)
+                        except Exception:
+                            pass
 
             except Exception as e:
                 logger.debug(f"Screen observation loop exception: {e}")

@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 
 logger = logging.getLogger("Reminder")
 
@@ -14,6 +14,7 @@ class Reminder:
             return "When would you like me to remind you?"
         # Simple parsing: look for 'set a reminder at 17:00' or 'remind me at 5 pm'
         import re
+
         m = re.search(r"set (a )?reminder (at|for) (.+)", text)
         if not m:
             m = re.search(r"remind me (at|for) (.+)", text)

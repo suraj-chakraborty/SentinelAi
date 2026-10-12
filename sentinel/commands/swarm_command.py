@@ -6,7 +6,6 @@ Handles "run nightly audit", "swarm mission", and "codebase health check".
 """
 
 import logging
-from typing import Optional
 
 from sentinel.core.nightly_swarm import NightlySwarmCoordinator
 
@@ -18,16 +17,21 @@ class SwarmCommand:
         self.orchestrator = orchestrator
         self.coordinator = NightlySwarmCoordinator()
 
-    def execute(self, command: str, entity: Optional[str] = None) -> str:
+    def execute(self, command: str, entity: str | None = None) -> str:
         cmd_lower = command.lower()
 
         # 1. Run full swarm mission / audit
-        if any(k in cmd_lower for k in ("nightly audit", "swarm mission", "run swarm", "codebase health", "audit repository")):
+        if any(
+            k in cmd_lower
+            for k in ("nightly audit", "swarm mission", "run swarm", "codebase health", "audit repository")
+        ):
             res = self.coordinator.run_nightly_mission()
             audit = res.get("audit", {})
             git_stat = "clean" if audit.get("git_clean") else "has pending changes"
             test_stat = audit.get("test_status", "passed")
-            return f"Swarm mission completed. Repository is {git_stat}, and tests: {test_stat}. Morning report generated."
+            return (
+                f"Swarm mission completed. Repository is {git_stat}, and tests: {test_stat}. Morning report generated."
+            )
 
         # 2. Tech Intelligence Hunt
         if any(k in cmd_lower for k in ("tech intelligence", "swarm research", "hunt tech")):

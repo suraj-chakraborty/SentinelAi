@@ -9,22 +9,22 @@ import os
 import sys
 import tempfile
 import wave
+from unittest.mock import MagicMock
+
 import numpy as np
-from unittest.mock import MagicMock, patch
 
 # Ensure sentinel package is resolvable
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from sentinel.voice.voice_cloner import VoiceProfileManager
-from sentinel.modules.mood_engine import MoodEngine, AgentMood, OwnerMood, get_mood_engine
-from sentinel.commands.voice_profile_command import VoiceProfileCommand
 from sentinel.commands.mood_command import MoodCommand
-from sentinel.core.intent_detector import IntentDetector, Intent
+from sentinel.commands.voice_profile_command import VoiceProfileCommand
 from sentinel.core.command_router import CommandRouter
+from sentinel.core.intent_detector import Intent, IntentDetector
+from sentinel.modules.mood_engine import AgentMood, MoodEngine, OwnerMood, get_mood_engine
+from sentinel.voice.voice_cloner import VoiceProfileManager
 
 
 class TestVoiceCloningAndMoodDynamics:
-
     def test_voice_cloner_acoustic_profiling(self):
         """Test acoustic feature extraction and voice profile generation."""
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
@@ -67,7 +67,9 @@ class TestVoiceCloningAndMoodDynamics:
         engine = MoodEngine()
 
         # Stressed
-        assert engine.detect_owner_mood("I am so stressed with these production bugs and deadlines") == OwnerMood.STRESSED
+        assert (
+            engine.detect_owner_mood("I am so stressed with these production bugs and deadlines") == OwnerMood.STRESSED
+        )
 
         # Exhausted
         assert engine.detect_owner_mood("I am exhausted and had a really rough day") == OwnerMood.EXHAUSTED

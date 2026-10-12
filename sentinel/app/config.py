@@ -4,15 +4,16 @@ sentinel/app/config.py
 Centralised application configuration, paths, and constants.
 """
 
+import json
 import os
 import sys
-import json
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 # ── Paths ───────────────────────────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-if getattr(sys, 'frozen', False):
+if getattr(sys, "frozen", False):
     BASE_DIR = sys._MEIPASS
 
 APPDATA_DIR = os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "SentinelAi")
@@ -49,19 +50,19 @@ ROTATION_LOG_PATH = os.path.join(APPDATA_DIR, "key_rotations.log")
 AUDIT_LOG_PATH = os.path.join(APPDATA_DIR, "audit.log")
 
 # ── UI Constants (Futuristic Cyberpunk / JARVIS Dark Theme) ─────────────────
-MODERN_BG = "#080C14"             # Deep Space Obsidian
-MODERN_SURFACE = "#0F172A"        # Slate 900 Glass Card
-MODERN_SURFACE_ALT = "#1E293B"    # Slate 800 Highlight Card
-MODERN_SURFACE_BORDER = "#1E293B" # Subtle border
-MODERN_ACCENT = "#00E5FF"         # Electric Neon Cyan
-MODERN_ACCENT_HOVER = "#38BDF8"   # Bright Sky Cyan
+MODERN_BG = "#080C14"  # Deep Space Obsidian
+MODERN_SURFACE = "#0F172A"  # Slate 900 Glass Card
+MODERN_SURFACE_ALT = "#1E293B"  # Slate 800 Highlight Card
+MODERN_SURFACE_BORDER = "#1E293B"  # Subtle border
+MODERN_ACCENT = "#00E5FF"  # Electric Neon Cyan
+MODERN_ACCENT_HOVER = "#38BDF8"  # Bright Sky Cyan
 MODERN_ACCENT_PURPLE = "#8B5CF6"  # Cosmic Violet
-MODERN_GLOW = "#083344"           # Deep Cyan Glow
-MODERN_TEXT = "#F8FAFC"           # Crisp Diamond White
-MODERN_TEXT_MUTED = "#94A3B8"     # Soft Slate Text
-MODERN_SUCCESS = "#10B981"        # Emerald Neon
-MODERN_WARNING = "#F59E0B"        # Amber Neon
-MODERN_DANGER = "#EF4444"         # Rose Crimson
+MODERN_GLOW = "#083344"  # Deep Cyan Glow
+MODERN_TEXT = "#F8FAFC"  # Crisp Diamond White
+MODERN_TEXT_MUTED = "#94A3B8"  # Soft Slate Text
+MODERN_SUCCESS = "#10B981"  # Emerald Neon
+MODERN_WARNING = "#F59E0B"  # Amber Neon
+MODERN_DANGER = "#EF4444"  # Rose Crimson
 
 MODERN_FONT = ("Segoe UI Variable Text", 10)
 MODERN_FONT_BOLD = ("Segoe UI Variable Text", 10, "bold")
@@ -71,7 +72,7 @@ MODERN_FONT_MONO = ("Consolas", 9)
 
 # ── Voice Settings (Better Jarvis Voice) ───────────────────────────────────────
 DEFAULT_VOICE = "en-US-JennyNeural"  # Friendly female neural voice
-VOICE_RATE = "+15%"                  # Slightly faster for natural feel
+VOICE_RATE = "+15%"  # Slightly faster for natural feel
 VOICE_VOLUME = "+5%"
 
 # ── App Aliases ─────────────────────────────────────────────────────────────
@@ -97,10 +98,11 @@ ALIASES = {
     "teams": "teams",
     "whatsapp": "whatsapp",
     "telegram": "telegram",
-    "discord": "discord"
+    "discord": "discord",
 }
 
 # ── Global Settings Logic ───────────────────────────────────────────────────
+
 
 def ensure_appdata_dir():
     """Create AppData directory if it doesn't exist."""
@@ -108,6 +110,7 @@ def ensure_appdata_dir():
         Path(APPDATA_DIR).mkdir(parents=True, exist_ok=True)
     except Exception:
         pass
+
 
 def load_settings() -> dict:
     """Load settings from settings.json."""
@@ -119,6 +122,7 @@ def load_settings() -> dict:
         return {}
     return {}
 
+
 def save_settings(data: dict):
     """Save settings to settings.json."""
     ensure_appdata_dir()
@@ -128,14 +132,16 @@ def save_settings(data: dict):
     except Exception:
         pass
 
+
 def get_porcupine_model_path():
     """Locate the Porcupine model file."""
     candidates = []
-    if getattr(sys, 'frozen', False):
+    if getattr(sys, "frozen", False):
         candidates.append(os.path.join(BASE_DIR, "pvporcupine", "lib", "common", "porcupine_params.pv"))
         candidates.append(os.path.join(BASE_DIR, "pvporcupine", "resources", "porcupine_params.pv"))
     try:
         import pvporcupine as _pv
+
         pkg_base = os.path.dirname(_pv.__file__)
         candidates.append(os.path.join(pkg_base, "lib", "common", "porcupine_params.pv"))
         candidates.append(os.path.join(pkg_base, "resources", "porcupine_params.pv"))

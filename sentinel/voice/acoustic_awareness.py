@@ -7,14 +7,16 @@ and fluid turn-taking for JARVIS-style interactions.
 Replaces strict wake-word pipeline with continuous streaming duplex engine.
 """
 
-import os
-import time
 import logging
-import threading
+import os
 import queue
-import numpy as np
-from typing import Optional, Callable, Dict, Any
+import threading
+import time
+from collections.abc import Callable
 from datetime import datetime
+from typing import Any
+
+import numpy as np
 
 from sentinel.app.config import APPDATA_DIR
 
@@ -37,6 +39,7 @@ class VoiceActivityDetector:
         """Load Silero VAD model."""
         try:
             import torch
+
             self._model = torch.load(os.path.join(os.path.dirname(__file__), "..", "models", "silero_vad.jit"))
             logger.info("Silero VAD loaded")
         except Exception as e:
@@ -47,9 +50,10 @@ class VoiceActivityDetector:
         """Detect if audio chunk contains speech."""
         if self._model is None:
             return self._fallback_vad(audio_chunk)
-        
+
         try:
             import torch
+
             input_tensor = torch.from_numpy(audio_chunk).float()
             if len(input_tensor) < 512:
                 return False
@@ -70,7 +74,7 @@ class VoiceActivityDetector:
 class AcousticAwareness:
     """
     Continuous acoustic awareness with interrupt detection.
-    
+
     Features:
     - Rolling buffer analysis with Silero VAD
     - Interrupt detection during TTS playback
@@ -82,27 +86,27 @@ class AcousticAwareness:
         self,
         buffer_size_ms: int = 500,
         vad_threshold: float = 0.5,
-        on_interrupt: Optional[Callable] = None,
-        on_speech_start: Optional[Callable] = None,
-        on_speech_end: Optional[Callable] = None
+        on_interrupt: Callable | None = None,
+        on_speech_start: Callable | None = None,
+        on_speech_end: Callable | None = None,
     ):
         self.buffer_size_ms = buffer_size_ms
         self.vad_threshold = vad_threshold
-        
+
         self.on_interrupt = on_interrupt
         self.on_speech_start = on_speech_start
         self.on_speech_end = on_speech_end
-        
+
         self._vad = VoiceActivityDetector(threshold=vad_threshold)
         self._running = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._audio_queue: queue.Queue = queue.Queue(maxsize=20)
-        
+
         self._is_speaking = False
         self._was_speaking = False
-        self._speech_start_time: Optional[datetime] = None
+        self._speech_start_time: datetime | None = None
         self._interrupt_buffer: list = []
-        
+
         self._context_window: list = []
         self._max_context_items = 10
 
@@ -111,11 +115,11 @@ class AcousticAwareness:
         if self._running:
             logger.warning("Acoustic awareness already running")
             return
-        
+
         self._running = True
         self._thread = threading.Thread(target=self._monitor_loop, daemon=True, name="AcousticAwareness")
         self._thread.start()
-        logger.info("Acoustic awareness started (VAD threshold: {})".format(self.vad_threshold))
+        logger.info(f"Acoustic awareness started (VAD threshold: {self.vad_threshold})")
 
     def stop(self):
         """Stop VAD monitoring."""
@@ -138,20 +142,20 @@ class AcousticAwareness:
     def _monitor_loop(self):
         """Main VAD monitoring loop."""
         buffer_size = int(16000 * self.buffer_size_ms / 1000)
-        
+
         while self._running:
             try:
                 audio_data = self._audio_queue.get(timeout=1)
-                
+
                 if len(audio_data) >= buffer_size:
                     chunk = audio_data[-buffer_size:]
                 else:
                     chunk = audio_data
-                
+
                 is_speaking = self._vad.is_speaking(chunk)
-                
+
                 self._process_speech_state(is_speaking, chunk)
-                
+
             except queue.Empty:
                 continue
             except Exception as e:
@@ -162,28 +166,28 @@ class AcousticAwareness:
         """Process speech state changes and trigger callbacks."""
         self._was_speaking = self._is_speaking
         self._is_speaking = is_speaking
-        
+
         if is_speaking and not self._was_speaking:
             self._speech_start_time = datetime.now()
-            
+
             if self.on_speech_start:
                 self.on_speech_start()
-            
+
             logger.debug("Speech started")
-        
+
         elif not is_speaking and self._was_speaking:
             if self.on_speech_end:
                 self.on_speech_end()
-            
+
             logger.debug("Speech ended")
-        
+
         if self.on_interrupt and self._is_speaking and self._was_speaking:
             if self._is_tts_active():
                 self._handle_interrupt(audio_chunk)
 
     def _is_tts_active(self) -> bool:
         """Check if TTS is currently playing."""
-        return getattr(self, '_tts_active', False)
+        return getattr(self, "_tts_active", False)
 
     def set_tts_active(self, active: bool):
         """Mark TTS as active/inactive for interrupt detection."""
@@ -192,28 +196,21 @@ class AcousticAwareness:
     def _handle_interrupt(self, audio_chunk: np.ndarray):
         """Handle user interruption during TTS."""
         logger.info("Interrupt detected during TTS")
-        
-        self._interrupt_buffer.append({
-            "timestamp": datetime.now().isoformat(),
-            "audio_preview": "interrupted_speech"
-        })
-        
+
+        self._interrupt_buffer.append({"timestamp": datetime.now().isoformat(), "audio_preview": "interrupted_speech"})
+
         if self.on_interrupt:
             self.on_interrupt(audio_chunk)
 
     def append_interrupt_to_context(self, transcript: str):
         """Append interruption to the active context window."""
-        interruption_entry = {
-            "type": "interruption",
-            "content": transcript,
-            "timestamp": datetime.now().isoformat()
-        }
-        
+        interruption_entry = {"type": "interruption", "content": transcript, "timestamp": datetime.now().isoformat()}
+
         self._context_window.append(interruption_entry)
-        
+
         if len(self._context_window) > self._max_context_items:
-            self._context_window = self._context_window[-self._max_context_items:]
-        
+            self._context_window = self._context_window[-self._max_context_items :]
+
         logger.info(f"Appended interruption to context: {transcript[:50]}...")
 
     def get_context_window(self) -> list:
@@ -224,7 +221,7 @@ class AcousticAwareness:
         """Clear the context window."""
         self._context_window.clear()
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get acoustic awareness statistics."""
         return {
             "running": self._running,
@@ -232,7 +229,7 @@ class AcousticAwareness:
             "vad_threshold": self.vad_threshold,
             "buffer_size_ms": self.buffer_size_ms,
             "context_items": len(self._context_window),
-            "interrupt_count": len(self._interrupt_buffer)
+            "interrupt_count": len(self._interrupt_buffer),
         }
 
 
@@ -249,7 +246,7 @@ class AudioBuffer:
         """Append audio data to buffer."""
         with self._lock:
             self._buffer = np.concatenate([self._buffer, audio_data])
-            
+
             max_samples = int(self.max_duration_sec * self.sample_rate)
             if len(self._buffer) > max_samples:
                 self._buffer = self._buffer[-max_samples:]
@@ -297,18 +294,19 @@ class TTSInterruptHandler:
         """Handle the interrupt - halt playback."""
         self._interrupted = True
         self.stop_tts()
-        
+
         try:
             import pygame
+
             if pygame.mixer.get_init():
                 pygame.mixer.stop()
         except Exception as e:
             logger.debug(f"Could not stop pygame mixer: {e}")
-        
+
         logger.info("TTS playback halted due to interruption")
 
 
-_acoustic_awareness: Optional[AcousticAwareness] = None
+_acoustic_awareness: AcousticAwareness | None = None
 
 
 def get_acoustic_awareness() -> AcousticAwareness:

@@ -6,7 +6,7 @@ Handles cross-session recall ("What did we do yesterday?", "Recall past commands
 """
 
 import logging
-from typing import Dict, Any, Optional, Union
+from typing import Any
 
 from sentinel.memory.episodic_logger import get_episodic_logger
 from sentinel.memory.screen_indexer import get_screen_indexer
@@ -18,7 +18,7 @@ class SearchMemoryCommand:
     def __init__(self, orchestrator=None):
         self.orchestrator = orchestrator
 
-    def execute(self, query: str, entity: Optional[str] = None) -> Union[str, Dict[str, Any]]:
+    def execute(self, query: str, entity: str | None = None) -> str | dict[str, Any]:
         """
         Processes memory recall requests for both voice commands and direct queries.
         """
@@ -42,7 +42,9 @@ class SearchMemoryCommand:
             return "No recent command history found."
 
         # 3. Keyword search in episodic memory
-        clean_search = entity or query.replace("search memory for", "").replace("search memory", "").replace("recall", "").strip()
+        clean_search = (
+            entity or query.replace("search memory for", "").replace("search memory", "").replace("recall", "").strip()
+        )
         episodes = get_episodic_logger().search_episodes(clean_search, limit=3)
         if episodes:
             match = episodes[0]
@@ -61,7 +63,7 @@ class SearchMemoryCommand:
 
         return f"I could not find past records matching '{clean_search}'."
 
-    def get_recent(self, limit: int = 10) -> Dict[str, Any]:
+    def get_recent(self, limit: int = 10) -> dict[str, Any]:
         """API method for UI/dashboard."""
         try:
             screens = get_screen_indexer().get_recent(limit)
@@ -69,7 +71,7 @@ class SearchMemoryCommand:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """API method for UI/dashboard."""
         try:
             return get_screen_indexer().get_stats()

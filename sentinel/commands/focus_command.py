@@ -7,7 +7,6 @@ Handles "start focus mode", "stop focus mode", and "ergonomic status".
 
 import logging
 import re
-from typing import Optional
 
 from sentinel.security.focus_guardian import get_focus_guardian
 
@@ -18,7 +17,7 @@ class FocusCommand:
     def __init__(self, orchestrator=None):
         self.orchestrator = orchestrator
 
-    def execute(self, command: str, entity: Optional[str] = None) -> str:
+    def execute(self, command: str, entity: str | None = None) -> str:
         cmd_lower = command.lower()
         guardian = get_focus_guardian(self.orchestrator)
 
@@ -30,7 +29,7 @@ class FocusCommand:
         # 2. Start focus mode
         if any(k in cmd_lower for k in ("start focus", "enable focus", "focus mode", "deep focus")):
             duration = 45
-            match = re.search(r'(\d+)\s*(?:minute|min)', cmd_lower)
+            match = re.search(r"(\d+)\s*(?:minute|min)", cmd_lower)
             if match:
                 duration = int(match.group(1))
 

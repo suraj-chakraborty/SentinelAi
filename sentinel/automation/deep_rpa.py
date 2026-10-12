@@ -5,17 +5,18 @@ Deep Autonomous Robotic Process Automation (RPA).
 Provides window tiling/snapping, automated spreadsheet editing, and file organisation.
 """
 
-import os
-import sys
-import shutil
 import csv
 import logging
-from typing import Dict, Any, List, Optional
+import os
+import shutil
+import sys
+from typing import Any
 
 logger = logging.getLogger("DeepRPA")
 
 try:
     import openpyxl
+
     _OPENPYXL_AVAILABLE = True
 except ImportError:
     _OPENPYXL_AVAILABLE = False
@@ -35,6 +36,7 @@ class DeepRPA:
 
         try:
             import ctypes
+
             user32 = ctypes.windll.user32
 
             hwnd = user32.GetForegroundWindow()
@@ -69,7 +71,7 @@ class DeepRPA:
             logger.debug(f"Failed to snap window: {e}")
             return False
 
-    def append_spreadsheet_row(self, filepath: str, row_data: List[Any], sheet_name: Optional[str] = None) -> bool:
+    def append_spreadsheet_row(self, filepath: str, row_data: list[Any], sheet_name: str | None = None) -> bool:
         """
         Appends a row to an Excel .xlsx or .csv spreadsheet.
         """
@@ -96,7 +98,7 @@ class DeepRPA:
             logger.error(f"Spreadsheet row append error: {e}")
             return False
 
-    def organize_directory(self, target_dir: str) -> Dict[str, Any]:
+    def organize_directory(self, target_dir: str) -> dict[str, Any]:
         """
         Autonomously sorts files into categorized subfolders by extension.
         """
@@ -107,7 +109,7 @@ class DeepRPA:
             "Documents": [".pdf", ".docx", ".doc", ".txt", ".xlsx", ".pptx", ".csv"],
             "Images": [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"],
             "Installers": [".exe", ".msi", ".zip", ".tar", ".gz", ".7z"],
-            "Media": [".mp3", ".wav", ".mp4", ".mkv", ".mov"]
+            "Media": [".mp3", ".wav", ".mp4", ".mkv", ".mov"],
         }
 
         moved_count = 0

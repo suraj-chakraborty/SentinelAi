@@ -11,26 +11,24 @@ Comprehensive unit tests for the 5 Frontier JARVIS Capabilities:
 
 import os
 import sys
-import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from sentinel.core.nightly_swarm import NightlySwarmCoordinator, CodebaseAuditor
-from sentinel.commands.swarm_command import SwarmCommand
-from sentinel.voice.live_speech_stream import LiveSpeechStream, AdaptiveAcousticMirror
-from sentinel.commands.s2s_command import S2SCommand
-from sentinel.modules.spatial_iot import SpatialIoTCoordinator
-from sentinel.commands.spatial_command import SpatialCommand
-from sentinel.vision.continuous_screen_agent import ContinuousScreenAgent
 from sentinel.commands.live_vision_command import LiveVisionCommand
-from sentinel.core.mobile_hub import MobileHubAgent
 from sentinel.commands.mobile_command import MobileCommand
-from sentinel.core.intent_detector import IntentDetector, Intent
+from sentinel.commands.s2s_command import S2SCommand
+from sentinel.commands.spatial_command import SpatialCommand
+from sentinel.commands.swarm_command import SwarmCommand
+from sentinel.core.intent_detector import Intent, IntentDetector
+from sentinel.core.mobile_hub import MobileHubAgent
+from sentinel.core.nightly_swarm import NightlySwarmCoordinator
+from sentinel.modules.spatial_iot import SpatialIoTCoordinator
+from sentinel.vision.continuous_screen_agent import ContinuousScreenAgent
+from sentinel.voice.live_speech_stream import AdaptiveAcousticMirror, LiveSpeechStream
 
 
 class TestFrontierJarvisSuite:
-
     def test_nightly_swarm_and_command(self, tmp_path):
         """Test nightly swarm auditor, tech intelligence, and voice command."""
         coordinator = NightlySwarmCoordinator(workspace_root=str(tmp_path))

@@ -24,16 +24,18 @@ from sentinel.core.plugin_system import PluginBase
 
 logger = logging.getLogger("VolumePlugin")
 
-_PERCENT_RE = re.compile(r'(\d{1,3})\s*(?:percent|%)', re.IGNORECASE)
-_STEP = 10    # percent per "up/down" command
+_PERCENT_RE = re.compile(r"(\d{1,3})\s*(?:percent|%)", re.IGNORECASE)
+_STEP = 10  # percent per "up/down" command
 
 
 def _get_pycaw_session():
     """Return (interface, volume_object) or None."""
     try:
-        from ctypes import cast, POINTER
+        from ctypes import POINTER, cast
+
         from comtypes import CLSCTX_ALL
         from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+
         devices = AudioUtilities.GetSpeakers()
         iface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
         volume = cast(iface, POINTER(IAudioEndpointVolume))
@@ -48,10 +50,20 @@ class VolumePlugin(PluginBase):
 
     def can_handle(self, command: str) -> bool:
         cmd = command.lower()
-        return any(kw in cmd for kw in (
-            "volume", "louder", "quieter", "mute", "unmute",
-            "sound up", "sound down", "increase sound", "decrease sound",
-        ))
+        return any(
+            kw in cmd
+            for kw in (
+                "volume",
+                "louder",
+                "quieter",
+                "mute",
+                "unmute",
+                "sound up",
+                "sound down",
+                "increase sound",
+                "decrease sound",
+            )
+        )
 
     def handle(self, command: str) -> str:
         cmd = command.lower()
@@ -115,7 +127,7 @@ class VolumePlugin(PluginBase):
     def _adjust_volume(self, delta: int) -> str:
         current = self._get_volume()
         if current < 0:
-            current = 50    # assume mid if unknown
+            current = 50  # assume mid if unknown
         return self._set_volume(current + delta)
 
     def _set_mute(self, muted: bool) -> str:
@@ -129,6 +141,7 @@ class VolumePlugin(PluginBase):
         # Fallback: pyautogui key press
         try:
             import pyautogui
+
             pyautogui.press("volumemute")
             return "Toggled mute."
         except Exception as exc:

@@ -8,13 +8,14 @@ active voice response profile. Analyzes fundamental frequency, acoustic timbre,
 and speaking rate to match neural voice profiles or zero-shot cloning.
 """
 
-import os
 import json
+import logging
+import os
 import time
 import wave
-import logging
+from typing import Any
+
 import numpy as np
-from typing import Dict, Any, Optional, Tuple
 
 from sentinel.app.config import APPDATA_DIR, load_settings, save_settings
 
@@ -34,7 +35,7 @@ class VoiceProfileManager:
         self.sample_rate = sample_rate
         self.profile = self._load_profile()
 
-    def _load_profile(self) -> Dict[str, Any]:
+    def _load_profile(self) -> dict[str, Any]:
         """Loads the active voice profile from disk or returns defaults."""
         if os.path.exists(PROFILE_PATH):
             try:
@@ -55,7 +56,7 @@ class VoiceProfileManager:
             "created_at": None,
         }
 
-    def _save_profile(self, profile: Dict[str, Any]):
+    def _save_profile(self, profile: dict[str, Any]):
         """Persists profile to disk and updates global settings."""
         self.profile = profile
         try:
@@ -73,7 +74,7 @@ class VoiceProfileManager:
         except Exception as e:
             logger.error(f"Failed to save voice profile: {e}")
 
-    def record_voice_sample(self, duration: float = 6.0, output_path: Optional[str] = None) -> Tuple[bool, str]:
+    def record_voice_sample(self, duration: float = 6.0, output_path: str | None = None) -> tuple[bool, str]:
         """
         Records a voice sample from the microphone.
         Falls back gracefully if PyAudio is not available or recording fails.
@@ -124,9 +125,12 @@ class VoiceProfileManager:
         # Analyze acoustics and set as active profile
         profile = self.analyze_and_create_profile(output_file, profile_name="Owner Recorded Voice")
         self._save_profile(profile)
-        return True, f"Voice sample recorded successfully and set as Sentinel's active voice response! (Profile: {profile['base_voice']} at {profile['pitch_offset']})"
+        return (
+            True,
+            f"Voice sample recorded successfully and set as Sentinel's active voice response! (Profile: {profile['base_voice']} at {profile['pitch_offset']})",
+        )
 
-    def analyze_and_create_profile(self, wav_path: str, profile_name: str = "Custom Profile") -> Dict[str, Any]:
+    def analyze_and_create_profile(self, wav_path: str, profile_name: str = "Custom Profile") -> dict[str, Any]:
         """
         Analyzes audio acoustics (fundamental pitch, energy, rate)
         and maps them to the optimal neural voice matching the reference.
@@ -142,7 +146,7 @@ class VoiceProfileManager:
                     audio_data = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
 
                     if len(audio_data) > 0:
-                        rms_energy = float(np.sqrt(np.mean(audio_data ** 2)) / 32768.0)
+                        rms_energy = float(np.sqrt(np.mean(audio_data**2)) / 32768.0)
 
                         # Zero-crossing rate as an F0 proxy
                         zero_crossings = np.nonzero(np.diff(audio_data > 0))[0]
@@ -185,7 +189,7 @@ class VoiceProfileManager:
         }
         return profile
 
-    def set_custom_voice_from_file(self, wav_path: str) -> Tuple[bool, str]:
+    def set_custom_voice_from_file(self, wav_path: str) -> tuple[bool, str]:
         """Sets the agent voice from an existing WAV file path."""
         if not os.path.exists(wav_path):
             return False, f"File not found: {wav_path}"
@@ -210,6 +214,6 @@ class VoiceProfileManager:
         self._save_profile(profile)
         return "Agent voice reset to default neural voice (JennyNeural)."
 
-    def get_active_profile(self) -> Dict[str, Any]:
+    def get_active_profile(self) -> dict[str, Any]:
         """Returns the current active voice profile."""
         return self.profile

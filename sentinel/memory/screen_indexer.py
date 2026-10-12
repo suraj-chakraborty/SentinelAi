@@ -5,12 +5,12 @@ Background daemon that periodically captures screens and indexes them
 into the semantic screen memory for recall.
 """
 
-import time
 import logging
-import threading
 import queue
+import threading
+import time
+from collections.abc import Callable
 from datetime import datetime
-from typing import Optional, Callable
 
 from sentinel.memory.screen_capture import ScreenCapture
 from sentinel.memory.screen_memory_db import get_screen_memory_db
@@ -19,27 +19,22 @@ logger = logging.getLogger(__name__)
 
 
 class ScreenIndexer:
-    def __init__(
-        self,
-        interval_seconds: int = 60,
-        capture_enabled: bool = True,
-        on_index: Optional[Callable] = None
-    ):
+    def __init__(self, interval_seconds: int = 60, capture_enabled: bool = True, on_index: Callable | None = None):
         self.interval_seconds = interval_seconds
         self.capture_enabled = capture_enabled
         self.on_index = on_index
-        
+
         self._capture = ScreenCapture()
         self._db = get_screen_memory_db()
         self._running = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._event_queue = queue.Queue()
 
     def start(self):
         if self._running:
             logger.warning("Screen indexer already running")
             return
-        
+
         self._running = True
         self._thread = threading.Thread(target=self._run_loop, daemon=True, name="ScreenIndexer")
         self._thread.start()
@@ -67,34 +62,30 @@ class ScreenIndexer:
             if result:
                 text, filepath = result
                 screen_id = self._db.add_screen_memory(
-                    text=text,
-                    screenshot_path=filepath,
-                    metadata={"source": "auto_index"}
+                    text=text, screenshot_path=filepath, metadata={"source": "auto_index"}
                 )
-                
-                self._event_queue.put({
-                    "type": "indexed",
-                    "screen_id": screen_id,
-                    "timestamp": datetime.now().isoformat(),
-                    "text_preview": text[:200] + "..." if len(text) > 200 else text
-                })
-                
+
+                self._event_queue.put(
+                    {
+                        "type": "indexed",
+                        "screen_id": screen_id,
+                        "timestamp": datetime.now().isoformat(),
+                        "text_preview": text[:200] + "..." if len(text) > 200 else text,
+                    }
+                )
+
                 if self.on_index:
                     self.on_index(screen_id, text)
-                
+
                 logger.info(f"Indexed screen: {screen_id}")
         except Exception as e:
             logger.error(f"Failed to capture and index: {e}")
 
-    def index_now(self) -> Optional[str]:
+    def index_now(self) -> str | None:
         result = self._capture.capture_and_index()
         if result:
             text, filepath = result
-            return self._db.add_screen_memory(
-                text=text,
-                screenshot_path=filepath,
-                metadata={"source": "manual"}
-            )
+            return self._db.add_screen_memory(text=text, screenshot_path=filepath, metadata={"source": "manual"})
         return None
 
     def search(self, query: str, n_results: int = 5):
@@ -117,7 +108,7 @@ class ScreenIndexer:
         return events
 
 
-_screen_indexer: Optional[ScreenIndexer] = None
+_screen_indexer: ScreenIndexer | None = None
 
 
 def get_screen_indexer() -> ScreenIndexer:

@@ -6,10 +6,10 @@ Provides remote out-of-home execution, call/SMS triage on the desktop,
 and bi-directional mobile notification mirroring.
 """
 
+import logging
 import os
 import time
-import logging
-from typing import Dict, Any, List, Optional
+from typing import Any
 
 logger = logging.getLogger("MobileHub")
 
@@ -19,22 +19,17 @@ class MobileHubAgent:
     Coordinates phone/PC messaging, call triage, and remote execution.
     """
 
-    def __init__(self, orchestrator=None, auth_token: Optional[str] = None):
+    def __init__(self, orchestrator=None, auth_token: str | None = None):
         self.orchestrator = orchestrator
         self.auth_token = auth_token or os.getenv("SENTINEL_PHONE_TOKEN", "sentinel_secure_token_1234")
-        self.notifications_log: List[Dict[str, Any]] = []
+        self.notifications_log: list[dict[str, Any]] = []
 
     def triage_incoming_notification(self, event_type: str, contact: str, message: str = "") -> str:
         """
         Receives notification from mobile device (incoming call, SMS, WhatsApp)
         and alerts the user via desktop voice and logs.
         """
-        event = {
-            "type": event_type.lower(),
-            "contact": contact,
-            "message": message,
-            "timestamp": time.time()
-        }
+        event = {"type": event_type.lower(), "contact": contact, "message": message, "timestamp": time.time()}
         self.notifications_log.append(event)
         logger.info(f"Mobile Notification: [{event_type.upper()}] from {contact}: {message}")
 
@@ -45,12 +40,14 @@ class MobileHubAgent:
 
         # Vocalize through orchestrator if available
         if self.orchestrator and hasattr(self.orchestrator, "speak_fn"):
-            try: self.orchestrator.speak_fn(announcement)
-            except Exception: pass
+            try:
+                self.orchestrator.speak_fn(announcement)
+            except Exception:
+                pass
 
         return announcement
 
-    def execute_remote_command(self, command: str, token: str) -> Dict[str, Any]:
+    def execute_remote_command(self, command: str, token: str) -> dict[str, Any]:
         """
         Executes command received remotely from phone (Telegram/Signal/REST).
         Verifies authentication token before running.
@@ -66,6 +63,7 @@ class MobileHubAgent:
         if cmd_clean in ("/lock", "lock", "lock pc"):
             try:
                 import ctypes
+
                 ctypes.windll.user32.LockWorkStation()
                 return {"success": True, "message": "Workstation locked remotely."}
             except Exception as e:
@@ -73,6 +71,7 @@ class MobileHubAgent:
 
         if cmd_clean in ("/status", "status", "system status"):
             import psutil
+
             cpu = psutil.cpu_percent(interval=0.1)
             ram = psutil.virtual_memory().percent
             return {"success": True, "message": f"Desktop Online. CPU: {int(cpu)}%, RAM: {int(ram)}%."}
@@ -87,6 +86,6 @@ class MobileHubAgent:
 
         return {"success": True, "message": f"Processed command: {cmd_clean}"}
 
-    def get_recent_phone_events(self, limit: int = 5) -> List[Dict[str, Any]]:
+    def get_recent_phone_events(self, limit: int = 5) -> list[dict[str, Any]]:
         """Returns recent calls and messages received from the phone bridge."""
         return self.notifications_log[-limit:]

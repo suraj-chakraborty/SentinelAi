@@ -3,9 +3,11 @@ try:
 except ImportError:
     mqtt = None
 
-import requests
-import os
 import logging
+import os
+
+import requests
+
 
 class IoTHubModule:
     def __init__(self):
@@ -19,14 +21,14 @@ class IoTHubModule:
         """Controls an entity in Home Assistant."""
         if not self.ha_url or not self.ha_token:
             return False, "Home Assistant credentials missing."
-        
+
         url = f"{self.ha_url}/api/services/{domain}/{service}"
         headers = {
             "Authorization": f"Bearer {self.ha_token}",
             "content-type": "application/json",
         }
         data = {"entity_id": entity_id}
-        
+
         try:
             response = requests.post(url, headers=headers, json=data)
             if response.status_code == 200:

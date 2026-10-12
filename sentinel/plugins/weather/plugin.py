@@ -15,25 +15,38 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Optional
 
 from sentinel.core.plugin_system import PluginBase
 
 logger = logging.getLogger("WeatherPlugin")
 
 # Open-Meteo geocoding (free)
-_GEO_URL      = "https://geocoding-api.open-meteo.com/v1/search"
-_WEATHER_URL  = "https://api.open-meteo.com/v1/forecast"
+_GEO_URL = "https://geocoding-api.open-meteo.com/v1/search"
+_WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
 
 # WMO weather interpretation codes → descriptions
 _WMO_CODES = {
-    0: "Clear sky", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
-    45: "Foggy", 48: "Icy fog",
-    51: "Light drizzle", 53: "Moderate drizzle", 55: "Heavy drizzle",
-    61: "Light rain", 63: "Moderate rain", 65: "Heavy rain",
-    71: "Light snow", 73: "Moderate snow", 75: "Heavy snow",
-    80: "Showers", 81: "Moderate showers", 82: "Heavy showers",
-    95: "Thunderstorm", 96: "Thunderstorm with hail", 99: "Severe thunderstorm",
+    0: "Clear sky",
+    1: "Mainly clear",
+    2: "Partly cloudy",
+    3: "Overcast",
+    45: "Foggy",
+    48: "Icy fog",
+    51: "Light drizzle",
+    53: "Moderate drizzle",
+    55: "Heavy drizzle",
+    61: "Light rain",
+    63: "Moderate rain",
+    65: "Heavy rain",
+    71: "Light snow",
+    73: "Moderate snow",
+    75: "Heavy snow",
+    80: "Showers",
+    81: "Moderate showers",
+    82: "Heavy showers",
+    95: "Thunderstorm",
+    96: "Thunderstorm with hail",
+    99: "Severe thunderstorm",
 }
 
 
@@ -42,12 +55,12 @@ class WeatherPlugin(PluginBase):
 
     # Default location (used when geolocation is unavailable)
     _DEFAULT_CITY = "New York"
-    _DEFAULT_LAT  = 40.7128
-    _DEFAULT_LON  = -74.0060
+    _DEFAULT_LAT = 40.7128
+    _DEFAULT_LON = -74.0060
 
     def __init__(self, orchestrator=None):
         super().__init__(orchestrator)
-        self._cached_location: Optional[tuple] = None   # (lat, lon, city)
+        self._cached_location: tuple | None = None  # (lat, lon, city)
 
     # ── Plugin interface ──────────────────────────────────────────────────────
 
@@ -65,12 +78,12 @@ class WeatherPlugin(PluginBase):
 
     # ── Internal ──────────────────────────────────────────────────────────────
 
-    def _extract_city(self, command: str) -> Optional[str]:
+    def _extract_city(self, command: str) -> str | None:
         """Try to find a city name in the command."""
         patterns = [
-            r'\bin\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',                    # "in London"
-            r'\bfor\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',                   # "for Paris"
-            r'\bat\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)',                    # "at Mumbai"
+            r"\bin\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)",  # "in London"
+            r"\bfor\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)",  # "for Paris"
+            r"\bat\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)",  # "at Mumbai"
         ]
         for pat in patterns:
             match = re.search(pat, command)
@@ -78,11 +91,12 @@ class WeatherPlugin(PluginBase):
                 return match.group(1)
         return None
 
-    def _resolve_location(self, city: Optional[str]) -> tuple:
+    def _resolve_location(self, city: str | None) -> tuple:
         """Geocode city name or return cached/default location."""
-        if city and city.lower() != (self._cached_location or ("", ))[2].lower() if self._cached_location else True:
+        if city and city.lower() != (self._cached_location or ("",))[2].lower() if self._cached_location else True:
             try:
                 import httpx
+
                 resp = httpx.get(
                     _GEO_URL,
                     params={"name": city, "count": 1, "language": "en"},
@@ -103,6 +117,7 @@ class WeatherPlugin(PluginBase):
         # Fallback: try IP geolocation
         try:
             import httpx
+
             geo = httpx.get("https://ipapi.co/json/", timeout=5).json()
             lat = geo.get("latitude", self._DEFAULT_LAT)
             lon = geo.get("longitude", self._DEFAULT_LON)
@@ -116,6 +131,7 @@ class WeatherPlugin(PluginBase):
         want_forecast = any(w in command.lower() for w in ("forecast", "week", "tomorrow", "next few days"))
         try:
             import httpx
+
             params = {
                 "latitude": lat,
                 "longitude": lon,
@@ -130,9 +146,9 @@ class WeatherPlugin(PluginBase):
             data = resp.json()
 
             curr = data.get("current", {})
-            temp    = curr.get("temperature_2m", "N/A")
-            wcode   = curr.get("weathercode", 0)
-            wind    = curr.get("windspeed_10m", "N/A")
+            temp = curr.get("temperature_2m", "N/A")
+            wcode = curr.get("weathercode", 0)
+            wind = curr.get("windspeed_10m", "N/A")
             humidity = curr.get("relative_humidity_2m", "N/A")
             condition = _WMO_CODES.get(wcode, "Unknown")
 
@@ -148,17 +164,13 @@ class WeatherPlugin(PluginBase):
                 daily = data.get("daily", {})
                 dates = daily.get("time", [])
                 maxes = daily.get("temperature_2m_max", [])
-                mins  = daily.get("temperature_2m_min", [])
+                mins = daily.get("temperature_2m_min", [])
                 wcodes = daily.get("weathercode", [])
                 precip = daily.get("precipitation_sum", [])
                 lines = ["\n3-Day Forecast:"]
                 for i in range(1, min(4, len(dates))):
                     day_cond = _WMO_CODES.get(wcodes[i], "Unknown")
-                    lines.append(
-                        f"  {dates[i]}: {day_cond}, "
-                        f"{mins[i]}–{maxes[i]}°C, "
-                        f"{precip[i]}mm rain"
-                    )
+                    lines.append(f"  {dates[i]}: {day_cond}, {mins[i]}–{maxes[i]}°C, {precip[i]}mm rain")
                 result += "\n".join(lines)
 
             return result

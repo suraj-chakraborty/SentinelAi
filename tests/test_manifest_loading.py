@@ -7,8 +7,8 @@ import unittest
 class TestManifestLoading(unittest.TestCase):
     def test_manifest_loading_with_mock_plugin(self):
         # Import after creating temp plugin path to avoid polluting global state
-        from sentinel.core.plugin_system import PluginSystem
         import sentinel.core.plugin_system as ps_mod
+        from sentinel.core.plugin_system import PluginSystem
 
         with tempfile.TemporaryDirectory() as tmpdir:
             plugins_dir = os.path.join(tmpdir, "plugins")
@@ -48,7 +48,10 @@ class Testmanifest(PluginBase):
             old_dir = ps_mod.PLUGINS_DIR
             ps_mod.PLUGINS_DIR = plugins_dir
             try:
-                class DummyOrchestrator: pass
+
+                class DummyOrchestrator:
+                    pass
+
                 ps = PluginSystem(orchestrator=DummyOrchestrator())
                 loaded = ps.load_all()
                 # There is at least one plugin loaded (the builtins), but our manifest should be discovered too
@@ -60,5 +63,5 @@ class Testmanifest(PluginBase):
                 ps_mod.PLUGINS_DIR = old_dir
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

@@ -9,11 +9,10 @@ Handles: "show avatar", "hide avatar", "avatar cute anger", "avatar flirt",
 
 import logging
 import re
-from typing import Optional
 
 from sentinel.ar.holographic_avatar import (
-    HolographicAvatarEngine,
     AvatarEmotion,
+    HolographicAvatarEngine,
 )
 
 logger = logging.getLogger("AvatarCommand")
@@ -49,19 +48,17 @@ class AvatarCommand:
         self.orchestrator = orchestrator
         self.avatar = HolographicAvatarEngine()
 
-    def execute(self, command: str, entity: Optional[str] = None) -> str:
+    def execute(self, command: str, entity: str | None = None) -> str:
         cmd = command.lower().strip()
 
         # 1. Show / activate avatar
-        if any(k in cmd for k in ("show avatar", "activate avatar", "display avatar",
-                                   "summon avatar", "avatar on")):
+        if any(k in cmd for k in ("show avatar", "activate avatar", "display avatar", "summon avatar", "avatar on")):
             self.avatar.show()
             self.avatar.start_render_loop()
             return "✨ Holographic avatar activated! I'm now visible on your desktop with real-time lip-sync and particle effects."
 
         # 2. Hide / dismiss avatar
-        if any(k in cmd for k in ("hide avatar", "dismiss avatar", "avatar off",
-                                   "close avatar", "deactivate avatar")):
+        if any(k in cmd for k in ("hide avatar", "dismiss avatar", "avatar off", "close avatar", "deactivate avatar")):
             self.avatar.stop_render_loop()
             self.avatar.hide()
             return "Avatar hidden. I'll still be listening in the background."
@@ -71,24 +68,26 @@ class AvatarCommand:
             if alias in cmd:
                 result = self.avatar.set_emotion(emotion)
                 expr = result["expression"]
-                return f"Avatar emotion set to {emotion.value}. Expression: {expr}. Core glow: RGB{result['core_color']}."
+                return (
+                    f"Avatar emotion set to {emotion.value}. Expression: {expr}. Core glow: RGB{result['core_color']}."
+                )
 
         # 4. Move / reposition
-        pos_match = re.search(r'move\s+avatar\s+(?:to\s+)?(\d+)\s*[,x]\s*(\d+)', cmd)
+        pos_match = re.search(r"move\s+avatar\s+(?:to\s+)?(\d+)\s*[,x]\s*(\d+)", cmd)
         if pos_match:
             x, y = int(pos_match.group(1)), int(pos_match.group(2))
             self.avatar.set_position(x, y)
             return f"Avatar repositioned to ({x}, {y})."
 
         # 5. Resize
-        size_match = re.search(r'(?:resize|scale)\s+avatar\s+(?:to\s+)?(\d+)', cmd)
+        size_match = re.search(r"(?:resize|scale)\s+avatar\s+(?:to\s+)?(\d+)", cmd)
         if size_match:
             size = int(size_match.group(1))
             actual = self.avatar.set_size(size)
             return f"Avatar resized to {actual}px diameter."
 
         # 6. Opacity
-        opacity_match = re.search(r'avatar\s+opacity\s+(\d+)', cmd)
+        opacity_match = re.search(r"avatar\s+opacity\s+(\d+)", cmd)
         if opacity_match:
             pct = int(opacity_match.group(1))
             actual = self.avatar.set_opacity(pct / 100.0)

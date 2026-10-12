@@ -1,9 +1,11 @@
-import psutil
+import asyncio
 import logging
+import os
 import threading
 import time
-import os
-import asyncio
+
+import psutil
+
 
 class SecurityShieldModule:
     def __init__(self, notifier, gemini_fn=None):
@@ -20,7 +22,7 @@ class SecurityShieldModule:
         """Records existing disk partitions to detect new USB insertions."""
         try:
             self.known_partitions = {p.device for p in psutil.disk_partitions()}
-        except:
+        except Exception:
             pass
 
     def start_shield(self):
@@ -36,7 +38,7 @@ class SecurityShieldModule:
         """Starts the Zero-Trust Async Proxy Shield (Phase 2 Upgrade)."""
         if self.proxy_running:
             return "Proxy shield already active."
-        
+
         self.proxy_running = True
         threading.Thread(target=self._run_proxy_async, args=(port,), daemon=True).start()
         self.logger.info(f"Zero-Trust Proxy Shield initialized on port {port}.")
@@ -48,7 +50,7 @@ class SecurityShieldModule:
         loop.run_until_complete(self._proxy_server(port))
 
     async def _proxy_server(self, port):
-        server = await asyncio.start_server(self._handle_proxy_client, '127.0.0.1', port)
+        server = await asyncio.start_server(self._handle_proxy_client, "127.0.0.1", port)
         async with server:
             await server.serve_forever()
 
@@ -59,14 +61,14 @@ class SecurityShieldModule:
                 writer.close()
                 return
 
-            request = data.decode('utf-8', errors='ignore')
+            request = data.decode("utf-8", errors="ignore")
             # Extract URL/Host from request
-            lines = request.split('\r\n')
+            lines = request.split("\r\n")
             if not lines:
                 writer.close()
                 return
 
-            first_line = lines[0].split(' ')
+            first_line = lines[0].split(" ")
             if len(first_line) < 2:
                 writer.close()
                 return
@@ -79,8 +81,12 @@ class SecurityShieldModule:
                 is_safe = await self._check_url_safety(url, request)
                 if not is_safe:
                     self.logger.warning(f"BLOCKED malicious {method} request: {url}")
-                    self.notifier.show_notification("Proxy Shield Alert", f"Blocked potentially malicious request to {url}")
-                    writer.write(b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n\r\nSentinelAI Zero-Trust Shield: This request has been blocked for security.")
+                    self.notifier.show_notification(
+                        "Proxy Shield Alert", f"Blocked potentially malicious request to {url}"
+                    )
+                    writer.write(
+                        b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n\r\nSentinelAI Zero-Trust Shield: This request has been blocked for security."
+                    )
                     await writer.drain()
                     writer.close()
                     return
@@ -88,7 +94,9 @@ class SecurityShieldModule:
             # Simple forward (Note: This is a skeletal proxy for Phase 2)
             # In a full implementation, this would establish a connection to the target
             # For now, we simulate the inspection logic
-            writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nSentinelAI Proxy Shield Active. Monitoring data streams.")
+            writer.write(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nSentinelAI Proxy Shield Active. Monitoring data streams."
+            )
             await writer.drain()
             writer.close()
 
@@ -100,7 +108,7 @@ class SecurityShieldModule:
         """Uses LLM to evaluate if a URL/request looks like phishing or data exfiltration."""
         if not self.gemini_fn:
             return True
-        
+
         # Simple local heuristic first to save tokens
         suspicious_keywords = ["login", "verify", "password", "bank", "account", "update-secure"]
         if not any(k in url.lower() for k in suspicious_keywords):
@@ -112,7 +120,7 @@ class SecurityShieldModule:
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(None, self.gemini_fn, prompt)
             return "MALICIOUS" not in result.upper()
-        except:
+        except Exception:
             return True
 
     def _shield_loop(self):
@@ -130,9 +138,9 @@ class SecurityShieldModule:
                 # 2. Monitor Network Spikes (Simple)
                 net_io = psutil.net_io_counters()
                 # If sending more than 5MB in a single minute loop (basic heuristic)
-                if net_io.bytes_sent > 5 * 1024 * 1024: 
+                if net_io.bytes_sent > 5 * 1024 * 1024:
                     # Note: This would need a baseline to be truly effective
-                    pass 
+                    pass
 
                 # 3. Check for Suspicious Processes
                 current_user = (os.environ.get("USERNAME") or os.environ.get("USER") or "").lower()
@@ -149,25 +157,24 @@ class SecurityShieldModule:
                     "network service",
                     "nt authority\\system",
                     "nt authority\\local service",
-                    "nt authority\\network service"
+                    "nt authority\\network service",
                 }
 
-                for proc in psutil.process_iter(['pid', 'name', 'username']):
+                for proc in psutil.process_iter(["pid", "name", "username"]):
                     try:
-                        pid = proc.info.get('pid')
-                        pname = (proc.info.get('name') or '').lower()
-                        if pname in ['cmd.exe', 'powershell.exe', 'pwsh.exe']:
+                        pid = proc.info.get("pid")
+                        pname = (proc.info.get("name") or "").lower()
+                        if pname in ["cmd.exe", "powershell.exe", "pwsh.exe"]:
                             if pid in self._alerted_pids:
                                 continue
-                            raw_user = (proc.info.get('username') or '').lower()
+                            raw_user = (proc.info.get("username") or "").lower()
                             if not raw_user:
                                 continue
                             short_user = raw_user.split("\\")[-1].strip()
                             if short_user and short_user not in legit_users and raw_user not in legit_users:
                                 self._alerted_pids.add(pid)
                                 self.notifier.show_notification(
-                                    "Security Alert",
-                                    f"Unauthorized terminal access detected (PID: {pid})"
+                                    "Security Alert", f"Unauthorized terminal access detected (PID: {pid})"
                                 )
                                 self.logger.warning(
                                     f"Unauthorized terminal access: PID {pid} ({pname}) run by {raw_user}"
@@ -181,8 +188,8 @@ class SecurityShieldModule:
 
             except Exception as e:
                 self.logger.error(f"Security shield error: {e}")
-            
-            time.sleep(10) # High frequency check for security
+
+            time.sleep(10)  # High frequency check for security
 
     def stop_shield(self):
         self.is_running = False

@@ -6,7 +6,6 @@ Handles "commit changes", "git status", and "analyze terminal error".
 """
 
 import logging
-from typing import Optional, Dict, Any
 
 from sentinel.automation.ide_watcher import IDEWatcher
 
@@ -18,7 +17,7 @@ class GitCopilotCommand:
         self.orchestrator = orchestrator
         self.watcher = IDEWatcher()
 
-    def execute(self, command: str, entity: Optional[str] = None) -> str:
+    def execute(self, command: str, entity: str | None = None) -> str:
         cmd_lower = command.lower()
 
         # 1. Commit changes
@@ -27,7 +26,7 @@ class GitCopilotCommand:
             # If command contains "message ...", extract it
             if "message" in cmd_lower:
                 hint = command.split("message", 1)[1].strip()
-            
+
             res = self.watcher.git_smart_commit(message_hint=hint)
             if res.get("success"):
                 return f"Committed successfully with message: '{res['commit_message']}'. {res.get('stat', '')}"
@@ -48,6 +47,7 @@ class GitCopilotCommand:
             # Get clipboard or active context
             try:
                 import tkinter as tk
+
                 root = tk.Tk()
                 root.withdraw()
                 clip_text = root.clipboard_get()
@@ -58,7 +58,7 @@ class GitCopilotCommand:
             if clip_text and len(clip_text) > 10:
                 analysis = self.watcher.analyze_stack_trace(clip_text)
                 return f"Found error from clipboard: {analysis['summary']}."
-            
+
             context = self.watcher.get_dev_context()
             return f"Active editor is {context['app_name']} focusing on '{context['window_title']}'."
 

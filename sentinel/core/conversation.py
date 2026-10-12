@@ -8,13 +8,12 @@ them into LLM prompts so SentinelAI remembers what was said earlier
 in the session.
 """
 
-import time
 import json
-import os
 import logging
+import os
+import time
 from collections import deque
-from dataclasses import dataclass, asdict
-from typing import List, Optional
+from dataclasses import asdict, dataclass
 
 logger = logging.getLogger("SentinelConversation")
 
@@ -24,17 +23,17 @@ HISTORY_PATH = os.path.join(APPDATA_DIR, "conversation_history.json")
 
 @dataclass
 class Turn:
-    role: str           # "user" or "assistant"
+    role: str  # "user" or "assistant"
     content: str
     timestamp: float
-    emotion: Optional[str] = None
-    intent: Optional[str] = None
+    emotion: str | None = None
+    intent: str | None = None
 
 
 class ConversationManager:
     """
     Manages multi-turn conversation history for coherent AI interactions.
-    
+
     Features:
     - Rolling window (configurable max turns)
     - Persistent storage across sessions
@@ -63,12 +62,12 @@ Keep casual replies to two sentences unless the user asks for depth. Speak in fi
             content=content[:2000],  # Cap to avoid huge prompts
             timestamp=time.time(),
             emotion=emotion,
-            intent=intent
+            intent=intent,
         )
         self._history.append(turn)
         self._save_history()
 
-    def build_messages(self, user_message: str, emotion: str = None) -> List[dict]:
+    def build_messages(self, user_message: str, emotion: str = None) -> list[dict]:
         """
         Build the full message list for an LLM API call.
         Includes system prompt + history + current user message.
@@ -77,10 +76,7 @@ Keep casual replies to two sentences unless the user asks for depth. Speak in fi
 
         # Add conversation history
         for turn in list(self._history):
-            messages.append({
-                "role": turn.role,
-                "content": turn.content
-            })
+            messages.append({"role": turn.role, "content": turn.content})
 
         # Add current user message (with emotion context if detected)
         user_content = user_message

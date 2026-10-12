@@ -1,8 +1,7 @@
 import logging
-import os
-import subprocess
 
 logger = logging.getLogger("OpenApp")
+
 
 class OpenApp:
     def __init__(self, orchestrator):
@@ -29,12 +28,13 @@ class OpenApp:
             "internet": "https://www.google.com",
             "bing": "https://www.bing.com",
         }
-        
+
         # Clean target: lowercase, strip spaces and punctuation
         target = app_name.lower().strip().strip(".!?,")
-        
+
         if target in websites:
             import webbrowser
+
             url = websites[target]
             logger.info(f"Launching browser for website: {target} -> {url}")
             success = webbrowser.open(url)
@@ -46,6 +46,7 @@ class OpenApp:
 
         # New: Direct URL/Browse handling
         import webbrowser
+
         # Check if target looks like a URL (e.g. google.com, surajchakraborty.netlify.app)
         if "." in target and len(target.split(".")[-1]) >= 2:
             url = target if target.startswith("http") else f"https://{target}"

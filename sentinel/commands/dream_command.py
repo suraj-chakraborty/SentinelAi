@@ -8,7 +8,6 @@ Handles: "enter dream state", "start dream mode", "wake up",
 """
 
 import logging
-from typing import Optional
 
 from sentinel.daemons.dream_state import DreamStateEngine
 
@@ -20,21 +19,29 @@ class DreamCommand:
         self.orchestrator = orchestrator
         self.engine = DreamStateEngine()
 
-    def execute(self, command: str, entity: Optional[str] = None) -> str:
+    def execute(self, command: str, entity: str | None = None) -> str:
         cmd = command.lower().strip()
 
         # 1. Enter dream state
-        if any(k in cmd for k in ("enter dream", "start dream", "dream mode on",
-                                   "night mode", "go to sleep", "autonomous mode",
-                                   "background mode")):
+        if any(
+            k in cmd
+            for k in (
+                "enter dream",
+                "start dream",
+                "dream mode on",
+                "night mode",
+                "go to sleep",
+                "autonomous mode",
+                "background mode",
+            )
+        ):
             result = self.engine.enter_dream()
             if result["success"]:
                 return "🌙 Entering Dream State... I'll run codebase audits, gather tech intelligence, self-heal errors, and prepare your morning briefing. Sweet dreams!"
             return f"Cannot enter dream state: {result.get('message', 'unknown')}"
 
         # 2. Wake up
-        if any(k in cmd for k in ("wake up", "exit dream", "dream mode off",
-                                   "stop dream", "I'm back", "good morning")):
+        if any(k in cmd for k in ("wake up", "exit dream", "dream mode off", "stop dream", "I'm back", "good morning")):
             result = self.engine.wake_up()
             if result["success"]:
                 recs = result["report"]["recommendations"]
@@ -58,8 +65,10 @@ class DreamCommand:
             )
 
         # 4. Morning report / briefing
-        if any(k in cmd for k in ("morning report", "dream report", "dream briefing",
-                                   "night briefing", "what happened overnight")):
+        if any(
+            k in cmd
+            for k in ("morning report", "dream report", "dream briefing", "night briefing", "what happened overnight")
+        ):
             report = self.engine.get_latest_report()
             if not report:
                 return "No dream report available yet. Enter dream state first with 'enter dream mode'."

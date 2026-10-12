@@ -1,8 +1,8 @@
 import logging
 import os
-import subprocess
 
 logger = logging.getLogger("SystemControl")
+
 
 class SystemControl:
     def __init__(self, orchestrator):
@@ -18,7 +18,7 @@ class SystemControl:
             return self.restart()
         elif "status" in command or "info" in command:
             return self.system_info()
-            
+
         return "Unknown system command."
 
     def shutdown(self) -> str:

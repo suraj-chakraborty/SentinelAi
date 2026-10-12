@@ -1,5 +1,5 @@
-import sys
 import os
+import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -7,11 +7,11 @@ from unittest.mock import MagicMock, patch
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sentinel.core.command_router import CommandRouter
+from sentinel.core.intent_detector import Intent, IntentDetector
 from sentinel.core.preprocessor import preprocess_command
-from sentinel.core.intent_detector import IntentDetector, Intent
+
 
 class TestCommandEngine(unittest.TestCase):
-
     def setUp(self):
         # Create a mock orchestrator to pass to the router
         self.mock_orchestrator = MagicMock()
@@ -25,7 +25,7 @@ class TestCommandEngine(unittest.TestCase):
             ("Sentinel, please open Chrome!", "open chrome"),
             ("Hey assistant, can you shut down?", "shut down"),
             ("Could you show me system info", "system info"),
-            ("  organize my   downloads folder. ", "organize my downloads folder")
+            ("  organize my   downloads folder. ", "organize my downloads folder"),
         ]
         for input_text, expected_output in test_cases:
             with self.subTest(input_text=input_text):
@@ -72,7 +72,7 @@ class TestCommandEngine(unittest.TestCase):
         # and ensure the plugin exists in the mock router's plugins dict
         self.router.plugins["open_app"] = MagicMock()
         self.router.plugins["open_app"].execute.return_value = "Opening chrome"
-        
+
         response = self.router.run_command("open chrome")
         self.assertEqual(response, "Opening chrome")
 
@@ -80,7 +80,7 @@ class TestCommandEngine(unittest.TestCase):
         """Test if complex tasks are routed to the AI Agent plugin."""
         self.router.plugins["ai_agent"] = MagicMock()
         self.router.plugins["ai_agent"].execute.return_value = "Executing autonomous task"
-        
+
         response = self.router.run_command("organize my downloads folder by file type")
         self.assertEqual(response, "Executing autonomous task")
 
@@ -95,6 +95,7 @@ class TestCommandEngine(unittest.TestCase):
         intent = detector.detect_intent("zzrootzonic flibbledee nonsensecommand")
         self.assertEqual(intent, Intent.OPEN_APP)
         mock_clf.predict.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

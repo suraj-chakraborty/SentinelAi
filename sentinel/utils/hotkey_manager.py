@@ -5,10 +5,10 @@ System-wide Global Hotkey Manager for Windows.
 Allows triggering Sentinel instantly anywhere using Alt+J or Ctrl+Shift+Space.
 """
 
+import logging
 import sys
 import threading
-import logging
-from typing import Callable, Optional
+from collections.abc import Callable
 
 logger = logging.getLogger("GlobalHotkey")
 
@@ -26,10 +26,10 @@ class GlobalHotkeyManager:
     VK_J = 0x4A
     VK_SPACE = 0x20
 
-    def __init__(self, on_trigger: Optional[Callable[[], None]] = None):
+    def __init__(self, on_trigger: Callable[[], None] | None = None):
         self.on_trigger = on_trigger
         self._running = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
 
     def start(self):
         """Start hotkey listener in background thread."""
@@ -46,6 +46,7 @@ class GlobalHotkeyManager:
         if sys.platform == "win32" and self._thread:
             try:
                 import ctypes
+
                 # Post WM_QUIT to thread
                 ctypes.windll.user32.PostQuitMessage(0)
             except Exception:
@@ -76,7 +77,9 @@ class GlobalHotkeyManager:
                 logger.debug("Win+Space in use by Windows; trying Ctrl+Shift+Space")
 
             # Register Ctrl + Shift + Space
-            if not user32.RegisterHotKey(None, HOTKEY_ID_CTRL_SHIFT_SPACE, self.MOD_CONTROL | self.MOD_SHIFT, self.VK_SPACE):
+            if not user32.RegisterHotKey(
+                None, HOTKEY_ID_CTRL_SHIFT_SPACE, self.MOD_CONTROL | self.MOD_SHIFT, self.VK_SPACE
+            ):
                 logger.debug("Failed to register Ctrl+Shift+Space hotkey")
 
             msg = wintypes.MSG()
@@ -88,7 +91,12 @@ class GlobalHotkeyManager:
 
                 if msg.message == 0x0312:  # WM_HOTKEY
                     hk_id = msg.wParam
-                    if hk_id in (HOTKEY_ID_ALT_J, HOTKEY_ID_CTRL_SHIFT_J, HOTKEY_ID_WIN_SPACE, HOTKEY_ID_CTRL_SHIFT_SPACE):
+                    if hk_id in (
+                        HOTKEY_ID_ALT_J,
+                        HOTKEY_ID_CTRL_SHIFT_J,
+                        HOTKEY_ID_WIN_SPACE,
+                        HOTKEY_ID_CTRL_SHIFT_SPACE,
+                    ):
                         logger.info(f"Global hotkey triggered (id={hk_id})!")
                         if self.on_trigger:
                             try:

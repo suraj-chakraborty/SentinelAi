@@ -7,7 +7,6 @@ Handles interactive web navigation, scraping, and Playwright autonomous tasks.
 
 import logging
 import webbrowser
-from typing import Optional
 
 logger = logging.getLogger("WebAutomation")
 
@@ -16,18 +15,31 @@ class WebAutomation:
     def __init__(self, orchestrator=None):
         self.orchestrator = orchestrator
 
-    def execute(self, command: str, entity: Optional[str] = None) -> str:
+    def execute(self, command: str, entity: str | None = None) -> str:
         text = (command or "").lower()
         if not text:
             return "What website or task would you like me to execute?"
 
         # 1. Autonomous Vision/Playwright tasks (e.g. search, buy, extract, scrape, check flights)
-        is_autonomous_task = any(k in text for k in (
-            "scrape", "extract", "find on amazon", "check flights", 
-            "research", "compare prices", "fill form on"
-        ))
+        is_autonomous_task = any(
+            k in text
+            for k in (
+                "scrape",
+                "extract",
+                "find on amazon",
+                "check flights",
+                "research",
+                "compare prices",
+                "fill form on",
+            )
+        )
 
-        if is_autonomous_task and self.orchestrator and hasattr(self.orchestrator, "playwright_agent") and self.orchestrator.playwright_agent:
+        if (
+            is_autonomous_task
+            and self.orchestrator
+            and hasattr(self.orchestrator, "playwright_agent")
+            and self.orchestrator.playwright_agent
+        ):
             try:
                 logger.info(f"Dispatching autonomous browser task: {command}")
                 res = self.orchestrator.playwright_agent.perform_autonomous_task(command, max_steps=5)

@@ -8,7 +8,6 @@ Handles: "start gesture control", "stop gesture control",
 """
 
 import logging
-from typing import Optional
 
 from sentinel.perception.air_gesture import AirGestureController
 
@@ -20,20 +19,22 @@ class GestureCommand:
         self.orchestrator = orchestrator
         self.controller = AirGestureController()
 
-    def execute(self, command: str, entity: Optional[str] = None) -> str:
+    def execute(self, command: str, entity: str | None = None) -> str:
         cmd = command.lower().strip()
 
         # 1. Start gesture recognition
-        if any(k in cmd for k in ("start gesture", "enable gesture", "gesture on",
-                                   "air gesture on", "hand tracking on")):
+        if any(
+            k in cmd for k in ("start gesture", "enable gesture", "gesture on", "air gesture on", "hand tracking on")
+        ):
             success = self.controller.start()
             if success:
                 return "✋ Air-gesture recognition activated! I'm now tracking your hand movements via webcam. Swipe, pinch, or show a peace sign to control me."
             return "Gesture recognition is already running."
 
         # 2. Stop gesture recognition
-        if any(k in cmd for k in ("stop gesture", "disable gesture", "gesture off",
-                                   "hand tracking off", "air gesture off")):
+        if any(
+            k in cmd for k in ("stop gesture", "disable gesture", "gesture off", "hand tracking off", "air gesture off")
+        ):
             self.controller.stop()
             return "Air-gesture recognition deactivated. Webcam released."
 

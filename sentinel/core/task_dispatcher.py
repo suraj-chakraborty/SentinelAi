@@ -15,83 +15,85 @@ Provides intelligent task routing and parallel execution:
 
 from __future__ import annotations
 
-import datetime
 import hashlib
 import logging
 import queue
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 logger = logging.getLogger("TaskDispatcher")
 
 
 class TaskPriority(Enum):
     CRITICAL = 0
-    HIGH     = 1
-    NORMAL   = 2
-    LOW      = 3
-    IDLE     = 4
+    HIGH = 1
+    NORMAL = 2
+    LOW = 3
+    IDLE = 4
 
 
 class TaskStatus(Enum):
-    QUEUED      = "queued"
-    DISPATCHED  = "dispatched"
-    RUNNING     = "running"
-    COMPLETED   = "completed"
-    FAILED      = "failed"
-    RETRYING    = "retrying"
-    CANCELLED   = "cancelled"
+    QUEUED = "queued"
+    DISPATCHED = "dispatched"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    RETRYING = "retrying"
+    CANCELLED = "cancelled"
 
 
 class DeviceType(Enum):
-    LOCAL_PC     = "local_pc"
-    PHONE        = "phone"
+    LOCAL_PC = "local_pc"
+    PHONE = "phone"
     REMOTE_SERVER = "remote_server"
-    CLOUD_GPU    = "cloud_gpu"
-    IOT_DEVICE   = "iot_device"
-    TABLET       = "tablet"
+    CLOUD_GPU = "cloud_gpu"
+    IOT_DEVICE = "iot_device"
+    TABLET = "tablet"
 
 
 @dataclass
 class DeviceNode:
     """A device in the mesh network."""
+
     device_id: str
     device_name: str
     device_type: DeviceType
-    capabilities: List[str]         # e.g., ["gpu", "internet", "storage", "mic"]
+    capabilities: list[str]  # e.g., ["gpu", "internet", "storage", "mic"]
     cpu_cores: int = 4
     memory_mb: int = 8192
     gpu_available: bool = False
     is_online: bool = True
-    utilization_pct: float = 0.0    # Current CPU utilization
+    utilization_pct: float = 0.0  # Current CPU utilization
     last_heartbeat: float = 0.0
     max_concurrent_tasks: int = 4
     current_tasks: int = 0
-    endpoint: Optional[str] = None  # Network endpoint for remote dispatch
+    endpoint: str | None = None  # Network endpoint for remote dispatch
 
 
 @dataclass
 class Task:
     """A dispatchable task unit."""
+
     task_id: str = field(default_factory=lambda: str(uuid.uuid4())[:12])
     name: str = ""
     description: str = ""
     priority: TaskPriority = TaskPriority.NORMAL
     status: TaskStatus = TaskStatus.QUEUED
-    handler: Optional[Callable] = None
-    args: Dict[str, Any] = field(default_factory=dict)
-    required_capabilities: List[str] = field(default_factory=list)
-    assigned_device: Optional[str] = None
-    depends_on: List[str] = field(default_factory=list)  # Task IDs
+    handler: Callable | None = None
+    args: dict[str, Any] = field(default_factory=dict)
+    required_capabilities: list[str] = field(default_factory=list)
+    assigned_device: str | None = None
+    depends_on: list[str] = field(default_factory=list)  # Task IDs
     created_at: float = field(default_factory=time.time)
-    started_at: Optional[float] = None
-    completed_at: Optional[float] = None
+    started_at: float | None = None
+    completed_at: float | None = None
     result: Any = None
-    error: Optional[str] = None
+    error: str | None = None
     retries: int = 0
     max_retries: int = 3
     timeout_seconds: float = 300.0
@@ -100,10 +102,11 @@ class Task:
 @dataclass
 class TaskResult:
     """Aggregated result from a dispatched task."""
+
     task_id: str
     status: TaskStatus
     result: Any
-    device_id: Optional[str]
+    device_id: str | None
     duration_ms: float
     retries_used: int
 
@@ -112,7 +115,7 @@ class DeviceMesh:
     """Manages the mesh network of registered devices."""
 
     def __init__(self):
-        self._devices: Dict[str, DeviceNode] = {}
+        self._devices: dict[str, DeviceNode] = {}
         self._lock = threading.Lock()
 
         # Always register local device
@@ -120,8 +123,9 @@ class DeviceMesh:
 
     def _register_local(self):
         """Register the local PC as a device."""
-        import platform
         import multiprocessing
+        import platform
+
         local = DeviceNode(
             device_id="local",
             device_name=platform.node(),
@@ -160,7 +164,7 @@ class DeviceMesh:
                 return True
         return False
 
-    def get_best_device(self, required_capabilities: List[str]) -> Optional[DeviceNode]:
+    def get_best_device(self, required_capabilities: list[str]) -> DeviceNode | None:
         """Select the best available device for a task based on capabilities and load."""
         with self._lock:
             candidates = []
@@ -190,7 +194,7 @@ class DeviceMesh:
             candidates.sort(key=score, reverse=True)
             return candidates[0]
 
-    def get_all_devices(self) -> List[Dict[str, Any]]:
+    def get_all_devices(self) -> list[dict[str, Any]]:
         """Return info on all registered devices."""
         with self._lock:
             return [
@@ -214,48 +218,60 @@ class DeviceMesh:
 class TaskDecomposer:
     """Decomposes complex tasks into parallelizable sub-tasks."""
 
-    def decompose(self, task_description: str) -> List[Dict[str, Any]]:
+    def decompose(self, task_description: str) -> list[dict[str, Any]]:
         """Break a complex task into sub-tasks."""
         subtasks = []
 
         # Keyword-based decomposition
         if "research" in task_description.lower():
-            subtasks.append({
-                "name": "web_search",
-                "description": f"Search for: {task_description}",
-                "capabilities": ["internet"],
-            })
-            subtasks.append({
-                "name": "summarize",
-                "description": f"Summarize findings from: {task_description}",
-                "capabilities": ["cpu"],
-                "depends_on": ["web_search"],
-            })
+            subtasks.append(
+                {
+                    "name": "web_search",
+                    "description": f"Search for: {task_description}",
+                    "capabilities": ["internet"],
+                }
+            )
+            subtasks.append(
+                {
+                    "name": "summarize",
+                    "description": f"Summarize findings from: {task_description}",
+                    "capabilities": ["cpu"],
+                    "depends_on": ["web_search"],
+                }
+            )
         elif "process" in task_description.lower() and "file" in task_description.lower():
-            subtasks.append({
-                "name": "read_files",
-                "description": f"Read input files for: {task_description}",
-                "capabilities": ["storage"],
-            })
-            subtasks.append({
-                "name": "process",
-                "description": f"Process data: {task_description}",
-                "capabilities": ["cpu"],
-                "depends_on": ["read_files"],
-            })
-            subtasks.append({
-                "name": "write_output",
-                "description": f"Write results for: {task_description}",
-                "capabilities": ["storage"],
-                "depends_on": ["process"],
-            })
+            subtasks.append(
+                {
+                    "name": "read_files",
+                    "description": f"Read input files for: {task_description}",
+                    "capabilities": ["storage"],
+                }
+            )
+            subtasks.append(
+                {
+                    "name": "process",
+                    "description": f"Process data: {task_description}",
+                    "capabilities": ["cpu"],
+                    "depends_on": ["read_files"],
+                }
+            )
+            subtasks.append(
+                {
+                    "name": "write_output",
+                    "description": f"Write results for: {task_description}",
+                    "capabilities": ["storage"],
+                    "depends_on": ["process"],
+                }
+            )
         else:
             # Single task (no decomposition needed)
-            subtasks.append({
-                "name": "execute",
-                "description": task_description,
-                "capabilities": ["cpu"],
-            })
+            subtasks.append(
+                {
+                    "name": "execute",
+                    "description": task_description,
+                    "capabilities": ["cpu"],
+                }
+            )
 
         return subtasks
 
@@ -270,10 +286,10 @@ class AutonomousTaskDispatcher:
         self._mesh = DeviceMesh()
         self._decomposer = TaskDecomposer()
         self._task_queue: queue.PriorityQueue = queue.PriorityQueue()
-        self._tasks: Dict[str, Task] = {}
-        self._results: Dict[str, TaskResult] = {}
+        self._tasks: dict[str, Task] = {}
+        self._results: dict[str, TaskResult] = {}
         self._lock = threading.Lock()
-        self._workers: List[threading.Thread] = []
+        self._workers: list[threading.Thread] = []
         self._max_workers = max_workers
         self._running = False
         self._total_dispatched = 0
@@ -288,8 +304,7 @@ class AutonomousTaskDispatcher:
         self._running = True
 
         for i in range(self._max_workers):
-            t = threading.Thread(target=self._worker_loop, daemon=True,
-                                  name=f"TaskWorker-{i}")
+            t = threading.Thread(target=self._worker_loop, daemon=True, name=f"TaskWorker-{i}")
             t.start()
             self._workers.append(t)
 
@@ -308,12 +323,16 @@ class AutonomousTaskDispatcher:
         logger.info("Dispatcher stopped")
         return True
 
-    def submit_task(self, name: str, handler: Optional[Callable] = None,
-                    args: Optional[Dict] = None,
-                    priority: TaskPriority = TaskPriority.NORMAL,
-                    capabilities: Optional[List[str]] = None,
-                    depends_on: Optional[List[str]] = None,
-                    timeout: float = 300.0) -> Task:
+    def submit_task(
+        self,
+        name: str,
+        handler: Callable | None = None,
+        args: dict | None = None,
+        priority: TaskPriority = TaskPriority.NORMAL,
+        capabilities: list[str] | None = None,
+        depends_on: list[str] | None = None,
+        timeout: float = 300.0,
+    ) -> Task:
         """Submit a new task to the dispatcher."""
         task = Task(
             name=name,
@@ -333,8 +352,7 @@ class AutonomousTaskDispatcher:
         logger.info("Task submitted: %s (%s) priority=%s", task.name, task.task_id, priority.value)
         return task
 
-    def submit_complex_task(self, description: str,
-                             priority: TaskPriority = TaskPriority.NORMAL) -> List[Task]:
+    def submit_complex_task(self, description: str, priority: TaskPriority = TaskPriority.NORMAL) -> list[Task]:
         """Decompose and submit a complex task."""
         subtask_specs = self._decomposer.decompose(description)
         tasks = []
@@ -378,8 +396,7 @@ class AutonomousTaskDispatcher:
             # Check dependencies
             if task.depends_on:
                 deps_met = all(
-                    self._tasks.get(dep_id, Task()).status == TaskStatus.COMPLETED
-                    for dep_id in task.depends_on
+                    self._tasks.get(dep_id, Task()).status == TaskStatus.COMPLETED for dep_id in task.depends_on
                 )
                 if not deps_met:
                     # Re-queue
@@ -411,7 +428,7 @@ class AutonomousTaskDispatcher:
                 if task.retries < task.max_retries:
                     task.status = TaskStatus.RETRYING
                     # Exponential backoff
-                    time.sleep(min(2 ** task.retries, 30))
+                    time.sleep(min(2**task.retries, 30))
                     self._task_queue.put((priority_val, task_id))
                 else:
                     task.status = TaskStatus.FAILED
@@ -442,7 +459,7 @@ class AutonomousTaskDispatcher:
                 return True
         return False
 
-    def get_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
+    def get_task_status(self, task_id: str) -> dict[str, Any] | None:
         """Get status of a specific task."""
         with self._lock:
             task = self._tasks.get(task_id)
@@ -457,7 +474,7 @@ class AutonomousTaskDispatcher:
             "error": task.error,
         }
 
-    def get_queue_status(self) -> Dict[str, Any]:
+    def get_queue_status(self) -> dict[str, Any]:
         """Get overall dispatcher status."""
         with self._lock:
             status_counts = {}
@@ -476,13 +493,11 @@ class AutonomousTaskDispatcher:
             "mesh_devices": self._mesh.device_count(),
         }
 
-    def get_mesh_devices(self) -> List[Dict[str, Any]]:
+    def get_mesh_devices(self) -> list[dict[str, Any]]:
         """Return all registered mesh devices."""
         return self._mesh.get_all_devices()
 
-    def register_device(self, name: str, device_type: str,
-                         capabilities: List[str],
-                         endpoint: Optional[str] = None) -> str:
+    def register_device(self, name: str, device_type: str, capabilities: list[str], endpoint: str | None = None) -> str:
         """Register a new device in the mesh."""
         device_id = hashlib.md5(name.encode()).hexdigest()[:8]
         try:
@@ -506,6 +521,7 @@ class AutonomousTaskDispatcher:
 def _get_total_ram() -> int:
     try:
         import psutil
+
         return psutil.virtual_memory().total // (1024 * 1024)
     except ImportError:
         return 8192
@@ -514,6 +530,7 @@ def _get_total_ram() -> int:
 def _check_gpu() -> bool:
     try:
         import torch
+
         return torch.cuda.is_available()
     except ImportError:
         return False

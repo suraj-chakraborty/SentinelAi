@@ -13,37 +13,32 @@ Comprehensive test suite for the 7 Next-Generation Frontier JARVIS capabilities:
 
 import os
 import sys
-import time
-import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from sentinel.ar.holographic_avatar import HolographicAvatarEngine, AvatarEmotion, Viseme
+from sentinel.ar.holographic_avatar import AvatarEmotion, HolographicAvatarEngine, Viseme
 from sentinel.commands.avatar_command import AvatarCommand
-from sentinel.perception.air_gesture import AirGestureController, GestureType
-from sentinel.commands.gesture_command import GestureCommand
-from sentinel.daemons.dream_state import DreamStateEngine, DreamPhase
+from sentinel.commands.code_whisperer_command import CodeWhispererCommand
+from sentinel.commands.dispatcher_command import DispatcherCommand
 from sentinel.commands.dream_command import DreamCommand
+from sentinel.commands.gesture_command import GestureCommand
+from sentinel.commands.npu_command import NPUCommand
+from sentinel.commands.vitals_command import VitalsCommand
+from sentinel.core.command_router import CommandRouter
+from sentinel.core.intent_detector import Intent, IntentDetector
+from sentinel.core.task_dispatcher import AutonomousTaskDispatcher, TaskPriority
+from sentinel.daemons.dream_state import DreamPhase, DreamStateEngine
+from sentinel.modules.code_whisperer import CodeLanguage, CodeWhispererEngine
 from sentinel.neuro.npu_accelerator import (
     NeuralAccelerationEngine,
-    ComputeBackend,
-    QuantizationLevel,
     TaskType,
 )
-from sentinel.commands.npu_command import NPUCommand
-from sentinel.perception.biometric_vitals import BiometricVitalsEngine, PostureState
-from sentinel.commands.vitals_command import VitalsCommand
-from sentinel.modules.code_whisperer import CodeWhispererEngine, CodeLanguage
-from sentinel.commands.code_whisperer_command import CodeWhispererCommand
-from sentinel.core.task_dispatcher import AutonomousTaskDispatcher, TaskPriority, TaskStatus
-from sentinel.commands.dispatcher_command import DispatcherCommand
-from sentinel.core.intent_detector import IntentDetector, Intent
-from sentinel.core.command_router import CommandRouter
+from sentinel.perception.air_gesture import AirGestureController
+from sentinel.perception.biometric_vitals import BiometricVitalsEngine
 
 
 class TestFrontierJarvisV2Suite:
-
     # ── Feature 1: Holographic 3D Floating Avatar ────────────────────────────
     def test_holographic_avatar_engine_and_command(self):
         """Test avatar emotions, lip-sync feed, and voice command plugin."""
@@ -256,6 +251,7 @@ class TestFrontierJarvisV2Suite:
             Intent.TASK_DISPATCHER,
         ]:
             from sentinel.core.command_router import INTENT_TO_PLUGIN
+
             assert expected_intent in INTENT_TO_PLUGIN
             plugin_key = INTENT_TO_PLUGIN[expected_intent]
             assert plugin_key in router.plugins, f"Plugin {plugin_key} missing in CommandRouter.plugins"

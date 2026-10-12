@@ -9,7 +9,6 @@ import logging
 import os
 import subprocess
 from pathlib import Path
-from typing import Optional, Set
 
 logger = logging.getLogger("AppCloser")
 
@@ -18,14 +17,30 @@ def _normalize(name: str) -> str:
     return (name or "").lower().strip()
 
 
-_CRITICAL_SYSTEM_PROCESSES: Set[str] = {
-    "system", "smss", "csrss", "wininit", "services", "lsass", "svchost",
-    "winlogon", "explorer", "dwm", "spoolsv", "taskhostw", "runtimebroker",
-    "sihost", "ctfmon", "fontdrvhost", "conhost", "python", "pythonw",
+_CRITICAL_SYSTEM_PROCESSES: set[str] = {
+    "system",
+    "smss",
+    "csrss",
+    "wininit",
+    "services",
+    "lsass",
+    "svchost",
+    "winlogon",
+    "explorer",
+    "dwm",
+    "spoolsv",
+    "taskhostw",
+    "runtimebroker",
+    "sihost",
+    "ctfmon",
+    "fontdrvhost",
+    "conhost",
+    "python",
+    "pythonw",
 }
 
 
-def _resolve_exe_path(name: str) -> Optional[str]:
+def _resolve_exe_path(name: str) -> str | None:
     """Best-effort path to the app's .exe using the main app's registry index if present."""
     try:
         import sentinel_ai as main
@@ -33,17 +48,17 @@ def _resolve_exe_path(name: str) -> Optional[str]:
         fn = getattr(main, "find_app_executable", None)
         if callable(fn):
             path = fn(name)
-            if path and os.path.isfile(str(path).strip(' "\'')):
-                return str(path).strip(' "\'')
+            if path and os.path.isfile(str(path).strip(" \"'")):
+                return str(path).strip(" \"'")
     except Exception as e:
         logger.debug("find_app_executable unavailable: %s", e)
     return None
 
 
-def _candidate_image_names(name: str, exe_path: Optional[str]) -> list[str]:
+def _candidate_image_names(name: str, exe_path: str | None) -> list[str]:
     """Executable filenames to pass to taskkill /IM."""
     out: list[str] = []
-    seen: Set[str] = set()
+    seen: set[str] = set()
 
     def add(im: str) -> None:
         im = im.strip()
@@ -93,14 +108,14 @@ def _candidate_image_names(name: str, exe_path: Optional[str]) -> list[str]:
     return out
 
 
-def _kill_via_psutil(name: str, exe_path: Optional[str]) -> int:
+def _kill_via_psutil(name: str, exe_path: str | None) -> int:
     try:
         import psutil
     except ImportError:
         return 0
 
     target = _normalize(name)
-    stems: Set[str] = {target}
+    stems: set[str] = {target}
     if exe_path:
         stems.add(_normalize(Path(exe_path).stem))
 

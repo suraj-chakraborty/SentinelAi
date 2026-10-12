@@ -6,7 +6,6 @@ Handles starting/stopping meeting listening, capturing action items, and summari
 """
 
 import logging
-from typing import Optional
 
 logger = logging.getLogger("MeetingCommand")
 
@@ -20,19 +19,22 @@ class MeetingCommand:
         if self._surrogate is None:
             try:
                 from sentinel.voice.meeting_surrogate import get_meeting_surrogate
+
                 self._surrogate = get_meeting_surrogate()
             except Exception as e:
                 logger.error(f"Failed to get meeting surrogate: {e}")
         return self._surrogate
 
-    def execute(self, command: str, entity: Optional[str] = None) -> str:
+    def execute(self, command: str, entity: str | None = None) -> str:
         cmd_lower = command.lower()
         surrogate = self._get_surrogate()
         if not surrogate:
             return "Meeting co-pilot service is unavailable."
 
         # 1. Start meeting
-        if any(k in cmd_lower for k in ("start meeting", "join meeting", "listen to meeting", "start recording meeting")):
+        if any(
+            k in cmd_lower for k in ("start meeting", "join meeting", "listen to meeting", "start recording meeting")
+        ):
             ok = surrogate.start_meeting()
             if ok:
                 return "Meeting co-pilot active. I am listening to system audio and extracting action items."

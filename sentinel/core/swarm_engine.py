@@ -8,9 +8,10 @@ Implements Planner-Worker architecture for multi-agent tasks.
 import json
 import logging
 import threading
-from typing import List, Dict, Optional, Any
+from typing import Any
 
 logger = logging.getLogger("SwarmEngine")
+
 
 class SwarmAgent:
     def __init__(self, role: str, instruction: str, llm_callback):
@@ -33,26 +34,31 @@ class SwarmAgent:
             logger.error(f"Agent {self.role} error: {e}")
             return f"Error: {e}"
 
+
 class SwarmOrchestrator:
     def __init__(self, llm_callback):
         self.llm = llm_callback
         self.agents = {
             "researcher": SwarmAgent("Researcher", "Find and summarize facts using search results.", llm_callback),
             "coder": SwarmAgent("Senior Developer", "Write high-quality Python code and documentation.", llm_callback),
-            "editor": SwarmAgent("Editor", "Format, polish, and synthesize multiple agent outputs into a final report.", llm_callback),
-            "security_analyst": SwarmAgent("Security Analyst", "Review code and plans for vulnerabilities.", llm_callback)
+            "editor": SwarmAgent(
+                "Editor", "Format, polish, and synthesize multiple agent outputs into a final report.", llm_callback
+            ),
+            "security_analyst": SwarmAgent(
+                "Security Analyst", "Review code and plans for vulnerabilities.", llm_callback
+            ),
         }
         self.current_goal: str = ""
         self.status: str = "idle"
-        self.plan: Dict[str, str] = {}
-        self.agent_statuses: Dict[str, Dict[str, Any]] = {
+        self.plan: dict[str, str] = {}
+        self.agent_statuses: dict[str, dict[str, Any]] = {
             name: {"role": agent.role, "status": "idle", "task": "", "output": ""}
             for name, agent in self.agents.items()
         }
-        self.history: List[Dict[str, Any]] = []
+        self.history: list[dict[str, Any]] = []
         self._lock = threading.Lock()
 
-    def get_state(self) -> Dict[str, Any]:
+    def get_state(self) -> dict[str, Any]:
         """Returns the current multi-agent swarm state and task DAG for HUD visualization."""
         with self._lock:
             return {
@@ -61,7 +67,7 @@ class SwarmOrchestrator:
                 "plan": dict(self.plan),
                 "agents": {k: dict(v) for k, v in self.agent_statuses.items()},
                 "history_count": len(self.history),
-                "active_count": sum(1 for a in self.agent_statuses.values() if a["status"] == "running")
+                "active_count": sum(1 for a in self.agent_statuses.values() if a["status"] == "running"),
             }
 
     def run_swarm(self, goal: str) -> str:
@@ -100,10 +106,7 @@ class SwarmOrchestrator:
         threads = []
         for agent_id, sub_task in plan.items():
             if agent_id in self.agents and agent_id != "editor":
-                t = threading.Thread(
-                    target=self._run_agent_thread, 
-                    args=(agent_id, sub_task, shared_memory, results)
-                )
+                t = threading.Thread(target=self._run_agent_thread, args=(agent_id, sub_task, shared_memory, results))
                 threads.append(t)
                 t.start()
 
@@ -122,35 +125,28 @@ class SwarmOrchestrator:
                 self.agent_statuses["editor"]["status"] = "running"
                 self.agent_statuses["editor"]["task"] = "Synthesizing worker outputs into unified response"
 
-        final_output = self.agents["editor"].execute(
-            f"Synthesize the final response for: {goal}", 
-            shared_memory
-        )
+        final_output = self.agents["editor"].execute(f"Synthesize the final response for: {goal}", shared_memory)
 
         with self._lock:
             if "editor" in self.agent_statuses:
                 self.agent_statuses["editor"]["status"] = "done"
                 self.agent_statuses["editor"]["output"] = final_output[:300]
             self.status = "completed"
-            self.history.append({
-                "goal": goal,
-                "plan": plan,
-                "output_preview": final_output[:200]
-            })
+            self.history.append({"goal": goal, "plan": plan, "output_preview": final_output[:200]})
 
         return final_output
 
-    def _generate_plan(self, goal: str) -> Dict[str, str]:
+    def _generate_plan(self, goal: str) -> dict[str, str]:
         """Ask the LLM to break the goals into sub-tasks for specific agents."""
         logger.info("Swarm -> Generating plan...")
         prompt = f"""
         Goal: {goal}
-        
+
         Available agents:
         - researcher: facts, data gathering
         - coder: script writing, algorithm design
         - security_analyst: auditing, risk check
-        
+
         Task: Break this goal into 2-3 specific sub-tasks.
         Respond with ONLY a JSON map of agent name to sub-task.
         Example: {{"researcher": "Find current stock price of AAPL", "coder": "Create a plot script"}}
@@ -158,7 +154,8 @@ class SwarmOrchestrator:
         try:
             resp = self.llm(prompt)
             import re
-            match = re.search(r'\{[^{}]+\}', resp, re.DOTALL)
+
+            match = re.search(r"\{[^{}]+\}", resp, re.DOTALL)
             if match:
                 return json.loads(match.group())
         except Exception as e:
@@ -175,7 +172,7 @@ class SwarmOrchestrator:
                 self.agent_statuses[agent_id]["output"] = str(res)[:300]
 
 
-_global_swarm: Optional[SwarmOrchestrator] = None
+_global_swarm: SwarmOrchestrator | None = None
 _swarm_lock = threading.Lock()
 
 
@@ -185,6 +182,7 @@ def get_swarm_orchestrator(llm_callback=None) -> SwarmOrchestrator:
         if _global_swarm is None:
             if llm_callback is None:
                 from sentinel.app.intelligence import ask_gemini
+
                 llm_callback = ask_gemini
             _global_swarm = SwarmOrchestrator(llm_callback)
         elif llm_callback is not None:
@@ -192,9 +190,8 @@ def get_swarm_orchestrator(llm_callback=None) -> SwarmOrchestrator:
         return _global_swarm
 
 
-def get_swarm_state() -> Dict[str, Any]:
+def get_swarm_state() -> dict[str, Any]:
     try:
         return get_swarm_orchestrator().get_state()
     except Exception as exc:
         return {"status": "error", "error": str(exc), "agents": {}}
-

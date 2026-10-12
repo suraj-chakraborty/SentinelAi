@@ -64,4 +64,4 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install ruff
-      - run: ruff check sentinel/ tests/ --ignore E501,W291,W293,E302,E303
+      - run: ruff check sentinel/ tests/ --select E,F,W,S --ignore E501

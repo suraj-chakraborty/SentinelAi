@@ -12,16 +12,15 @@ Upgraded from a simple 5-step loop to a full ReAct pattern with:
   - Max-step guard with graceful summary
 """
 
-import os
-import time
-import base64
 import logging
 import threading
-from typing import Any, Callable, Dict, List, Optional, Tuple
+import time
+from collections.abc import Callable
 
 logger = logging.getLogger("AgenticEngine")
 
 # ─── Tool registry ────────────────────────────────────────────────────────────
+
 
 class Tool:
     def __init__(self, name: str, description: str, func: Callable):
@@ -76,7 +75,7 @@ Only output THOUGHT + ACTION + INPUT. Nothing else."""
         self.orchestrator = orchestrator
         self.speak = speak_fn or (lambda t, **kw: print(f"[Agent] {t}"))
         self.gemini = gemini_fn
-        self._tools: Dict[str, Tool] = {}
+        self._tools: dict[str, Tool] = {}
         self._active = False
         self._lock = threading.Lock()
         self._register_default_tools()
@@ -94,62 +93,50 @@ Only output THOUGHT + ACTION + INPUT. Nothing else."""
         self.register_tool(
             "read_screen",
             "Captures a screenshot and analyzes what is currently on the screen. No input needed.",
-            self._tool_read_screen
+            self._tool_read_screen,
         )
         self.register_tool(
             "click",
-            "Moves the mouse to (x, y) and clicks. Input: {\"x\": int, \"y\": int, \"button\": \"left\"|\"right\"}",
-            self._tool_click
+            'Moves the mouse to (x, y) and clicks. Input: {"x": int, "y": int, "button": "left"|"right"}',
+            self._tool_click,
         )
         self.register_tool(
-            "type_text",
-            "Types text at the current cursor position. Input: {\"text\": str}",
-            self._tool_type_text
+            "type_text", 'Types text at the current cursor position. Input: {"text": str}', self._tool_type_text
         )
         self.register_tool(
             "press_key",
-            "Presses a keyboard key. Input: {\"key\": str} e.g. enter, tab, escape, ctrl+c",
-            self._tool_press_key
+            'Presses a keyboard key. Input: {"key": str} e.g. enter, tab, escape, ctrl+c',
+            self._tool_press_key,
         )
         self.register_tool(
-            "open_application",
-            "Opens an application by name. Input: {\"app_name\": str}",
-            self._tool_open_app
+            "open_application", 'Opens an application by name. Input: {"app_name": str}', self._tool_open_app
         )
         self.register_tool(
             "run_python_code",
-            "Writes and executes a Python script for data processing tasks. Input: {\"code\": str}",
-            self._tool_run_code
+            'Writes and executes a Python script for data processing tasks. Input: {"code": str}',
+            self._tool_run_code,
         )
         self.register_tool(
-            "search_web",
-            "Opens the browser and searches for a query. Input: {\"query\": str}",
-            self._tool_web_search
+            "search_web", 'Opens the browser and searches for a query. Input: {"query": str}', self._tool_web_search
         )
         self.register_tool(
             "query_knowledge",
-            "Searches the personal knowledge base for relevant information. Input: {\"query\": str}",
-            self._tool_query_kb
+            'Searches the personal knowledge base for relevant information. Input: {"query": str}',
+            self._tool_query_kb,
         )
         self.register_tool(
             "remember_fact",
-            "Stores a fact in the personal knowledge base. Input: {\"fact\": str, \"source\": str}",
-            self._tool_remember
+            'Stores a fact in the personal knowledge base. Input: {"fact": str, "source": str}',
+            self._tool_remember,
         )
         self.register_tool(
-            "wait",
-            "Waits for a specified number of seconds. Input: {\"seconds\": float}",
-            self._tool_wait
+            "wait", 'Waits for a specified number of seconds. Input: {"seconds": float}', self._tool_wait
         )
-        self.register_tool(
-            "speak_to_user",
-            "Speaks a message to the user. Input: {\"message\": str}",
-            self._tool_speak
-        )
+        self.register_tool("speak_to_user", 'Speaks a message to the user. Input: {"message": str}', self._tool_speak)
         self.register_tool(
             "control_iot",
-            "Controls a Home Assistant device. Input: {\"entity_id\": str, \"service\": str, \"domain\": str}",
-            self._tool_iot
+            'Controls a Home Assistant device. Input: {"entity_id": str, "service": str, "domain": str}',
+            self._tool_iot,
         )
 
     # ─── Main execution loop ──────────────────────────────────────────────────
@@ -174,8 +161,8 @@ Only output THOUGHT + ACTION + INPUT. Nothing else."""
         if speak_progress:
             self.speak(f"Starting autonomous task: {goal[:50]}")
 
-        history: List[Dict[str, str]] = []
-        transcript: List[str] = []
+        history: list[dict[str, str]] = []
+        transcript: list[str] = []
         tool_list = self._format_tool_list()
 
         for step in range(self.MAX_STEPS):
@@ -185,11 +172,7 @@ Only output THOUGHT + ACTION + INPUT. Nothing else."""
 
             # ── THINK ────────────────────────────────────────────────────────
             history_str = self._format_history(history)
-            prompt = self.THINK_PROMPT.format(
-                goal=goal,
-                history=history_str,
-                tool_list=tool_list
-            )
+            prompt = self.THINK_PROMPT.format(goal=goal, history=history_str, tool_list=tool_list)
 
             if speak_progress and step > 0:
                 self.speak(f"Step {step + 1}. Reasoning...")
@@ -199,8 +182,8 @@ Only output THOUGHT + ACTION + INPUT. Nothing else."""
                 break
 
             thought, action_name, action_input = self._parse_response(llm_response)
-            logger.info(f"[ReAct step {step+1}] Action: {action_name}, Input: {action_input}")
-            transcript.append(f"Step {step+1}: {thought[:80]}... → {action_name}")
+            logger.info(f"[ReAct step {step + 1}] Action: {action_name}, Input: {action_input}")
+            transcript.append(f"Step {step + 1}: {thought[:80]}... → {action_name}")
 
             # ── TERMINAL STATES ───────────────────────────────────────────────
             if action_name == "ERROR_LLM":
@@ -238,13 +221,15 @@ Only output THOUGHT + ACTION + INPUT. Nothing else."""
                     self.speak(observation)
 
             # ── RECORD ───────────────────────────────────────────────────────
-            history.append({
-                "step": step + 1,
-                "thought": thought,
-                "action": action_name,
-                "input": str(action_input),
-                "observation": observation
-            })
+            history.append(
+                {
+                    "step": step + 1,
+                    "thought": thought,
+                    "action": action_name,
+                    "input": str(action_input),
+                    "observation": observation,
+                }
+            )
 
             time.sleep(0.3)  # Brief pause between steps
 
@@ -270,7 +255,7 @@ Only output THOUGHT + ACTION + INPUT. Nothing else."""
         callback = self.gemini
         if callback is None and self.orchestrator and hasattr(self.orchestrator, "_safe_llm_call"):
             callback = self.orchestrator._safe_llm_call
-            
+
         if callback:
             try:
                 return callback(prompt)
@@ -280,10 +265,11 @@ Only output THOUGHT + ACTION + INPUT. Nothing else."""
 
     # ─── Response parser ──────────────────────────────────────────────────────
 
-    def _parse_response(self, response: str) -> Tuple[str, str, dict]:
+    def _parse_response(self, response: str) -> tuple[str, str, dict]:
         """Extract THOUGHT, ACTION, and INPUT from LLM response."""
-        import json, re
-        
+        import json
+        import re
+
         # Check for common error signatures from unified gemini_generate fallback
         error_keywords = ["having trouble connecting", "Request timed out", "service error", "Quota Exceeded"]
         if any(k in response for k in error_keywords) or not response.strip():
@@ -291,7 +277,7 @@ Only output THOUGHT + ACTION + INPUT. Nothing else."""
 
         thought = ""
         # Default to DONE only if we actually see a Thought/Action structure or if it's clearly a final answer
-        action_name = "DONE" 
+        action_name = "DONE"
         action_input = {}
 
         # Extract THOUGHT
@@ -336,14 +322,12 @@ Only output THOUGHT + ACTION + INPUT. Nothing else."""
     def _format_tool_list(self) -> str:
         return "\n".join(f"  - {name}: {tool.description}" for name, tool in self._tools.items())
 
-    def _format_history(self, history: List[Dict]) -> str:
+    def _format_history(self, history: list[dict]) -> str:
         if not history:
             return "[No steps taken yet]"
         parts = []
         for h in history[-5:]:  # Last 5 steps for context
-            parts.append(
-                f"Step {h['step']}: Used {h['action']}({h['input'][:50]}) → {h['observation'][:80]}"
-            )
+            parts.append(f"Step {h['step']}: Used {h['action']}({h['input'][:50]}) → {h['observation'][:80]}")
         return "\n".join(parts)
 
     # ─── Tool implementations ─────────────────────────────────────────────────
@@ -359,7 +343,7 @@ Only output THOUGHT + ACTION + INPUT. Nothing else."""
         # Fallback: PIL screenshot
         try:
             from PIL import ImageGrab
-            import io
+
             shot = ImageGrab.grab()
             w, h = shot.size
             return f"Screen captured ({w}x{h}). Vision module unavailable for analysis."
@@ -369,6 +353,7 @@ Only output THOUGHT + ACTION + INPUT. Nothing else."""
     def _tool_click(self, x: int = 0, y: int = 0, button: str = "left") -> str:
         try:
             import pyautogui
+
             pyautogui.moveTo(int(x), int(y), duration=0.4)
             pyautogui.click(button=button)
             return f"Clicked {button} at ({x}, {y})."
@@ -378,6 +363,7 @@ Only output THOUGHT + ACTION + INPUT. Nothing else."""
     def _tool_type_text(self, text: str = "") -> str:
         try:
             import pyautogui
+
             pyautogui.write(str(text), interval=0.05)
             return f"Typed: {text[:30]}"
         except Exception as e:
@@ -386,6 +372,7 @@ Only output THOUGHT + ACTION + INPUT. Nothing else."""
     def _tool_press_key(self, key: str = "enter") -> str:
         try:
             import pyautogui
+
             if "+" in key:
                 pyautogui.hotkey(*key.split("+"))
             else:
@@ -396,15 +383,16 @@ Only output THOUGHT + ACTION + INPUT. Nothing else."""
 
     def _tool_open_app(self, app_name: str = "") -> str:
         try:
-            from sentinel.utils.app_launcher import launch_application
             import webbrowser
-            
+
+            from sentinel.utils.app_launcher import launch_application
+
             app_lower = app_name.lower()
             urls = {"chrome": "https://google.com", "browser": "https://google.com"}
             if app_lower in urls:
                 webbrowser.open(urls[app_lower])
                 return f"Opened {app_name} in browser."
-            
+
             if launch_application(app_name):
                 return f"Launched: {app_name}"
             return f"Failed to find or open: {app_name}"
@@ -414,11 +402,10 @@ Only output THOUGHT + ACTION + INPUT. Nothing else."""
     def _tool_run_code(self, code: str = "") -> str:
         try:
             if self.orchestrator and self.orchestrator.coding_module:
-                return self.orchestrator.coding_module.execute_python_code(
-                    code,
-                    llm_callback=self.gemini
-                )
-            import subprocess, tempfile
+                return self.orchestrator.coding_module.execute_python_code(code, llm_callback=self.gemini)
+            import subprocess
+            import tempfile
+
             with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w") as f:
                 f.write(code)
                 tmp = f.name
@@ -430,6 +417,7 @@ Only output THOUGHT + ACTION + INPUT. Nothing else."""
     def _tool_web_search(self, query: str = "") -> str:
         try:
             import webbrowser
+
             url = f"https://www.google.com/search?q={query.replace(' ', '+')}"
             webbrowser.open(url)
             return f"Opened browser search for: {query}"
@@ -447,9 +435,7 @@ Only output THOUGHT + ACTION + INPUT. Nothing else."""
     def _tool_remember(self, fact: str = "", source: str = "agent") -> str:
         try:
             if self.orchestrator and self.orchestrator.knowledge_base:
-                ok, msg = self.orchestrator.knowledge_base.add_information(
-                    fact, metadata={"source": source}
-                )
+                ok, msg = self.orchestrator.knowledge_base.add_information(fact, metadata={"source": source})
                 return msg
             return "Knowledge base not available."
         except Exception as e:

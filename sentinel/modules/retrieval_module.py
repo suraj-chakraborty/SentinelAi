@@ -7,7 +7,6 @@ relevant contextual information for a given prompt.
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 logger = logging.getLogger("RetrievalModule")
 
@@ -17,7 +16,7 @@ class RetrievalModule:
         self.knowledge_base = knowledge_base
         self.llm_callback = llm_callback
 
-    def retrieve(self, prompt: str) -> Optional[str]:
+    def retrieve(self, prompt: str) -> str | None:
         """Return a retrieved contextual snippet for the given prompt, if available."""
         if not self.knowledge_base:
             return ""

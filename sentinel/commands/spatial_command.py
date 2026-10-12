@@ -6,7 +6,6 @@ Handles desk lighting sync and multi-room audio hand-off.
 """
 
 import logging
-from typing import Optional
 
 from sentinel.modules.spatial_iot import SpatialIoTCoordinator
 
@@ -18,7 +17,7 @@ class SpatialCommand:
         self.orchestrator = orchestrator
         self.coordinator = SpatialIoTCoordinator()
 
-    def execute(self, command: str, entity: Optional[str] = None) -> str:
+    def execute(self, command: str, entity: str | None = None) -> str:
         cmd_lower = command.lower()
 
         # 1. Desk Focus Light Sync

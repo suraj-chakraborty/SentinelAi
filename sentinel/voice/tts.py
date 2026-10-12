@@ -11,18 +11,18 @@ Usage:
 """
 
 import asyncio
-import threading
 import logging
 import os
-import time
 import queue
-from typing import Tuple
+import threading
+import time
 
 logger = logging.getLogger("SentinelTTS")
 
 # ---------- Neural TTS (edge-tts) ----------
 try:
     import edge_tts
+
     _EDGE_TTS_AVAILABLE = True
 except ImportError:
     _EDGE_TTS_AVAILABLE = False
@@ -31,25 +31,27 @@ except ImportError:
 # ---------- Audio playback ----------
 try:
     import pygame
+
     pygame.mixer.init(frequency=22050, size=-16, channels=1, buffer=512)
     _PYGAME_AVAILABLE = True
 except Exception:
     _PYGAME_AVAILABLE = False
 
 try:
-    import pyttsx3
     import pythoncom
+    import pyttsx3
+
     _PYTTSX3_AVAILABLE = True
 except Exception:
     _PYTTSX3_AVAILABLE = False
 
 # Emotion → voice style mapping (improved)
 EMOTION_VOICE_MAP = {
-    "Stressed/Excited": ("en-US-JennyNeural", "+40%", "+15%"),    # voice, rate, volume
-    "Calm/Sad":         ("en-US-JennyNeural", "-10%", "-5%"),
-    "Neutral":          ("en-US-JennyNeural", "+15%", "+5%"),       # Better default
-    "Happy":            ("en-US-JennyNeural", "+25%", "+10%"),
-    "Excited":          ("en-US-AriaNeural", "+30%", "+10%"),
+    "Stressed/Excited": ("en-US-JennyNeural", "+40%", "+15%"),  # voice, rate, volume
+    "Calm/Sad": ("en-US-JennyNeural", "-10%", "-5%"),
+    "Neutral": ("en-US-JennyNeural", "+15%", "+5%"),  # Better default
+    "Happy": ("en-US-JennyNeural", "+25%", "+10%"),
+    "Excited": ("en-US-AriaNeural", "+30%", "+10%"),
 }
 
 APPDATA_DIR = os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "SentinelAi")
@@ -66,9 +68,10 @@ class TTSEngine:
 
     def __init__(self):
         from sentinel.app.config import load_settings
+
         settings = load_settings()
         self.preferred_voice = settings.get("voice", "en-US-JennyNeural")
-        
+
         self._lock = threading.Lock()
         self._queue: queue.Queue = queue.Queue()
         self._worker = threading.Thread(target=self._process_queue, daemon=True)
@@ -76,7 +79,9 @@ class TTSEngine:
         self._tts_disabled = False
         self._stop_event = threading.Event()  # For interrupting speech
         self._is_active_speaking = False
-        logger.info(f"TTSEngine started. edge-tts={'✓' if _EDGE_TTS_AVAILABLE else '✗'}, pygame={'✓' if _PYGAME_AVAILABLE else '✗'}, pyttsx3={'✓' if _PYTTSX3_AVAILABLE else '✗'}")
+        logger.info(
+            f"TTSEngine started. edge-tts={'✓' if _EDGE_TTS_AVAILABLE else '✗'}, pygame={'✓' if _PYGAME_AVAILABLE else '✗'}, pyttsx3={'✓' if _PYTTSX3_AVAILABLE else '✗'}"
+        )
 
     @property
     def engine_type(self) -> str:
@@ -123,7 +128,7 @@ class TTSEngine:
             return
         if self._tts_disabled:
             return
-        
+
         # When user initiates new explicit speech, reset stop event if queue was empty
         if self._queue.empty():
             self._stop_event.clear()
@@ -173,9 +178,10 @@ class TTSEngine:
         else:
             logger.error("No TTS engine available.")
 
-    def get_voice_config(self) -> Tuple[str, str, str, str]:
+    def get_voice_config(self) -> tuple[str, str, str, str]:
         """Resolves active voice, pitch, rate, and volume, including custom cloned profiles and mood styling."""
         from sentinel.app.config import load_settings
+
         settings = load_settings()
         voice = settings.get("voice", self.preferred_voice)
         base_pitch = settings.get("voice_pitch", "+0Hz")
@@ -186,6 +192,7 @@ class TTSEngine:
         volume = "+0%"
         try:
             from sentinel.modules.mood_engine import get_mood_engine
+
             mood_style = get_mood_engine().get_tts_styling()
             mood_pitch = mood_style.get("pitch", "+0Hz")
             mood_rate = mood_style.get("rate", "+0%")
@@ -209,7 +216,7 @@ class TTSEngine:
 
         if self._stop_event.is_set():
             return
-        
+
         tmp_file = os.path.join(_TTS_CACHE_DIR, f"tts_{threading.get_ident()}.mp3")
 
         async def _synthesize():
@@ -225,8 +232,10 @@ class TTSEngine:
 
         if self._stop_event.is_set():
             if os.path.exists(tmp_file):
-                try: os.remove(tmp_file)
-                except Exception: pass
+                try:
+                    os.remove(tmp_file)
+                except Exception:
+                    pass
             return
 
         # Playback
@@ -235,7 +244,7 @@ class TTSEngine:
                 try:
                     pygame.mixer.music.load(tmp_file)
                     pygame.mixer.music.play()
-                    
+
                     # Wait for playback to complete - no timeout (user can interrupt)
                     while pygame.mixer.music.get_busy():
                         time.sleep(0.05)
@@ -247,8 +256,10 @@ class TTSEngine:
                 except Exception as e:
                     logger.warning(f"Pygame playback error: {e}")
                     # Final fallback for this file
-                    try: os.startfile(tmp_file)
-                    except Exception: pass
+                    try:
+                        os.startfile(tmp_file)
+                    except Exception:
+                        pass
                 finally:
                     try:
                         pygame.mixer.music.stop()
@@ -292,6 +303,7 @@ class TTSEngine:
 
 # Module-level singleton
 _tts_engine: TTSEngine = None
+
 
 def get_tts() -> TTSEngine:
     global _tts_engine

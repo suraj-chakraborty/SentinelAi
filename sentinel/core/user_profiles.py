@@ -1,8 +1,8 @@
 from __future__ import annotations
+
 import json
-import sqlite3
 import os
-from typing import Optional, List
+import sqlite3
 
 from sentinel.models.user_profile import UserProfile
 
@@ -56,12 +56,23 @@ class UserProfileManager:
             preferred_tools=json.loads(row["preferred_tools"] or "[]"),
         )
 
-    def set_profile(self, user_id: str, persona: str = None, memory_ttl_hours: int = 0,
-                    opt_in_privacy: bool = True, preferred_tools=None) -> UserProfile:
+    def set_profile(
+        self,
+        user_id: str,
+        persona: str = None,
+        memory_ttl_hours: int = 0,
+        opt_in_privacy: bool = True,
+        preferred_tools=None,
+    ) -> UserProfile:
         if preferred_tools is None:
             preferred_tools = []
-        row = (user_id, persona if persona is not None else "calm Jarvis",
-               int(memory_ttl_hours), int(bool(opt_in_privacy)), json.dumps(preferred_tools))
+        row = (
+            user_id,
+            persona if persona is not None else "calm Jarvis",
+            int(memory_ttl_hours),
+            int(bool(opt_in_privacy)),
+            json.dumps(preferred_tools),
+        )
         self._conn.execute(
             "INSERT OR REPLACE INTO user_profiles (user_id, persona, memory_ttl_hours, opt_in_privacy, preferred_tools) VALUES (?, ?, ?, ?, ?)",
             row,
@@ -69,14 +80,14 @@ class UserProfileManager:
         self._conn.commit()
         return self.get_profile(user_id)
 
-    def get_profile(self, user_id: str) -> Optional[UserProfile]:
+    def get_profile(self, user_id: str) -> UserProfile | None:
         cur = self._conn.execute("SELECT * FROM user_profiles WHERE user_id = ?", (user_id,))
         row = cur.fetchone()
         if not row:
             return None
         return self._to_profile(row)
 
-    def update_profile(self, user_id: str, **updates) -> Optional[UserProfile]:
+    def update_profile(self, user_id: str, **updates) -> UserProfile | None:
         p = self.get_profile(user_id)
         if not p:
             return None
@@ -84,10 +95,10 @@ class UserProfileManager:
         data.update(updates)
         return self.set_profile(
             user_id,
-            persona=data.get('persona'),
-            memory_ttl_hours=data.get('memory_ttl_hours', 0),
-            opt_in_privacy=data.get('opt_in_privacy', True),
-            preferrred_tools=data.get('preferred_tools', [])
+            persona=data.get("persona"),
+            memory_ttl_hours=data.get("memory_ttl_hours", 0),
+            opt_in_privacy=data.get("opt_in_privacy", True),
+            preferrred_tools=data.get("preferred_tools", []),
         )
 
     def delete_profile(self, user_id: str) -> bool:

@@ -7,19 +7,19 @@ Creates a secure REST endpoint proxy to bridge Sentinel Desktop
 with the user's mobile device via encrypted tunnel (Ngrok/Cloudflare).
 """
 
-import os
-import time
-import logging
-import threading
-import queue
-import json
-import uuid
-import hashlib
 import base64
-from typing import Optional, Dict, Any, Callable
+import hashlib
+import json
+import logging
+import os
+import queue
+import threading
+import time
+import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from functools import wraps
+from datetime import datetime
+from typing import Any
 
 from sentinel.app.config import APPDATA_DIR
 
@@ -45,11 +45,12 @@ def hash_token(token: str) -> str:
 @dataclass
 class BridgeCommand:
     """Command received from remote device."""
+
     id: str
     command: str
     timestamp: datetime
     source: str
-    params: Dict[str, Any]
+    params: dict[str, Any]
 
 
 class CryptoBridge:
@@ -70,7 +71,7 @@ class CryptoBridge:
                     self._token_hash = data.get("hash")
             except Exception:
                 pass
-        
+
         if not self._token:
             self._token = generate_token()
             self._token_hash = hash_token(self._token)
@@ -91,7 +92,7 @@ class TunnelManager:
     """Manages tunnel connections (Ngrok/Cloudflare)."""
 
     def __init__(self):
-        self._tunnel_url: Optional[str] = None
+        self._tunnel_url: str | None = None
         self._tunnel_type: str = "ngrok"
         self._process = None
         self._running = False
@@ -99,23 +100,23 @@ class TunnelManager:
     def start_ngrok(self, port: int = 8000) -> bool:
         """Start Ngrok tunnel."""
         ngrok_path = os.path.join(os.environ.get("LOCALAPPDATA", ""), "ngrok.exe")
-        
+
         if not os.path.exists(ngrok_path):
             logger.warning("Ngrok not found, attempting cloudflared")
             return self.start_cloudflared(port)
-        
+
         try:
             import subprocess
+
             self._process = subprocess.Popen(
-                [ngrok_path, "http", str(port)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
+                [ngrok_path, "http", str(port)], stdout=subprocess.PIPE, stderr=subprocess.PIPE
             )
-            
+
             time.sleep(3)
-            
+
             try:
                 import requests
+
                 resp = requests.get("http://localhost:4040/api/tunnels", timeout=5)
                 tunnels = resp.json().get("tunnels", [])
                 if tunnels:
@@ -125,9 +126,9 @@ class TunnelManager:
                     return True
             except Exception:
                 pass
-            
+
             return self.start_cloudflared(port)
-        
+
         except Exception as e:
             logger.error(f"Ngrok start failed: {e}")
             return self.start_cloudflared(port)
@@ -135,23 +136,24 @@ class TunnelManager:
     def start_cloudflared(self, port: int = 8000) -> bool:
         """Start Cloudflare tunnel."""
         cloudflared_path = os.path.join(os.environ.get("LOCALAPPDATA", ""), "cloudflared.exe")
-        
+
         try:
             import subprocess
+
             self._process = subprocess.Popen(
                 [cloudflared_path, "tunnel", "--url", f"http://localhost:{port}"],
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
+                stderr=subprocess.PIPE,
             )
-            
+
             time.sleep(5)
             self._running = True
             self._tunnel_url = "cloudflared://ephemeral"
             self._tunnel_type = "cloudflared"
-            
+
             logger.info("Cloudflared tunnel started")
             return True
-        
+
         except Exception as e:
             logger.error(f"Cloudflared start failed: {e}")
             return False
@@ -165,7 +167,7 @@ class TunnelManager:
             except Exception:
                 pass
 
-    def get_url(self) -> Optional[str]:
+    def get_url(self) -> str | None:
         """Get the tunnel URL."""
         return self._tunnel_url
 
@@ -177,7 +179,7 @@ class TunnelManager:
 class PhoneBridge:
     """
     Inter-Device Hive Mind - Phone/PC Bridge.
-    
+
     Features:
     - Secure REST endpoint with AES-256 token auth
     - Tunnel integration (Ngrok/Cloudflare)
@@ -185,38 +187,30 @@ class PhoneBridge:
     - Push notifications to phone
     """
 
-    def __init__(
-        self,
-        port: int = 8000,
-        on_command: Optional[Callable] = None
-    ):
+    def __init__(self, port: int = 8000, on_command: Callable | None = None):
         self.port = port
         self.on_command = on_command
-        
+
         self._crypto = CryptoBridge()
         self._tunnel = TunnelManager()
         self._command_queue: queue.Queue = queue.Queue()
-        
+
         self._running = False
-        self._server_thread: Optional[threading.Thread] = None
+        self._server_thread: threading.Thread | None = None
 
     def start(self, use_tunnel: bool = True):
         """Start the phone bridge server."""
         if self._running:
             return
-        
+
         self._running = True
-        
-        self._server_thread = threading.Thread(
-            target=self._run_server,
-            daemon=True,
-            name="PhoneBridge"
-        )
+
+        self._server_thread = threading.Thread(target=self._run_server, daemon=True, name="PhoneBridge")
         self._server_thread.start()
-        
+
         if use_tunnel:
             self._start_tunnel()
-        
+
         logger.info(f"Phone bridge started on port {self.port}")
 
     def stop(self):
@@ -228,62 +222,61 @@ class PhoneBridge:
     def _run_server(self):
         """Run the Flask/FastAPI server."""
         try:
-            from flask import Flask, request, jsonify
+            from flask import Flask, jsonify, request
         except ImportError:
             logger.error("Flask not available for phone bridge")
             return
-        
+
         app = Flask(__name__)
-        
+
         @app.before_request
         def auth_check():
             token = request.headers.get("X-Bridge-Token") or request.args.get("token")
             if not token or not self._crypto.verify_token(token):
                 return jsonify({"error": "Unauthorized"}), 401
-        
+
         @app.route("/bridge/execute", methods=["POST"])
         def execute_command():
             data = request.json
             command = data.get("command", "")
             params = data.get("params", {})
-            
+
             bridge_cmd = BridgeCommand(
-                id=str(uuid.uuid4()),
-                command=command,
-                timestamp=datetime.now(),
-                source="phone",
-                params=params
+                id=str(uuid.uuid4()), command=command, timestamp=datetime.now(), source="phone", params=params
             )
-            
+
             self._command_queue.put(bridge_cmd)
-            
+
             if self.on_command:
                 result = self.on_command(command, params)
                 return jsonify({"status": "executed", "result": result})
-            
+
             return jsonify({"status": "queued", "command_id": bridge_cmd.id})
-        
+
         @app.route("/bridge/status", methods=["GET"])
         def get_status():
-            return jsonify({
-                "status": "online",
-                "tunnel_url": self._tunnel.get_url(),
-                "commands_pending": self._command_queue.qsize()
-            })
-        
+            return jsonify(
+                {
+                    "status": "online",
+                    "tunnel_url": self._tunnel.get_url(),
+                    "commands_pending": self._command_queue.qsize(),
+                }
+            )
+
         @app.route("/bridge/notify", methods=["POST"])
         def send_notification():
             data = request.json
             message = data.get("message", "")
-            
+
             try:
                 from sentinel.utils.notifier import send_notification as notify
+
                 notify("Sentinel", message)
             except Exception:
                 pass
-            
+
             return jsonify({"status": "sent"})
-        
+
         try:
             app.run(host="0.0.0.0", port=self.port, debug=False, use_reloader=False)
         except Exception as e:
@@ -293,7 +286,7 @@ class PhoneBridge:
         """Start tunnel for remote access."""
         self._tunnel.start_ngrok(self.port)
 
-    def get_command(self, timeout: float = 1.0) -> Optional[BridgeCommand]:
+    def get_command(self, timeout: float = 1.0) -> BridgeCommand | None:
         """Get next command from queue."""
         try:
             return self._command_queue.get(timeout=timeout)
@@ -304,18 +297,18 @@ class PhoneBridge:
         """Get the bridge authentication token."""
         return self._crypto.get_token()
 
-    def get_tunnel_url(self) -> Optional[str]:
+    def get_tunnel_url(self) -> str | None:
         """Get the public tunnel URL."""
         return self._tunnel.get_url()
 
-    def execute_remote_command(self, command: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
+    def execute_remote_command(self, command: str, params: dict[str, Any] = None) -> dict[str, Any]:
         """Execute a command from remote source."""
         if self.on_command:
             return self.on_command(command, params or {})
         return {"error": "No handler configured"}
 
 
-_phone_bridge: Optional[PhoneBridge] = None
+_phone_bridge: PhoneBridge | None = None
 
 
 def get_phone_bridge() -> PhoneBridge:

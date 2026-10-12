@@ -1,38 +1,49 @@
 """
 sentinel/app/application.py
 ──────────────────────────
-The main Sentinel Application class that coordinates the GUI, 
+The main Sentinel Application class that coordinates the GUI,
 audio listeners, and background orchestration.
 """
 
-import threading
-import queue
-import os
-import sys
-import time
 import datetime
 import logging
+import os
+import queue
+import sys
+import threading
+import time
 import warnings
+
+import numpy as np
 import pvporcupine
 import pyaudio
-import numpy as np
+
+from sentinel.app.audio import record_until_silence
+from sentinel.app.config import ACCESS_KEY, COMMAND_WAV, PORCUPINE_KEYWORD_PATH, get_porcupine_model_path, load_settings
+from sentinel.app.gui import RecordingOverlay, build_dashboard
+from sentinel.app.orchestration import execute_command, start_alert_loop
+from sentinel.app.state import get_state
+from sentinel.app.voice import speak, transcribe
+from sentinel.voice.tts import get_tts
+
 
 # ── Noise Filter ─────────────────────────────────────────────────────────────
 class NoiseFilter:
     def __init__(self, original_stderr):
         self.original_stderr = original_stderr
+
     def write(self, s):
         try:
             # Handle both string and bytes gracefully
             if isinstance(s, bytes):
-                msg = s.decode('utf-8', errors='ignore')
+                msg = s.decode("utf-8", errors="ignore")
             else:
                 msg = str(s)
-                
+
             # Filter Windows-specific chatter
             if any(k in msg for k in ("WNDPROC", "WPARAM is simple", "LRESULT")):
                 return len(s)
-            
+
             # Use original_stderr safely
             self.original_stderr.write(msg)
             return len(s)
@@ -41,33 +52,24 @@ class NoiseFilter:
             try:
                 self.original_stderr.write(str(s))
                 return len(s)
-            except:
+            except Exception:
                 return len(s)
 
     def flush(self):
         try:
             self.original_stderr.flush()
-        except:
+        except Exception:
             pass
+
 
 if sys.platform == "win32":
     sys.stderr = NoiseFilter(sys.stderr)
-
-from sentinel.app.state import get_state
-from sentinel.app.config import (
-    ACCESS_KEY, COMMAND_WAV, PORCUPINE_KEYWORD_PATH,
-    get_porcupine_model_path, load_settings
-)
-from sentinel.app.gui import build_dashboard, RecordingOverlay, start_tray_icon
-from sentinel.app.audio import record_until_silence, liveness_verify
-from sentinel.app.voice import speak, transcribe
-from sentinel.app.orchestration import execute_command, start_alert_loop
-from sentinel.voice.tts import get_tts
 
 # Suppress harmless but noisy WNDPROC warnings on Windows 11
 warnings.filterwarnings("ignore", message="WPARAM is simple, so must be an int object")
 
 logger = logging.getLogger("SentinelApp")
+
 
 class SentinelApp:
     def __init__(self):
@@ -77,7 +79,7 @@ class SentinelApp:
         self.root = None
         self.overlay = None
         self.wake_stop_event = threading.Event()
-        
+
     def log_status(self, msg: str):
         """Send a message to the GUI status bar."""
         self.status_queue.put(msg)
@@ -101,23 +103,17 @@ class SentinelApp:
         custom_path = settings.get("wake_word_path") or PORCUPINE_KEYWORD_PATH
         sens = float(settings.get("wake_sensitivity", 0.5))
         model_path = get_porcupine_model_path()
-        
+
         try:
             if custom_path and os.path.exists(custom_path):
                 logger.info(f"Initializing wake word with custom model: {os.path.basename(custom_path)}")
                 porcupine = pvporcupine.create(
-                    access_key=ACCESS_KEY,
-                    keyword_paths=[custom_path],
-                    sensitivities=[sens],
-                    model_path=model_path
+                    access_key=ACCESS_KEY, keyword_paths=[custom_path], sensitivities=[sens], model_path=model_path
                 )
             else:
                 logger.info("Initializing wake word with default keyword: 'computer'")
                 porcupine = pvporcupine.create(
-                    access_key=ACCESS_KEY,
-                    keywords=["computer"],
-                    sensitivities=[sens],
-                    model_path=model_path
+                    access_key=ACCESS_KEY, keywords=["computer"], sensitivities=[sens], model_path=model_path
                 )
         except Exception as e:
             logger.warning("Wake word listener could not initialize: %s", e)
@@ -126,8 +122,13 @@ class SentinelApp:
 
         pa = pyaudio.PyAudio()
         try:
-            stream = pa.open(format=pyaudio.paInt16, channels=1, rate=porcupine.sample_rate,
-                             input=True, frames_per_buffer=porcupine.frame_length)
+            stream = pa.open(
+                format=pyaudio.paInt16,
+                channels=1,
+                rate=porcupine.sample_rate,
+                input=True,
+                frames_per_buffer=porcupine.frame_length,
+            )
         except Exception as e:
             msg = f"Mic open failed: {str(e)[:30]}"
             self.log_status(msg)
@@ -139,17 +140,17 @@ class SentinelApp:
         self.log_status("Listening for wake word...")
         self._is_paused = False
         loop_counter = 0
-        
+
         try:
             while not self.wake_stop_event.is_set():
                 if self._is_paused:
                     time.sleep(0.1)
                     continue
-                    
+
                 try:
                     pcm = stream.read(porcupine.frame_length, exception_on_overflow=False)
                     pcm_unpacked = np.frombuffer(pcm, dtype=np.int16)
-                    
+
                     # Update real-time voice meter
                     amp = np.abs(pcm_unpacked).astype(float).mean()
                     meter_sens = settings.get("meter_sensitivity", 50)
@@ -179,45 +180,44 @@ class SentinelApp:
         last_auth = self.state.last_auth_time
         if last_auth <= 0:
             return False
-            
+
         now = datetime.datetime.now()
         # Find the most recent 12:30 AM
         reset_time = now.replace(hour=0, minute=30, second=0, microsecond=0)
         if now < reset_time:
             # If current time is before 12:30 AM, the reset was yesterday at 12:30 AM
             reset_time -= datetime.timedelta(days=1)
-            
+
         return last_auth > reset_time.timestamp()
 
     def _verify_identification_code(self) -> bool:
         """Prompt for and verify a spoken 4-digit identification code."""
         speak("Identification required for new session. Please state your four digit code.", block=True)
         self.log_status("Waiting for ID code...")
-        
+
         # Open overlay for visual feedback
         self.overlay = RecordingOverlay(self.root)
         fn, had = record_until_silence(COMMAND_WAV, on_amp=self.on_amp_update, max_duration=6)
         self.overlay.destroy()
         self.overlay = None
-        
+
         if not had:
             speak("No code detected. Access denied.")
             return False
-            
+
         code_text = transcribe(fn)
         if not code_text:
             speak("I couldn't hear the code. Access denied.")
             return False
-            
+
         # Clean up text (remove spaces, etc)
         digits = "".join(filter(str.isdigit, code_text))
-        
+
         # For prototype, we use '1234' or fetch from secrets
-        from sentinel.app.secrets import fetch_secret
         # We need a master password to fetch, but for session wake we use a hardcoded or env-based ID for now
         # unless we want to ask for password (the user said 'identification code')
         target_code = os.getenv("SENTINEL_ID_CODE", "1234")
-        
+
         if digits == target_code:
             self.state.last_auth_time = time.time()
             speak("Identity confirmed. Session active until 12 30 AM.")
@@ -236,9 +236,9 @@ class SentinelApp:
 
             # Check if TTS is playing and stop it when wake word is detected
             get_tts().stop_speaking()
-            
+
             self.log_status("Wake word detected.")
-            
+
             # 1. Session Check
             if not self._is_session_active():
                 if not self._verify_identification_code():
@@ -246,14 +246,14 @@ class SentinelApp:
             else:
                 # Subtle chime or "Yes" if already auth'd
                 speak("Yes Master", block=True)
-            
+
             # 2. Record command
             self.log_status("Recording command...")
             self.overlay = RecordingOverlay(self.root)
             fn, had = record_until_silence(COMMAND_WAV, on_amp=self.on_amp_update)
             self.overlay.destroy()
             self.overlay = None
-            
+
             if not had:
                 self.log_status("No speech detected.")
                 return
@@ -269,7 +269,7 @@ class SentinelApp:
                     self.log_status("Speech interrupted by user")
                     self._is_paused = False
                     return
-                    
+
                 print(f"\n[USER COMMAND]: {text}")
                 self.log_status(f"Command: {text}")
                 execute_command(text, self.orchestrator)
@@ -294,11 +294,15 @@ class SentinelApp:
         """Callback to shut down the entire app gracefully."""
         self.log_status("Shutting down...")
         if hasattr(self, "hotkey_manager") and self.hotkey_manager:
-            try: self.hotkey_manager.stop()
-            except Exception: pass
+            try:
+                self.hotkey_manager.stop()
+            except Exception:
+                pass
         if hasattr(self, "barge_in_monitor") and self.barge_in_monitor:
-            try: self.barge_in_monitor.stop()
-            except Exception: pass
+            try:
+                self.barge_in_monitor.stop()
+            except Exception:
+                pass
         if self.root:
             self.root.after(100, self.root.destroy)
         else:
@@ -309,10 +313,11 @@ class SentinelApp:
     def run(self):
         """Start all services and show GUI."""
         from sentinel.app.boot import initialize_orchestrator
+
         self.orchestrator = initialize_orchestrator()
-        
+
         if self.orchestrator:
-            self.orchestrator.exit_callback = self._on_exit # Override with GUI closer
+            self.orchestrator.exit_callback = self._on_exit  # Override with GUI closer
             start_alert_loop(self.orchestrator)
 
         # 1. Startup Greeting
@@ -322,10 +327,8 @@ class SentinelApp:
         threading.Thread(target=self._listen_loop, daemon=True).start()
         try:
             from sentinel.voice.barge_in import BargeInMonitor
-            self.barge_in_monitor = BargeInMonitor(
-                tts_engine=get_tts(),
-                on_barge_in=self._on_barge_in_triggered
-            )
+
+            self.barge_in_monitor = BargeInMonitor(tts_engine=get_tts(), on_barge_in=self._on_barge_in_triggered)
             self.barge_in_monitor.start()
         except Exception as e:
             logger.debug(f"BargeInMonitor startup failed: {e}")
@@ -333,19 +336,21 @@ class SentinelApp:
         # 3. Start Global Hotkey listener (Alt+J / Ctrl+Shift+J)
         try:
             from sentinel.utils.hotkey_manager import GlobalHotkeyManager
+
             self.hotkey_manager = GlobalHotkeyManager(on_trigger=self._on_hotkey_pressed)
             self.hotkey_manager.start()
         except Exception as e:
             logger.debug(f"GlobalHotkeyManager startup failed: {e}")
 
         # Build GUI
-        from sentinel.app.voice_enroll import start_enrollment
-        from sentinel.app.secrets import verify_master
-        from sentinel.app.registry import build_app_registry
         from tkinter import simpledialog
 
+        from sentinel.app.registry import build_app_registry
+        from sentinel.app.secrets import verify_master
+        from sentinel.app.voice_enroll import start_enrollment
+
         def on_voice_reg_click():
-            pwd = simpledialog.askstring("Master Password", "Enter Master Password to recalibrate voice:", show='*')
+            pwd = simpledialog.askstring("Master Password", "Enter Master Password to recalibrate voice:", show="*")
             if verify_master(pwd):
                 threading.Thread(target=start_enrollment, args=(self.log_status,), daemon=True).start()
             else:
@@ -355,12 +360,14 @@ class SentinelApp:
 
         self.root, self.voice_meter, self.mru_combo = build_dashboard(
             on_voice_reg=on_voice_reg_click,
-            on_rebuild=lambda: threading.Thread(target=build_app_registry, kwargs={"fast_only": False}, daemon=True).start(),
-            on_manual=lambda: self._handle_wake_detection(), # Reuse wake logic
+            on_rebuild=lambda: threading.Thread(
+                target=build_app_registry, kwargs={"fast_only": False}, daemon=True
+            ).start(),
+            on_manual=lambda: self._handle_wake_detection(),  # Reuse wake logic
             on_config=lambda: ConfigWindow(self.root),
             on_terminate=lambda: self._on_exit(),
             on_agent_toggle=lambda: print("Agent Toggle"),
-            app_list=[] # Load from registry
+            app_list=[],  # Load from registry
         )
 
         def update_ui():

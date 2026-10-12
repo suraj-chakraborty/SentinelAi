@@ -1,8 +1,11 @@
 from __future__ import annotations
+
 import json
-import time
 import os
+import time
+
 from sentinel.app.config import AUDIT_LOG_PATH
+
 
 def log_audit(actor: str, action: str, details: str = "") -> None:
     entry = {

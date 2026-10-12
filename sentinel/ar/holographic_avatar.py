@@ -18,121 +18,177 @@ import logging
 import math
 import threading
 import time
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger("HolographicAvatar")
 
 
 # ── Phoneme-to-Viseme Map ────────────────────────────────────────────────────
 
+
 class Viseme(Enum):
     """Standard viseme categories for mouth shape animation."""
-    SILENCE    = "silence"       # Mouth closed
-    AA         = "aa"            # Open jaw (father)
-    EE         = "ee"            # Spread lips (see)
-    OH         = "oh"            # Rounded lips (go)
-    OO         = "oo"            # Pursed lips (too)
-    MM         = "mm"            # Closed lips (mama)
-    TH         = "th"            # Tongue between teeth
-    FF         = "ff"            # Teeth on lip (fine)
-    SS         = "ss"            # Teeth together (see)
-    SH         = "sh"            # Rounded slightly (shoe)
-    WIDE_OPEN  = "wide_open"     # Exclamation / emphasis
+
+    SILENCE = "silence"  # Mouth closed
+    AA = "aa"  # Open jaw (father)
+    EE = "ee"  # Spread lips (see)
+    OH = "oh"  # Rounded lips (go)
+    OO = "oo"  # Pursed lips (too)
+    MM = "mm"  # Closed lips (mama)
+    TH = "th"  # Tongue between teeth
+    FF = "ff"  # Teeth on lip (fine)
+    SS = "ss"  # Teeth together (see)
+    SH = "sh"  # Rounded slightly (shoe)
+    WIDE_OPEN = "wide_open"  # Exclamation / emphasis
 
 
 PHONEME_TO_VISEME = {
-    "AA": Viseme.AA, "AE": Viseme.AA, "AH": Viseme.AA, "AO": Viseme.OH,
-    "AW": Viseme.OH, "AY": Viseme.AA,
-    "B": Viseme.MM, "CH": Viseme.SH,
-    "D": Viseme.TH, "DH": Viseme.TH,
-    "EH": Viseme.EE, "ER": Viseme.OH, "EY": Viseme.EE,
-    "F": Viseme.FF, "G": Viseme.AA,
+    "AA": Viseme.AA,
+    "AE": Viseme.AA,
+    "AH": Viseme.AA,
+    "AO": Viseme.OH,
+    "AW": Viseme.OH,
+    "AY": Viseme.AA,
+    "B": Viseme.MM,
+    "CH": Viseme.SH,
+    "D": Viseme.TH,
+    "DH": Viseme.TH,
+    "EH": Viseme.EE,
+    "ER": Viseme.OH,
+    "EY": Viseme.EE,
+    "F": Viseme.FF,
+    "G": Viseme.AA,
     "HH": Viseme.AA,
-    "IH": Viseme.EE, "IY": Viseme.EE,
-    "JH": Viseme.SH, "K": Viseme.AA,
-    "L": Viseme.TH, "M": Viseme.MM, "N": Viseme.TH, "NG": Viseme.AA,
-    "OW": Viseme.OH, "OY": Viseme.OH,
-    "P": Viseme.MM, "R": Viseme.OH,
-    "S": Viseme.SS, "SH": Viseme.SH,
-    "T": Viseme.TH, "TH": Viseme.TH,
-    "UH": Viseme.OO, "UW": Viseme.OO,
-    "V": Viseme.FF, "W": Viseme.OO, "Y": Viseme.EE,
-    "Z": Viseme.SS, "ZH": Viseme.SH,
+    "IH": Viseme.EE,
+    "IY": Viseme.EE,
+    "JH": Viseme.SH,
+    "K": Viseme.AA,
+    "L": Viseme.TH,
+    "M": Viseme.MM,
+    "N": Viseme.TH,
+    "NG": Viseme.AA,
+    "OW": Viseme.OH,
+    "OY": Viseme.OH,
+    "P": Viseme.MM,
+    "R": Viseme.OH,
+    "S": Viseme.SS,
+    "SH": Viseme.SH,
+    "T": Viseme.TH,
+    "TH": Viseme.TH,
+    "UH": Viseme.OO,
+    "UW": Viseme.OO,
+    "V": Viseme.FF,
+    "W": Viseme.OO,
+    "Y": Viseme.EE,
+    "Z": Viseme.SS,
+    "ZH": Viseme.SH,
 }
 
 
 # ── Emotional Visual States ──────────────────────────────────────────────────
 
+
 class AvatarEmotion(Enum):
-    IDLE        = "idle"
-    SPEAKING    = "speaking"
-    LISTENING   = "listening"
-    CUTE_ANGER  = "cute_anger"
-    FLIRTY      = "flirty"
-    FOCUSED     = "focused"
-    EMPATHIC    = "empathic"
-    EXCITED     = "excited"
+    IDLE = "idle"
+    SPEAKING = "speaking"
+    LISTENING = "listening"
+    CUTE_ANGER = "cute_anger"
+    FLIRTY = "flirty"
+    FOCUSED = "focused"
+    EMPATHIC = "empathic"
+    EXCITED = "excited"
 
 
 @dataclass
 class EmotionVisuals:
     """Visual rendering parameters for each emotional state."""
-    core_color: Tuple[int, int, int]          # RGB base color
-    glow_color: Tuple[int, int, int]          # Outer glow RGB
-    pulse_rate: float                          # Hz — how fast the core pulses
-    particle_density: int                      # Ambient particle count
-    expression_key: str                        # Animation expression name
-    mouth_modifier: float = 1.0               # Lip-sync amplitude multiplier
-    blush_intensity: float = 0.0              # 0.0–1.0 blush overlay
-    eye_scale: float = 1.0                    # Eye size multiplier
+
+    core_color: tuple[int, int, int]  # RGB base color
+    glow_color: tuple[int, int, int]  # Outer glow RGB
+    pulse_rate: float  # Hz — how fast the core pulses
+    particle_density: int  # Ambient particle count
+    expression_key: str  # Animation expression name
+    mouth_modifier: float = 1.0  # Lip-sync amplitude multiplier
+    blush_intensity: float = 0.0  # 0.0–1.0 blush overlay
+    eye_scale: float = 1.0  # Eye size multiplier
 
 
-EMOTION_VISUAL_MAP: Dict[AvatarEmotion, EmotionVisuals] = {
+EMOTION_VISUAL_MAP: dict[AvatarEmotion, EmotionVisuals] = {
     AvatarEmotion.IDLE: EmotionVisuals(
-        core_color=(0, 200, 255), glow_color=(0, 120, 200),
-        pulse_rate=0.5, particle_density=20, expression_key="neutral",
+        core_color=(0, 200, 255),
+        glow_color=(0, 120, 200),
+        pulse_rate=0.5,
+        particle_density=20,
+        expression_key="neutral",
     ),
     AvatarEmotion.SPEAKING: EmotionVisuals(
-        core_color=(0, 240, 255), glow_color=(0, 180, 220),
-        pulse_rate=2.0, particle_density=40, expression_key="talking",
+        core_color=(0, 240, 255),
+        glow_color=(0, 180, 220),
+        pulse_rate=2.0,
+        particle_density=40,
+        expression_key="talking",
         mouth_modifier=1.2,
     ),
     AvatarEmotion.LISTENING: EmotionVisuals(
-        core_color=(80, 220, 255), glow_color=(40, 160, 200),
-        pulse_rate=1.0, particle_density=30, expression_key="attentive",
+        core_color=(80, 220, 255),
+        glow_color=(40, 160, 200),
+        pulse_rate=1.0,
+        particle_density=30,
+        expression_key="attentive",
         eye_scale=1.15,
     ),
     AvatarEmotion.CUTE_ANGER: EmotionVisuals(
-        core_color=(255, 140, 50), glow_color=(255, 100, 30),
-        pulse_rate=3.0, particle_density=60, expression_key="pout",
-        mouth_modifier=0.5, eye_scale=1.3,
+        core_color=(255, 140, 50),
+        glow_color=(255, 100, 30),
+        pulse_rate=3.0,
+        particle_density=60,
+        expression_key="pout",
+        mouth_modifier=0.5,
+        eye_scale=1.3,
     ),
     AvatarEmotion.FLIRTY: EmotionVisuals(
-        core_color=(200, 100, 255), glow_color=(160, 60, 220),
-        pulse_rate=0.8, particle_density=50, expression_key="wink",
-        blush_intensity=0.6, mouth_modifier=0.9,
+        core_color=(200, 100, 255),
+        glow_color=(160, 60, 220),
+        pulse_rate=0.8,
+        particle_density=50,
+        expression_key="wink",
+        blush_intensity=0.6,
+        mouth_modifier=0.9,
     ),
     AvatarEmotion.FOCUSED: EmotionVisuals(
-        core_color=(0, 255, 200), glow_color=(0, 200, 160),
-        pulse_rate=1.5, particle_density=15, expression_key="determined",
+        core_color=(0, 255, 200),
+        glow_color=(0, 200, 160),
+        pulse_rate=1.5,
+        particle_density=15,
+        expression_key="determined",
         eye_scale=0.9,
     ),
     AvatarEmotion.EMPATHIC: EmotionVisuals(
-        core_color=(255, 180, 100), glow_color=(220, 140, 60),
-        pulse_rate=0.4, particle_density=35, expression_key="caring",
-        eye_scale=1.2, blush_intensity=0.2,
+        core_color=(255, 180, 100),
+        glow_color=(220, 140, 60),
+        pulse_rate=0.4,
+        particle_density=35,
+        expression_key="caring",
+        eye_scale=1.2,
+        blush_intensity=0.2,
     ),
     AvatarEmotion.EXCITED: EmotionVisuals(
-        core_color=(255, 220, 0), glow_color=(255, 180, 0),
-        pulse_rate=4.0, particle_density=80, expression_key="wide_smile",
-        mouth_modifier=1.5, eye_scale=1.25,
+        core_color=(255, 220, 0),
+        glow_color=(255, 180, 0),
+        pulse_rate=4.0,
+        particle_density=80,
+        expression_key="wide_smile",
+        mouth_modifier=1.5,
+        eye_scale=1.25,
     ),
 }
 
 
 # ── Particle System ──────────────────────────────────────────────────────────
+
 
 @dataclass
 class Particle:
@@ -143,7 +199,7 @@ class Particle:
     life: float
     max_life: float
     size: float
-    color: Tuple[int, int, int]
+    color: tuple[int, int, int]
 
 
 class HolographicParticleSystem:
@@ -151,27 +207,31 @@ class HolographicParticleSystem:
 
     def __init__(self, max_particles: int = 100):
         self.max_particles = max_particles
-        self.particles: List[Particle] = []
+        self.particles: list[Particle] = []
         self._time = 0.0
 
-    def emit(self, cx: float, cy: float, count: int,
-             color: Tuple[int, int, int]) -> None:
+    def emit(self, cx: float, cy: float, count: int, color: tuple[int, int, int]) -> None:
         """Emit `count` particles from center (cx, cy)."""
         import random
+
         for _ in range(min(count, self.max_particles - len(self.particles))):
             angle = random.uniform(0, 2 * math.pi)
             speed = random.uniform(0.3, 2.0)
             life = random.uniform(1.0, 3.0)
-            self.particles.append(Particle(
-                x=cx, y=cy,
-                vx=math.cos(angle) * speed,
-                vy=math.sin(angle) * speed,
-                life=life, max_life=life,
-                size=random.uniform(1.5, 4.0),
-                color=color,
-            ))
+            self.particles.append(
+                Particle(
+                    x=cx,
+                    y=cy,
+                    vx=math.cos(angle) * speed,
+                    vy=math.sin(angle) * speed,
+                    life=life,
+                    max_life=life,
+                    size=random.uniform(1.5, 4.0),
+                    color=color,
+                )
+            )
 
-    def tick(self, dt: float) -> List[Dict[str, Any]]:
+    def tick(self, dt: float) -> list[dict[str, Any]]:
         """Advance simulation by `dt` seconds; return render data."""
         self._time += dt
         alive = []
@@ -183,12 +243,15 @@ class HolographicParticleSystem:
             p.x += p.vx * dt * 30
             p.y += p.vy * dt * 30
             alpha = max(0.0, p.life / p.max_life)
-            render_data.append({
-                "x": p.x, "y": p.y,
-                "size": p.size * alpha,
-                "color": p.color,
-                "alpha": alpha,
-            })
+            render_data.append(
+                {
+                    "x": p.x,
+                    "y": p.y,
+                    "size": p.size * alpha,
+                    "color": p.color,
+                    "alpha": alpha,
+                }
+            )
             alive.append(p)
         self.particles = alive
         return render_data
@@ -199,19 +262,22 @@ class HolographicParticleSystem:
 
 # ── Cursor / Gaze Tracker ────────────────────────────────────────────────────
 
+
 class CursorGazeTracker:
     """Tracks mouse cursor position for avatar eye tracking."""
 
     def __init__(self):
-        self._cursor_pos: Tuple[int, int] = (0, 0)
+        self._cursor_pos: tuple[int, int] = (0, 0)
         self._lock = threading.Lock()
 
-    def update(self) -> Tuple[int, int]:
+    def update(self) -> tuple[int, int]:
         """Get current cursor position using Win32 API."""
         try:
             import ctypes
+
             class POINT(ctypes.Structure):
                 _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
             pt = POINT()
             ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
             with self._lock:
@@ -221,12 +287,11 @@ class CursorGazeTracker:
         return self._cursor_pos
 
     @property
-    def position(self) -> Tuple[int, int]:
+    def position(self) -> tuple[int, int]:
         with self._lock:
             return self._cursor_pos
 
-    def compute_eye_offset(self, avatar_center: Tuple[float, float],
-                           max_offset: float = 8.0) -> Tuple[float, float]:
+    def compute_eye_offset(self, avatar_center: tuple[float, float], max_offset: float = 8.0) -> tuple[float, float]:
         """Compute (dx, dy) offset for avatar eyes toward cursor."""
         cx, cy = avatar_center
         mx, my = self.position
@@ -238,6 +303,7 @@ class CursorGazeTracker:
 
 # ── Lip-Sync Analyzer ────────────────────────────────────────────────────────
 
+
 class AudioToVisemeAnalyzer:
     """Maps streaming audio energy to real-time viseme frames."""
 
@@ -246,7 +312,7 @@ class AudioToVisemeAnalyzer:
         self._energy: float = 0.0
         self._frame_count: int = 0
 
-    def analyze_chunk(self, pcm_bytes: bytes, sample_rate: int = 16000) -> Dict[str, Any]:
+    def analyze_chunk(self, pcm_bytes: bytes, sample_rate: int = 16000) -> dict[str, Any]:
         """Analyze a raw PCM audio chunk and return viseme + energy."""
         self._frame_count += 1
         if not pcm_bytes:
@@ -256,13 +322,14 @@ class AudioToVisemeAnalyzer:
 
         # Compute RMS energy from 16-bit PCM
         import struct
+
         n_samples = len(pcm_bytes) // 2
         if n_samples == 0:
             self._energy = 0.0
             self._current_viseme = Viseme.SILENCE
             return {"viseme": Viseme.SILENCE, "energy": 0.0, "frame": self._frame_count}
 
-        samples = struct.unpack(f"<{n_samples}h", pcm_bytes[:n_samples * 2])
+        samples = struct.unpack(f"<{n_samples}h", pcm_bytes[: n_samples * 2])
         rms = math.sqrt(sum(s * s for s in samples) / n_samples)
         self._energy = min(rms / 3000.0, 1.0)  # Normalize to 0-1
 
@@ -301,10 +368,11 @@ class AudioToVisemeAnalyzer:
 
 # ── Holographic Avatar Engine ─────────────────────────────────────────────────
 
+
 class HolographicAvatarEngine:
     """
     Master controller for the desktop holographic avatar.
-    
+
     Manages:
     - Avatar emotional state and visual rendering parameters
     - Real-time lip-sync from audio stream
@@ -320,10 +388,10 @@ class HolographicAvatarEngine:
         self._lip_sync = AudioToVisemeAnalyzer()
         self._cursor_tracker = CursorGazeTracker()
         self._visible = False
-        self._position: Tuple[int, int] = (100, 100)  # Screen position
+        self._position: tuple[int, int] = (100, 100)  # Screen position
         self._size: int = 200  # Avatar diameter
         self._lock = threading.Lock()
-        self._render_thread: Optional[threading.Thread] = None
+        self._render_thread: threading.Thread | None = None
         self._running = False
         self._fps = 30.0
         self._opacity = 0.85
@@ -332,7 +400,7 @@ class HolographicAvatarEngine:
 
     # ── Emotion Control ──────────────────────────────────────────────────
 
-    def set_emotion(self, emotion: AvatarEmotion) -> Dict[str, Any]:
+    def set_emotion(self, emotion: AvatarEmotion) -> dict[str, Any]:
         """Transition avatar to a new emotional visual state."""
         with self._lock:
             prev = self._emotion
@@ -353,7 +421,7 @@ class HolographicAvatarEngine:
 
     # ── Lip-Sync ─────────────────────────────────────────────────────────
 
-    def feed_audio(self, pcm_chunk: bytes) -> Dict[str, Any]:
+    def feed_audio(self, pcm_chunk: bytes) -> dict[str, Any]:
         """Feed raw PCM audio for lip-sync analysis."""
         result = self._lip_sync.analyze_chunk(pcm_chunk)
         # Scale by emotion modifier
@@ -367,16 +435,15 @@ class HolographicAvatarEngine:
 
     # ── Eye Tracking ─────────────────────────────────────────────────────
 
-    def update_cursor_tracking(self) -> Tuple[float, float]:
+    def update_cursor_tracking(self) -> tuple[float, float]:
         """Update cursor position and compute eye offset."""
         self._cursor_tracker.update()
-        center = (self._position[0] + self._size / 2,
-                  self._position[1] + self._size / 2)
+        center = (self._position[0] + self._size / 2, self._position[1] + self._size / 2)
         return self._cursor_tracker.compute_eye_offset(center)
 
     # ── Render Frame ─────────────────────────────────────────────────────
 
-    def render_frame(self, dt: float = 1 / 30) -> Dict[str, Any]:
+    def render_frame(self, dt: float = 1 / 30) -> dict[str, Any]:
         """Generate one frame of avatar render data."""
         self._animation_time += dt
 
@@ -391,12 +458,9 @@ class HolographicAvatarEngine:
         eye_dx, eye_dy = self.update_cursor_tracking()
 
         # Particles
-        center = (self._position[0] + self._size / 2,
-                  self._position[1] + self._size / 2)
+        center = (self._position[0] + self._size / 2, self._position[1] + self._size / 2)
         if len(self._particles.particles) < visuals.particle_density:
-            self._particles.emit(center[0], center[1],
-                                 visuals.particle_density // 5,
-                                 visuals.glow_color)
+            self._particles.emit(center[0], center[1], visuals.particle_density // 5, visuals.glow_color)
         particle_data = self._particles.tick(dt)
 
         return {
@@ -434,7 +498,7 @@ class HolographicAvatarEngine:
         logger.info("Avatar hidden")
         return True
 
-    def set_position(self, x: int, y: int) -> Tuple[int, int]:
+    def set_position(self, x: int, y: int) -> tuple[int, int]:
         """Reposition the avatar on screen."""
         with self._lock:
             self._position = (x, y)
@@ -459,7 +523,7 @@ class HolographicAvatarEngine:
 
     # ── Animation Loop ───────────────────────────────────────────────────
 
-    def start_render_loop(self, callback: Optional[Callable] = None) -> bool:
+    def start_render_loop(self, callback: Callable | None = None) -> bool:
         """Start background render loop at target FPS."""
         if self._running:
             return False
@@ -495,7 +559,7 @@ class HolographicAvatarEngine:
 
     # ── Status ───────────────────────────────────────────────────────────
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Return full avatar engine status."""
         with self._lock:
             return {

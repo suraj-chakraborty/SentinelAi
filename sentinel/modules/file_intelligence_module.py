@@ -1,5 +1,5 @@
-import os
 import logging
+import os
 from datetime import datetime, timedelta
 
 try:
@@ -26,12 +26,12 @@ class FileIntelligenceModule:
         try:
             for root, dirs, files in os.walk(directory):
                 for file in files:
-                    if file.lower().endswith(('.pdf', '.docx')):
+                    if file.lower().endswith((".pdf", ".docx")):
                         filepath = os.path.join(root, file)
                         mtime = datetime.fromtimestamp(os.path.getmtime(filepath))
                         if mtime > threshold:
                             found_files.append(filepath)
-            
+
             self.logger.info(f"Found {len(found_files)} new documents in {directory}.")
             return found_files
         except Exception as e:
@@ -42,32 +42,31 @@ class FileIntelligenceModule:
         """Reads a document and adds its content to the knowledge base."""
         try:
             content = ""
-            if filepath.lower().endswith('.pdf'):
+            if filepath.lower().endswith(".pdf"):
                 if not pypdf:
                     self.logger.warning("pypdf is not installed. Skipping PDF extraction.")
                     return False
-                with open(filepath, 'rb') as f:
+                with open(filepath, "rb") as f:
                     reader = pypdf.PdfReader(f)
                     for page in reader.pages:
                         content += page.extract_text() or ""
-            elif filepath.lower().endswith('.docx'):
+            elif filepath.lower().endswith(".docx"):
                 if not docx:
                     self.logger.warning("python-docx is not installed. Skipping DOCX extraction.")
                     return False
                 doc = docx.Document(filepath)
                 for para in doc.paragraphs:
                     content += para.text + "\n"
-            
+
             if content:
                 # Add content to knowledge base for RAG
                 filename = os.path.basename(filepath)
                 metadata = {"source": "file_intelligence", "filename": filename, "path": filepath}
                 # Chunking large documents for vector search
-                chunks = [content[i:i+1000] for i in range(0, len(content), 1000)]
+                chunks = [content[i : i + 1000] for i in range(0, len(content), 1000)]
                 for i, chunk in enumerate(chunks):
                     self.knowledge_base.add_information(
-                        f"From file {filename} (chunk {i+1}): {chunk}",
-                        metadata=metadata
+                        f"From file {filename} (chunk {i + 1}): {chunk}", metadata=metadata
                     )
                 return True, f"Indexed {filename} ({len(chunks)} chunks)."
             return False, f"Could not extract content from {filepath}."
@@ -80,7 +79,7 @@ class FileIntelligenceModule:
         files = self.scan_directory(directory, hours=hours)
         if not files:
             return "No new documents found."
-        
+
         summary = "Summary of recent documents:\n"
         for f in files:
             success, msg = self.index_document(f)

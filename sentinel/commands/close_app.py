@@ -1,7 +1,7 @@
 import logging
-import os
 
 logger = logging.getLogger("CloseApp")
+
 
 class CloseApp:
     def __init__(self, orchestrator):

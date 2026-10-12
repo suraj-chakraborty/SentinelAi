@@ -23,9 +23,10 @@ import os
 import threading
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger("BiometricVitals")
 
@@ -33,43 +34,45 @@ _APPDATA = os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "Sentinel
 
 
 class VitalStatus(Enum):
-    HEALTHY     = "healthy"
-    CAUTION     = "caution"
-    WARNING     = "warning"
-    CRITICAL    = "critical"
-    UNKNOWN     = "unknown"
+    HEALTHY = "healthy"
+    CAUTION = "caution"
+    WARNING = "warning"
+    CRITICAL = "critical"
+    UNKNOWN = "unknown"
 
 
 class PostureState(Enum):
-    UPRIGHT     = "upright"
+    UPRIGHT = "upright"
     SLIGHT_LEAN = "slight_lean"
-    SLOUCHING   = "slouching"
-    UNKNOWN     = "unknown"
+    SLOUCHING = "slouching"
+    UNKNOWN = "unknown"
 
 
 @dataclass
 class VitalSnapshot:
     """A single point-in-time biometric reading."""
+
     timestamp: float
-    heart_rate_bpm: Optional[float] = None
-    blink_rate_per_min: Optional[float] = None
+    heart_rate_bpm: float | None = None
+    blink_rate_per_min: float | None = None
     posture: PostureState = PostureState.UNKNOWN
-    head_angle_deg: Optional[float] = None
-    stress_index: Optional[float] = None       # 0.0 = calm, 1.0 = very stressed
+    head_angle_deg: float | None = None
+    stress_index: float | None = None  # 0.0 = calm, 1.0 = very stressed
     screen_time_minutes: float = 0.0
     last_break_minutes_ago: float = 0.0
-    ambient_light_lux: Optional[float] = None
+    ambient_light_lux: float | None = None
 
 
 @dataclass
 class WellnessScore:
     """Computed daily wellness score and breakdown."""
-    overall: float              # 0–100
-    heart_health: float         # 0–100
-    eye_health: float           # 0–100
-    posture_score: float        # 0–100
-    stress_score: float         # 0–100 (100 = very calm)
-    break_compliance: float     # 0–100
+
+    overall: float  # 0–100
+    heart_health: float  # 0–100
+    eye_health: float  # 0–100
+    posture_score: float  # 0–100
+    stress_score: float  # 0–100 (100 = very calm)
+    break_compliance: float  # 0–100
     timestamp: str = ""
 
 
@@ -83,14 +86,14 @@ class HeartRateEstimator:
         self._buffer_size = int(buffer_seconds * fps)
         self._green_channel_buffer: deque = deque(maxlen=self._buffer_size)
         self._fps = fps
-        self._last_hr: Optional[float] = None
+        self._last_hr: float | None = None
         self._hrv_buffer: deque = deque(maxlen=30)
 
     def add_frame_roi(self, green_mean: float) -> None:
         """Add a mean green channel value from the forehead ROI."""
         self._green_channel_buffer.append(green_mean)
 
-    def estimate_heart_rate(self) -> Optional[float]:
+    def estimate_heart_rate(self) -> float | None:
         """Estimate heart rate from green channel oscillations using peak detection."""
         if len(self._green_channel_buffer) < self._buffer_size * 0.7:
             return self._last_hr
@@ -122,12 +125,11 @@ class HeartRateEstimator:
 
         return self._last_hr
 
-    def get_stress_index(self) -> Optional[float]:
+    def get_stress_index(self) -> float | None:
         """Estimate stress from heart rate variability (RMSSD proxy)."""
         if len(self._hrv_buffer) < 5:
             return None
-        diffs = [abs(self._hrv_buffer[i] - self._hrv_buffer[i - 1])
-                 for i in range(1, len(self._hrv_buffer))]
+        diffs = [abs(self._hrv_buffer[i] - self._hrv_buffer[i - 1]) for i in range(1, len(self._hrv_buffer))]
         rmssd = math.sqrt(sum(d * d for d in diffs) / len(diffs))
         # Lower RMSSD = higher stress (inverted and normalized)
         stress = max(0.0, min(1.0, 1.0 - (rmssd / 20.0)))
@@ -175,7 +177,7 @@ class PostureAnalyzer:
     def __init__(self):
         self._current_posture = PostureState.UNKNOWN
         self._head_angle = 0.0
-        self._slouch_threshold = 15.0    # degrees
+        self._slouch_threshold = 15.0  # degrees
         self._severe_threshold = 30.0
 
     def analyze_head_pose(self, pitch: float, yaw: float, roll: float) -> PostureState:
@@ -217,8 +219,7 @@ class BiometricVitalsEngine:
     and generates wellness reports with break reminders.
     """
 
-    def __init__(self, break_interval_min: float = 45.0,
-                 alert_callback: Optional[Callable[[str], None]] = None):
+    def __init__(self, break_interval_min: float = 45.0, alert_callback: Callable[[str], None] | None = None):
         self._hr_estimator = HeartRateEstimator()
         self._blink_tracker = BlinkTracker()
         self._posture_analyzer = PostureAnalyzer()
@@ -227,9 +228,9 @@ class BiometricVitalsEngine:
         self._session_start = time.time()
         self._last_break_time = time.time()
         self._running = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
-        self._vitals_history: List[VitalSnapshot] = []
+        self._vitals_history: list[VitalSnapshot] = []
         self._max_history = 500
         self._hydration_reminders = 0
         self._posture_alerts = 0
@@ -245,8 +246,7 @@ class BiometricVitalsEngine:
         self._session_start = time.time()
         self._last_break_time = time.time()
 
-        self._thread = threading.Thread(target=self._monitor_loop, daemon=True,
-                                         name="BiometricVitals")
+        self._thread = threading.Thread(target=self._monitor_loop, daemon=True, name="BiometricVitals")
         self._thread.start()
         logger.info("Biometric monitoring started")
         return True
@@ -295,9 +295,7 @@ class BiometricVitalsEngine:
             if snapshot.posture == PostureState.SLOUCHING:
                 self._posture_alerts += 1
                 if self._posture_alerts % 3 == 1:  # Don't spam
-                    self._send_alert(
-                        "🪑 Posture check! You're slouching. Sit up straight and align your screen."
-                    )
+                    self._send_alert("🪑 Posture check! You're slouching. Sit up straight and align your screen.")
 
             time.sleep(30)  # Check every 30 seconds
 
@@ -314,8 +312,9 @@ class BiometricVitalsEngine:
         self._last_break_time = time.time()
         return "Break recorded! Timer reset. Remember to stretch and hydrate. 💧"
 
-    def feed_camera_frame(self, green_mean: float, ear: Optional[float] = None,
-                           head_pose: Optional[Tuple[float, float, float]] = None) -> Dict[str, Any]:
+    def feed_camera_frame(
+        self, green_mean: float, ear: float | None = None, head_pose: tuple[float, float, float] | None = None
+    ) -> dict[str, Any]:
         """Feed camera data for real-time vitals estimation."""
         result = {}
 
@@ -390,8 +389,9 @@ class BiometricVitalsEngine:
         else:
             break_score = 30.0
 
-        overall = (heart_score * 0.25 + eye_score * 0.20 + posture_score * 0.20 +
-                   stress_score * 0.20 + break_score * 0.15)
+        overall = (
+            heart_score * 0.25 + eye_score * 0.20 + posture_score * 0.20 + stress_score * 0.20 + break_score * 0.15
+        )
 
         return WellnessScore(
             overall=round(overall, 1),
@@ -403,7 +403,7 @@ class BiometricVitalsEngine:
             timestamp=datetime.datetime.now().isoformat(),
         )
 
-    def get_current_vitals(self) -> Dict[str, Any]:
+    def get_current_vitals(self) -> dict[str, Any]:
         """Get latest vital signs snapshot."""
         return {
             "heart_rate_bpm": self._hr_estimator._last_hr,
@@ -423,21 +423,24 @@ class BiometricVitalsEngine:
         try:
             fname = f"vitals_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             path = os.path.join(self._log_dir, fname)
-            data = [{
-                "timestamp": v.timestamp,
-                "heart_rate": v.heart_rate_bpm,
-                "blink_rate": v.blink_rate_per_min,
-                "posture": v.posture.value,
-                "stress": v.stress_index,
-                "screen_time": v.screen_time_minutes,
-            } for v in self._vitals_history[-100:]]
+            data = [
+                {
+                    "timestamp": v.timestamp,
+                    "heart_rate": v.heart_rate_bpm,
+                    "blink_rate": v.blink_rate_per_min,
+                    "posture": v.posture.value,
+                    "stress": v.stress_index,
+                    "screen_time": v.screen_time_minutes,
+                }
+                for v in self._vitals_history[-100:]
+            ]
             with open(path, "w") as f:
                 json.dump(data, f, indent=2)
             logger.info("Vitals session saved: %s", path)
         except Exception as e:
             logger.error("Failed to save vitals: %s", e)
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         return {
             "monitoring": self._running,
             "history_size": len(self._vitals_history),

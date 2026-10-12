@@ -7,13 +7,11 @@ When the command router encounters a command it cannot handle,
 this module generates a new manifest-based plugin using LLM.
 """
 
-import os
 import json
 import logging
-from typing import Optional, Dict, Any, Tuple
+import os
 from pathlib import Path
 
-from sentinel.core.plugin_system import PLUGINS_DIR
 from sentinel.app.config import APPDATA_DIR
 
 logger = logging.getLogger("PluginGenerator")
@@ -48,13 +46,13 @@ class {class_name}(PluginBase):
         # TODO: Implement custom logic for this command
         # Access orchestrator: self.orchestrator
         # Return response string
-        
+
         action = self._extract_action(command)
-        
+
         if action == "execute":
             # Example: perform the action
             pass
-        
+
         return "Executing: {command_description}"
 
     def _extract_action(self, command: str) -> str:
@@ -84,7 +82,7 @@ class {class_name}(PluginBase):
         logger.info(f"Plugin '{self.name}' unloaded")
 '''
 
-MANIFEST_TEMPLATE = '''{{
+MANIFEST_TEMPLATE = """{{
     "name": "{plugin_name}",
     "version": "1.0.0",
     "description": "Auto-generated plugin for: {description}",
@@ -95,7 +93,7 @@ MANIFEST_TEMPLATE = '''{{
     "class": "{class_name}",
     "requires": []
 }}
-'''
+"""
 
 
 def sanitize_name(name: str) -> str:
@@ -110,14 +108,10 @@ class PluginGenerator:
     def __init__(self, orchestrator=None):
         self.orchestrator = orchestrator
 
-    def generate_plugin(
-        self,
-        command: str,
-        description: Optional[str] = None
-    ) -> Tuple[bool, str, str]:
+    def generate_plugin(self, command: str, description: str | None = None) -> tuple[bool, str, str]:
         """
         Generate a plugin for the given command.
-        
+
         Returns: (success, plugin_name, message)
         """
         if not self.orchestrator:
@@ -125,13 +119,13 @@ class PluginGenerator:
 
         try:
             plugin_name, triggers, intents = self._analyze_command(command, description)
-            
+
             if not plugin_name:
                 return False, "", "Could not analyze command"
 
             plugin_name = sanitize_name(plugin_name)
             class_name = "".join(word.title() for word in plugin_name.replace("-", "_").split("_"))
-            
+
             plugin_dir = os.path.join(GENERATED_PLUGINS_DIR, plugin_name)
             Path(plugin_dir).mkdir(parents=True, exist_ok=True)
 
@@ -145,15 +139,11 @@ class PluginGenerator:
             logger.error(f"Plugin generation failed: {e}")
             return False, "", str(e)
 
-    def _analyze_command(
-        self,
-        command: str,
-        description: Optional[str] = None
-    ) -> Tuple[Optional[str], list, list]:
+    def _analyze_command(self, command: str, description: str | None = None) -> tuple[str | None, list, list]:
         """Use LLM to analyze command and extract plugin metadata."""
         prompt = f"""Analyze this voice command and extract plugin metadata.
 Command: {command}
-Description: {description or 'N/A'}
+Description: {description or "N/A"}
 
 Output a JSON object with:
 - name: short plugin name (lowercase, underscores)
@@ -165,17 +155,17 @@ Example: {{"name": "weather_check", "triggers": ["weather", "forecast"], "intent
 
         try:
             response = self.orchestrator._safe_llm_call(prompt)
-            
+
             for fence in ("```json", "```"):
                 if fence in response:
                     response = response.split(fence)[1].split("```")[0].strip()
                     break
-            
+
             data = json.loads(response)
             name = data.get("name", "custom_plugin")
             triggers = data.get("triggers", [command[:30]])
             intents = data.get("intents", ["custom"])
-            
+
             return name, triggers, intents
 
         except json.JSONDecodeError:
@@ -186,46 +176,33 @@ Example: {{"name": "weather_check", "triggers": ["weather", "forecast"], "intent
             fallback_name = sanitize_name(command.split()[0] if command else "custom")
             return fallback_name, [command[:50]], ["custom"]
 
-    def _write_plugin_file(
-        self,
-        plugin_dir: str,
-        plugin_name: str,
-        class_name: str,
-        command: str,
-        triggers: list
-    ):
+    def _write_plugin_file(self, plugin_dir: str, plugin_name: str, class_name: str, command: str, triggers: list):
         content = PLUGIN_TEMPLATE.format(
             plugin_name=plugin_name,
             class_name=class_name,
             command_description=command,
             trigger_description=", ".join(triggers[:3]),
-            triggers=triggers
+            triggers=triggers,
         )
-        
+
         filepath = os.path.join(plugin_dir, "plugin.py")
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(content)
 
     def _write_manifest(
-        self,
-        plugin_dir: str,
-        plugin_name: str,
-        class_name: str,
-        command: str,
-        triggers: list,
-        intents: list
+        self, plugin_dir: str, plugin_name: str, class_name: str, command: str, triggers: list, intents: list
     ):
         triggers_json = json.dumps([t for t in triggers[:10]])
         intents_json = ",".join(f'"{i}"' for i in intents[:5])
-        
+
         content = MANIFEST_TEMPLATE.format(
             plugin_name=plugin_name,
             class_name=class_name,
             description=command[:100],
             triggers=triggers_json,
-            intents=intents_json
+            intents=intents_json,
         )
-        
+
         filepath = os.path.join(plugin_dir, "manifest.json")
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(content)
@@ -234,7 +211,7 @@ Example: {{"name": "weather_check", "triggers": ["weather", "forecast"], "intent
         """List all generated plugins."""
         if not os.path.exists(GENERATED_PLUGINS_DIR):
             return []
-        
+
         plugins = []
         for entry in os.scandir(GENERATED_PLUGINS_DIR):
             if entry.is_dir():
@@ -243,11 +220,9 @@ Example: {{"name": "weather_check", "triggers": ["weather", "forecast"], "intent
                     try:
                         with open(manifest_path, "r") as f:
                             manifest = json.load(f)
-                            plugins.append({
-                                "name": manifest.get("name"),
-                                "version": manifest.get("version"),
-                                "path": entry.path
-                            })
+                            plugins.append(
+                                {"name": manifest.get("name"), "version": manifest.get("version"), "path": entry.path}
+                            )
                     except Exception:
                         pass
         return plugins
@@ -258,6 +233,7 @@ Example: {{"name": "weather_check", "triggers": ["weather", "forecast"], "intent
         if os.path.exists(plugin_dir):
             try:
                 import shutil
+
                 shutil.rmtree(plugin_dir)
                 logger.info(f"Deleted plugin: {plugin_name}")
                 return True
@@ -266,7 +242,7 @@ Example: {{"name": "weather_check", "triggers": ["weather", "forecast"], "intent
         return False
 
 
-_plugin_generator: Optional[PluginGenerator] = None
+_plugin_generator: PluginGenerator | None = None
 
 
 def get_plugin_generator(orchestrator=None) -> PluginGenerator:

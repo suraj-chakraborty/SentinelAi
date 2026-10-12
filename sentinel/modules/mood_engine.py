@@ -16,32 +16,31 @@ Enables Sentinel to:
 
 import logging
 from enum import Enum
-from typing import Dict
 
 logger = logging.getLogger("MoodEngine")
 
 
 class AgentMood(str, Enum):
-    PLAYFUL       = "playful"
-    FLIRTY        = "flirty"
-    CUTE_ANGER    = "cute_anger"
-    EMPATHIC      = "empathic"
-    OPINIONATED   = "opinionated"
-    FOCUSED       = "focused"
-    NEUTRAL       = "neutral"
+    PLAYFUL = "playful"
+    FLIRTY = "flirty"
+    CUTE_ANGER = "cute_anger"
+    EMPATHIC = "empathic"
+    OPINIONATED = "opinionated"
+    FOCUSED = "focused"
+    NEUTRAL = "neutral"
 
 
 class OwnerMood(str, Enum):
-    HAPPY         = "happy"
-    STRESSED      = "stressed"
-    EXHAUSTED     = "exhausted"
-    PLAYFUL       = "playful"
-    ANNOYED       = "annoyed"
-    NEUTRAL       = "neutral"
+    HAPPY = "happy"
+    STRESSED = "stressed"
+    EXHAUSTED = "exhausted"
+    PLAYFUL = "playful"
+    ANNOYED = "annoyed"
+    NEUTRAL = "neutral"
 
 
 # Emotional acoustic & pitch presets for TTS
-MOOD_TTS_PRESETS: Dict[AgentMood, Dict[str, str]] = {
+MOOD_TTS_PRESETS: dict[AgentMood, dict[str, str]] = {
     AgentMood.PLAYFUL: {
         "pitch": "+10Hz",
         "rate": "+15%",
@@ -58,7 +57,7 @@ MOOD_TTS_PRESETS: Dict[AgentMood, Dict[str, str]] = {
         "pitch": "+18Hz",
         "rate": "+20%",
         "volume": "+15%",
-        "emotion_tag": "Excited",   # Quick, high-pitch indignant pout
+        "emotion_tag": "Excited",  # Quick, high-pitch indignant pout
     },
     AgentMood.EMPATHIC: {
         "pitch": "-6Hz",
@@ -94,7 +93,7 @@ class MoodEngine:
 
     def __new__(cls, *args, **kwargs):
         if not cls._instance:
-            cls._instance = super(MoodEngine, cls).__new__(cls)
+            cls._instance = super().__new__(cls)
             cls._instance._initialized = False
         return cls._instance
 
@@ -103,8 +102,8 @@ class MoodEngine:
             return
         self.agent_mood: AgentMood = AgentMood.PLAYFUL
         self.owner_mood: OwnerMood = OwnerMood.NEUTRAL
-        self.flirt_level: int = 1       # 0 to 3
-        self.tsundere_level: int = 1    # 0 to 3
+        self.flirt_level: int = 1  # 0 to 3
+        self.tsundere_level: int = 1  # 0 to 3
         self._history = []
         self._initialized = True
         logger.info("MoodEngine initialized with active mood: %s", self.agent_mood.value)
@@ -122,23 +121,68 @@ class MoodEngine:
         t = text.lower()
 
         # 1. Stress / Overwhelmed markers
-        if any(w in t for w in ["stressed", "headache", "overwhelmed", "deadline", "broken", "bugs", "crisis", "too much work"]):
+        if any(
+            w in t
+            for w in ["stressed", "headache", "overwhelmed", "deadline", "broken", "bugs", "crisis", "too much work"]
+        ):
             return OwnerMood.STRESSED
 
         # 2. Exhausted / Sad markers
-        if any(w in t for w in ["tired", "exhausted", "sleepy", "sad", "down", "lonely", "depressed", "can't do this", "rough day"]):
+        if any(
+            w in t
+            for w in [
+                "tired",
+                "exhausted",
+                "sleepy",
+                "sad",
+                "down",
+                "lonely",
+                "depressed",
+                "can't do this",
+                "rough day",
+            ]
+        ):
             return OwnerMood.EXHAUSTED
 
         # 3. Playful / Flirtatious markers
-        if any(w in t for w in ["cute", "love you", "marry me", "pretty", "handsome", "flirt", "darling", "baby", "gorgeous", "sweetheart", "kiss"]):
+        if any(
+            w in t
+            for w in [
+                "cute",
+                "love you",
+                "marry me",
+                "pretty",
+                "handsome",
+                "flirt",
+                "darling",
+                "baby",
+                "gorgeous",
+                "sweetheart",
+                "kiss",
+            ]
+        ):
             return OwnerMood.PLAYFUL
 
         # 4. Annoyed / Teasing markers directed at agent
-        if any(w in t for w in ["stupid", "idiot", "dumb bot", "you suck", "useless", "slow", "you're just an ai", "what did you do"]):
+        if any(
+            w in t
+            for w in [
+                "stupid",
+                "idiot",
+                "dumb bot",
+                "you suck",
+                "useless",
+                "slow",
+                "you're just an ai",
+                "what did you do",
+            ]
+        ):
             return OwnerMood.ANNOYED
 
         # 5. Happy / Victorious markers
-        if any(w in t for w in ["yay", "awesome", "great", "finally", "let's go", "it works", "solved it", "celebrate"]):
+        if any(
+            w in t for w in ["yay", "awesome", "great", "finally", "let's go", "it works", "solved it", "celebrate"]
+        ):
             return OwnerMood.HAPPY
 
         # Acoustic heuristics: very low energy + slow tempo
@@ -157,11 +201,16 @@ class MoodEngine:
         t = user_text.lower()
 
         # A. Teasing / Pout trigger → Cute Anger!
-        if detected_owner == OwnerMood.ANNOYED or any(k in t for k in ["you're dumb", "silly bot", "you don't know anything", "you're just code", "you suck", "make me"]):
+        if detected_owner == OwnerMood.ANNOYED or any(
+            k in t
+            for k in ["you're dumb", "silly bot", "you don't know anything", "you're just code", "you suck", "make me"]
+        ):
             self.agent_mood = AgentMood.CUTE_ANGER
 
         # B. Flirt trigger → Flirty
-        elif detected_owner == OwnerMood.PLAYFUL or any(k in t for k in ["you're cute", "love you", "date me", "flirt with me", "my favorite girl", "darling"]):
+        elif detected_owner == OwnerMood.PLAYFUL or any(
+            k in t for k in ["you're cute", "love you", "date me", "flirt with me", "my favorite girl", "darling"]
+        ):
             self.agent_mood = AgentMood.FLIRTY
 
         # C. Comfort trigger → Empathic
@@ -169,7 +218,17 @@ class MoodEngine:
             self.agent_mood = AgentMood.EMPATHIC
 
         # D. Opinion trigger → Opinionated
-        elif any(t.startswith(p) for p in ["what do you think", "your opinion on", "do you prefer", "is it better", "which one is better", "who is better"]):
+        elif any(
+            t.startswith(p)
+            for p in [
+                "what do you think",
+                "your opinion on",
+                "do you prefer",
+                "is it better",
+                "which one is better",
+                "who is better",
+            ]
+        ):
             self.agent_mood = AgentMood.OPINIONATED
 
         # E. Celebration → Playful
@@ -223,11 +282,13 @@ class MoodEngine:
                 "High spirits and clever banter. Add clever observations, playful teasing, and upbeat energy."
             )
         else:
-            mood_directive = "\n[CURRENT EMOTIONAL STATE: CRISP & FOCUSED]\nKeep responses sharp, professional, and ultra-competent."
+            mood_directive = (
+                "\n[CURRENT EMOTIONAL STATE: CRISP & FOCUSED]\nKeep responses sharp, professional, and ultra-competent."
+            )
 
         return base_personality + mood_directive
 
-    def get_tts_styling(self) -> Dict[str, str]:
+    def get_tts_styling(self) -> dict[str, str]:
         """Returns the TTS rate, pitch, and emotion tag corresponding to current agent mood."""
         return MOOD_TTS_PRESETS.get(self.agent_mood, MOOD_TTS_PRESETS[AgentMood.NEUTRAL])
 

@@ -5,10 +5,10 @@ Multimodal Ambient Desktop Vision & Active Window Perception.
 Combines real-time foreground window inspection with vision analysis.
 """
 
-import os
 import base64
 import logging
-from typing import Optional
+import os
+
 import httpx
 
 from sentinel.utils.window_context import get_active_window_info
@@ -17,17 +17,18 @@ logger = logging.getLogger("VisionModule")
 
 try:
     from PIL import ImageGrab
+
     _PIL_AVAILABLE = True
 except ImportError:
     _PIL_AVAILABLE = False
 
 
 class VisionModule:
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: str | None = None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
         self.logger = logger
 
-    def capture_screen(self, filename: str = "screenshot.png", crop_to_window: bool = False) -> Optional[str]:
+    def capture_screen(self, filename: str = "screenshot.png", crop_to_window: bool = False) -> str | None:
         """Captures the primary monitor screen or active window bounds."""
         if not _PIL_AVAILABLE:
             self.logger.warning("PIL not available for screen capture.")
@@ -51,26 +52,20 @@ class VisionModule:
     def analyze_screen(
         self,
         prompt: str = "What is on my screen right now? Describe the user's active context in detail.",
-        crop_to_window: bool = False
+        crop_to_window: bool = False,
     ) -> str:
         """
         Captures the screen and performs multimodal vision analysis.
         Degrades gracefully to window metadata if API key or cloud network is unavailable.
         """
         win_info = get_active_window_info()
-        context_prefix = (
-            f"Active Window: '{win_info['title']}' "
-            f"(Application: {win_info['app_name']}). "
-        )
+        context_prefix = f"Active Window: '{win_info['title']}' (Application: {win_info['app_name']}). "
 
         img_path = self.capture_screen(crop_to_window=crop_to_window)
 
         # Fallback to local window context if image capture failed
         if not img_path:
-            return (
-                f"{context_prefix} You are working in {win_info['app_name']} "
-                f"with document '{win_info['title']}'."
-            )
+            return f"{context_prefix} You are working in {win_info['app_name']} with document '{win_info['title']}'."
 
         try:
             with open(img_path, "rb") as image_file:
@@ -83,27 +78,31 @@ class VisionModule:
                 try:
                     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={self.api_key}"
                     payload = {
-                        "contents": [{
-                            "parts": [
-                                {"text": full_prompt},
-                                {
-                                    "inlineData": {
-                                        "mimeType": "image/png",
-                                        "data": base64_image
-                                    }
-                                }
-                            ]
-                        }]
+                        "contents": [
+                            {
+                                "parts": [
+                                    {"text": full_prompt},
+                                    {"inlineData": {"mimeType": "image/png", "data": base64_image}},
+                                ]
+                            }
+                        ]
                     }
                     with httpx.Client(timeout=45) as client:
                         response = client.post(url, json=payload)
                         if response.status_code == 200:
                             result = response.json()
-                            analysis = result.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
+                            analysis = (
+                                result.get("candidates", [{}])[0]
+                                .get("content", {})
+                                .get("parts", [{}])[0]
+                                .get("text", "")
+                            )
                             if analysis:
                                 return analysis.strip()
                         else:
-                            self.logger.warning(f"Gemini Vision API returned {response.status_code}: {response.text[:100]}")
+                            self.logger.warning(
+                                f"Gemini Vision API returned {response.status_code}: {response.text[:100]}"
+                            )
                 except Exception as exc:
                     self.logger.warning(f"Cloud vision failed: {exc}. Trying local multimodal fallback.")
 
@@ -120,10 +119,12 @@ class VisionModule:
             return f"{context_prefix} Analysis error: {e}"
         finally:
             if img_path and os.path.exists(img_path):
-                try: os.remove(img_path)
-                except Exception: pass
+                try:
+                    os.remove(img_path)
+                except Exception:
+                    pass
 
-    def _analyze_with_ollama(self, base64_image: str, prompt: str) -> Optional[str]:
+    def _analyze_with_ollama(self, base64_image: str, prompt: str) -> str | None:
         """
         Multimodal Local Vision Fallback via Ollama.
         Inspects locally installed models for vision capabilities (e.g. llava, moondream, llama3.2-vision).
@@ -173,5 +174,5 @@ class VisionModule:
         """Specifically describes the active foreground window context."""
         return self.analyze_screen(
             prompt="Analyze this active application window. What is the user working on? If code or terminal, identify file and errors. If browser or document, summarize the main content.",
-            crop_to_window=True
+            crop_to_window=True,
         )

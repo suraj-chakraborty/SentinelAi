@@ -15,9 +15,9 @@ class Notes:
         note = entity or text
         if not note:
             return "Note content is empty."
-        if hasattr(self.orchestrator, 'long_term_memory'):
+        if hasattr(self.orchestrator, "long_term_memory"):
             try:
-                self.orchestrator.long_term_memory.store_fact(note, category='notes')
+                self.orchestrator.long_term_memory.store_fact(note, category="notes")
                 return "Note saved."
             except Exception as e:
                 logger.error("Failed to store note: %s", e)

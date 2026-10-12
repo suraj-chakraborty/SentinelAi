@@ -18,14 +18,13 @@ Usage:
     result = agent.execute("Open Notepad, type 'Hello World', and save the file")
 """
 
+import base64
 import json
-import re
-import os
 import logging
+import os
+import re
 import threading
 import time
-import base64
-from typing import Optional, Tuple
 
 from sentinel.app.intelligence import gemini_generate
 
@@ -33,7 +32,8 @@ logger = logging.getLogger("ComputerUseAgent")
 
 try:
     import pyautogui
-    pyautogui.FAILSAFE = True   # Move mouse to corner to abort
+
+    pyautogui.FAILSAFE = True  # Move mouse to corner to abort
     _PYAUTOGUI = True
 except ImportError:
     _PYAUTOGUI = False
@@ -41,15 +41,10 @@ except ImportError:
 
 try:
     from PIL import ImageGrab
+
     _PIL = True
 except ImportError:
     _PIL = False
-
-try:
-    import httpx
-    _HTTPX = True
-except ImportError:
-    _HTTPX = False
 
 
 VISION_PROMPT = """You are an AI agent controlling a Windows desktop via mouse and keyboard.
@@ -137,19 +132,19 @@ class ComputerUseAgent:
             # 2. Ask Gemini Vision for next action
             action = self._ask_vision(goal, history, screenshot_b64)
             if not action:
-                logger.warning(f"[ComputerUse] Step {step+1}: No action returned")
+                logger.warning(f"[ComputerUse] Step {step + 1}: No action returned")
                 time.sleep(1)
                 continue
 
             action_type = action.get("action", "").lower()
-            
+
             # Coordinate scaling: from AI (1280x720) to Actual
             if "x" in action and "y" in action:
                 sw, sh = pyautogui.size()
                 action["x"] = int(action["x"] * (sw / 1280.0))
                 action["y"] = int(action["y"] * (sh / 720.0))
-                
-            logger.info(f"[ComputerUse] Step {step+1}: {action_type} → {action}")
+
+            logger.info(f"[ComputerUse] Step {step + 1}: {action_type} → {action}")
 
             # 3. Handle terminal states
             if action_type == "done":
@@ -167,12 +162,7 @@ class ComputerUseAgent:
 
             # 4. Execute action
             result_str, success = self._execute_action(action)
-            history.append({
-                "step": step + 1,
-                "action": action_type,
-                "details": str(action)[:80],
-                "result": result_str
-            })
+            history.append({"step": step + 1, "action": action_type, "details": str(action)[:80], "result": result_str})
 
             if not success:
                 logger.warning(f"[ComputerUse] Action failed: {result_str}")
@@ -186,7 +176,7 @@ class ComputerUseAgent:
 
     # ─── Action executor ──────────────────────────────────────────────────────
 
-    def _execute_action(self, action: dict) -> Tuple[str, bool]:
+    def _execute_action(self, action: dict) -> tuple[str, bool]:
         """Execute a single action and return (description, success)."""
         if not _PYAUTOGUI:
             return "pyautogui not available", False
@@ -228,6 +218,7 @@ class ComputerUseAgent:
             elif action_type == "open_app":
                 name = action.get("name", "")
                 from sentinel.utils.app_launcher import launch_app
+
                 ok = launch_app(name)
                 time.sleep(1.5)  # Wait for app to open
                 return (f"Opened: {name}", True) if ok else (f"Failed to open: {name}", False)
@@ -246,7 +237,7 @@ class ComputerUseAgent:
 
     # ─── Vision ───────────────────────────────────────────────────────────────
 
-    def _screenshot_b64(self) -> Optional[str]:
+    def _screenshot_b64(self) -> str | None:
         """Capture the full screen as base64 PNG, resized for API efficiency."""
         try:
             if _PIL:
@@ -254,12 +245,14 @@ class ComputerUseAgent:
                 # Resize to 1280x720 for faster API calls
                 img = img.resize((1280, 720))
                 import io
+
                 buf = io.BytesIO()
                 img.save(buf, format="PNG", optimize=True)
                 return base64.b64encode(buf.getvalue()).decode("utf-8")
             elif _PYAUTOGUI:
                 img = pyautogui.screenshot()
                 import io
+
                 buf = io.BytesIO()
                 img.save(buf, format="PNG")
                 return base64.b64encode(buf.getvalue()).decode("utf-8")
@@ -267,12 +260,11 @@ class ComputerUseAgent:
             logger.error(f"Screenshot error: {e}")
         return None
 
-    def _ask_vision(self, goal: str, history: list, screenshot_b64: str) -> Optional[dict]:
+    def _ask_vision(self, goal: str, history: list, screenshot_b64: str) -> dict | None:
         """Ask Gemini Vision via unified intelligence module."""
-        history_str = "\n".join(
-            f"  Step {h['step']}: {h['action']} → {h['result']}"
-            for h in history[-6:]
-        ) or "  None yet."
+        history_str = (
+            "\n".join(f"  Step {h['step']}: {h['action']} → {h['result']}" for h in history[-6:]) or "  None yet."
+        )
 
         prompt = VISION_PROMPT.format(goal=goal, history=history_str)
 
@@ -282,7 +274,7 @@ class ComputerUseAgent:
             if not text:
                 return None
 
-            match = re.search(r'\{[^{}]+\}', text, re.DOTALL)
+            match = re.search(r"\{[^{}]+\}", text, re.DOTALL)
             if match:
                 return json.loads(match.group())
         except Exception as e:

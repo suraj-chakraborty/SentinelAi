@@ -4,9 +4,9 @@ tests/test_daemon_manager.py
 Tests for daemon manager module.
 """
 
-import unittest
 import os
 import sys
+import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -14,18 +14,21 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 class TestDaemonManagerImports(unittest.TestCase):
     def test_daemon_manager_imports(self):
         from sentinel.daemons.daemon_manager import DaemonManager
-        self.assertTrue(hasattr(DaemonManager, 'start'))
-        self.assertTrue(hasattr(DaemonManager, 'stop'))
-        self.assertTrue(hasattr(DaemonManager, 'register_task'))
+
+        self.assertTrue(hasattr(DaemonManager, "start"))
+        self.assertTrue(hasattr(DaemonManager, "stop"))
+        self.assertTrue(hasattr(DaemonManager, "register_task"))
 
     def test_daemon_command_imports(self):
         from sentinel.commands.daemon_control import DaemonControlCommand
-        self.assertTrue(hasattr(DaemonControlCommand, 'execute'))
+
+        self.assertTrue(hasattr(DaemonControlCommand, "execute"))
 
 
 class TestDaemonManager(unittest.TestCase):
     def setUp(self):
         from sentinel.daemons.daemon_manager import DaemonManager
+
         self.manager = DaemonManager()
 
     def test_initial_state(self):
@@ -35,12 +38,9 @@ class TestDaemonManager(unittest.TestCase):
     def test_register_task(self):
         def dummy_action():
             return "done"
-        
+
         result = self.manager.register_task(
-            task_id="test_task",
-            name="Test Task",
-            action=dummy_action,
-            trigger="manual"
+            task_id="test_task", name="Test Task", action=dummy_action, trigger="manual"
         )
         self.assertTrue(result)
         self.assertIn("test_task", self.manager._tasks)

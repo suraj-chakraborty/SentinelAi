@@ -6,12 +6,12 @@ Maintains chronological history of user commands, actions, active apps, and resp
 Enables cross-session recall ("What did we do yesterday?", "What was that command?").
 """
 
+import logging
 import os
 import sqlite3
 import time
-import logging
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
+from typing import Any
 
 logger = logging.getLogger("EpisodicLogger")
 
@@ -61,7 +61,7 @@ class EpisodicLogger:
         intent: str = "general",
         response: str = "",
         active_app: str = "",
-        active_window: str = ""
+        active_window: str = "",
     ):
         """Record an interaction turn."""
         if not user_command or not user_command.strip():
@@ -71,55 +71,72 @@ class EpisodicLogger:
 
         try:
             with self._get_conn() as conn:
-                conn.execute("""
+                conn.execute(
+                    """
                     INSERT INTO episodes (timestamp, date_str, user_command, intent, response, active_app, active_window)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (now, date_str, user_command.strip(), intent, response[:1000] if response else "", active_app, active_window))
+                """,
+                    (
+                        now,
+                        date_str,
+                        user_command.strip(),
+                        intent,
+                        response[:1000] if response else "",
+                        active_app,
+                        active_window,
+                    ),
+                )
                 conn.commit()
         except Exception as e:
             logger.debug(f"Failed to log episode: {e}")
 
-    def get_recent(self, limit: int = 10) -> List[Dict[str, Any]]:
+    def get_recent(self, limit: int = 10) -> list[dict[str, Any]]:
         """Retrieve recent interaction episodes."""
         try:
             with self._get_conn() as conn:
                 cursor = conn.execute(
                     "SELECT date_str, user_command, intent, response, active_app FROM episodes ORDER BY timestamp DESC LIMIT ?",
-                    (limit,)
+                    (limit,),
                 )
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
             logger.debug(f"Failed to fetch recent episodes: {e}")
             return []
 
-    def search_episodes(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    def search_episodes(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
         """Search episodes by keywords in user command or response."""
         try:
             pattern = f"%{query.strip()}%"
             with self._get_conn() as conn:
-                cursor = conn.execute("""
+                cursor = conn.execute(
+                    """
                     SELECT date_str, user_command, intent, response, active_app
                     FROM episodes
                     WHERE user_command LIKE ? OR response LIKE ?
                     ORDER BY timestamp DESC
                     LIMIT ?
-                """, (pattern, pattern, limit))
+                """,
+                    (pattern, pattern, limit),
+                )
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
             logger.debug(f"Failed to search episodes: {e}")
             return []
 
-    def get_past_actions(self, days_ago: int = 1) -> List[Dict[str, Any]]:
+    def get_past_actions(self, days_ago: int = 1) -> list[dict[str, Any]]:
         """Retrieve commands executed on a previous day."""
         target_date = (datetime.now() - timedelta(days=days_ago)).strftime("%Y-%m-%d")
         try:
             with self._get_conn() as conn:
-                cursor = conn.execute("""
+                cursor = conn.execute(
+                    """
                     SELECT date_str, user_command, intent, response, active_app
                     FROM episodes
                     WHERE date_str LIKE ?
                     ORDER BY timestamp ASC
-                """, (f"{target_date}%",))
+                """,
+                    (f"{target_date}%",),
+                )
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
             logger.debug(f"Failed to get past actions: {e}")
@@ -127,7 +144,8 @@ class EpisodicLogger:
 
 
 # Singleton accessor
-_episodic_logger: Optional[EpisodicLogger] = None
+_episodic_logger: EpisodicLogger | None = None
+
 
 def get_episodic_logger() -> EpisodicLogger:
     global _episodic_logger

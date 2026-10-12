@@ -20,49 +20,50 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger("NPUAccelerator")
 
 
 class ComputeBackend(Enum):
-    CUDA        = "cuda"          # NVIDIA GPU via CUDA
-    DIRECTML    = "directml"      # Windows ML (AMD/Intel/NVIDIA)
-    OPENVINO    = "openvino"      # Intel NPU/iGPU
-    ONNXRUNTIME = "onnxruntime"   # ONNX Runtime (cross-platform)
-    VULKAN      = "vulkan"        # Vulkan compute shaders
-    CPU         = "cpu"           # Fallback CPU
-    NPU_QUALCOMM = "npu_qualcomm" # Qualcomm Snapdragon NPU
+    CUDA = "cuda"  # NVIDIA GPU via CUDA
+    DIRECTML = "directml"  # Windows ML (AMD/Intel/NVIDIA)
+    OPENVINO = "openvino"  # Intel NPU/iGPU
+    ONNXRUNTIME = "onnxruntime"  # ONNX Runtime (cross-platform)
+    VULKAN = "vulkan"  # Vulkan compute shaders
+    CPU = "cpu"  # Fallback CPU
+    NPU_QUALCOMM = "npu_qualcomm"  # Qualcomm Snapdragon NPU
 
 
 class TaskType(Enum):
-    LLM_INFERENCE    = "llm_inference"
-    VISION_CLASSIFY  = "vision_classify"
-    SPEECH_TO_TEXT   = "speech_to_text"
-    TEXT_TO_SPEECH   = "text_to_speech"
-    EMBEDDING        = "embedding"
+    LLM_INFERENCE = "llm_inference"
+    VISION_CLASSIFY = "vision_classify"
+    SPEECH_TO_TEXT = "speech_to_text"
+    TEXT_TO_SPEECH = "text_to_speech"
+    EMBEDDING = "embedding"
     OBJECT_DETECTION = "object_detection"
     GESTURE_TRACKING = "gesture_tracking"
-    GENERAL_COMPUTE  = "general_compute"
+    GENERAL_COMPUTE = "general_compute"
 
 
 class QuantizationLevel(Enum):
-    FP32  = "fp32"
-    FP16  = "fp16"
-    INT8  = "int8"
-    INT4  = "int4"
+    FP32 = "fp32"
+    FP16 = "fp16"
+    INT8 = "int8"
+    INT4 = "int4"
 
 
 @dataclass
 class AcceleratorInfo:
     """Information about a detected compute accelerator."""
+
     backend: ComputeBackend
     device_name: str
     memory_total_mb: int
     memory_free_mb: int
     compute_capability: str
     driver_version: str
-    supported_quantizations: List[QuantizationLevel] = field(default_factory=list)
+    supported_quantizations: list[QuantizationLevel] = field(default_factory=list)
     is_available: bool = True
     priority: int = 0  # Lower = preferred
 
@@ -70,6 +71,7 @@ class AcceleratorInfo:
 @dataclass
 class InferenceMetrics:
     """Performance metrics for an inference task."""
+
     task_type: TaskType
     backend_used: ComputeBackend
     latency_ms: float
@@ -83,109 +85,130 @@ class HardwareDetector:
     """Auto-detects available compute backends."""
 
     @staticmethod
-    def detect_all() -> List[AcceleratorInfo]:
+    def detect_all() -> list[AcceleratorInfo]:
         """Probe system for all available accelerators."""
         accelerators = []
 
         # 1. CUDA (NVIDIA)
         try:
             import torch
+
             if torch.cuda.is_available():
                 for i in range(torch.cuda.device_count()):
                     props = torch.cuda.get_device_properties(i)
                     free_mem, total_mem = torch.cuda.mem_get_info(i)
-                    accelerators.append(AcceleratorInfo(
-                        backend=ComputeBackend.CUDA,
-                        device_name=props.name,
-                        memory_total_mb=total_mem // (1024 * 1024),
-                        memory_free_mb=free_mem // (1024 * 1024),
-                        compute_capability=f"{props.major}.{props.minor}",
-                        driver_version=torch.version.cuda or "unknown",
-                        supported_quantizations=[
-                            QuantizationLevel.FP32, QuantizationLevel.FP16,
-                            QuantizationLevel.INT8, QuantizationLevel.INT4,
-                        ],
-                        priority=0,
-                    ))
+                    accelerators.append(
+                        AcceleratorInfo(
+                            backend=ComputeBackend.CUDA,
+                            device_name=props.name,
+                            memory_total_mb=total_mem // (1024 * 1024),
+                            memory_free_mb=free_mem // (1024 * 1024),
+                            compute_capability=f"{props.major}.{props.minor}",
+                            driver_version=torch.version.cuda or "unknown",
+                            supported_quantizations=[
+                                QuantizationLevel.FP32,
+                                QuantizationLevel.FP16,
+                                QuantizationLevel.INT8,
+                                QuantizationLevel.INT4,
+                            ],
+                            priority=0,
+                        )
+                    )
         except ImportError:
             pass
 
         # 2. DirectML (Windows)
         try:
             import onnxruntime as ort
+
             if "DmlExecutionProvider" in ort.get_available_providers():
-                accelerators.append(AcceleratorInfo(
-                    backend=ComputeBackend.DIRECTML,
-                    device_name="DirectML Device",
-                    memory_total_mb=0,
-                    memory_free_mb=0,
-                    compute_capability="DirectML 1.0",
-                    driver_version="system",
-                    supported_quantizations=[
-                        QuantizationLevel.FP32, QuantizationLevel.FP16,
-                    ],
-                    priority=1,
-                ))
+                accelerators.append(
+                    AcceleratorInfo(
+                        backend=ComputeBackend.DIRECTML,
+                        device_name="DirectML Device",
+                        memory_total_mb=0,
+                        memory_free_mb=0,
+                        compute_capability="DirectML 1.0",
+                        driver_version="system",
+                        supported_quantizations=[
+                            QuantizationLevel.FP32,
+                            QuantizationLevel.FP16,
+                        ],
+                        priority=1,
+                    )
+                )
         except ImportError:
             pass
 
         # 3. OpenVINO (Intel)
         try:
             from openvino.runtime import Core
+
             core = Core()
             devices = core.available_devices
             for dev in devices:
                 if dev != "CPU":
-                    accelerators.append(AcceleratorInfo(
-                        backend=ComputeBackend.OPENVINO,
-                        device_name=dev,
-                        memory_total_mb=0,
-                        memory_free_mb=0,
-                        compute_capability=f"OpenVINO-{dev}",
-                        driver_version=core.get_versions(dev).get(dev, {}).get("description", "unknown"),
-                        supported_quantizations=[
-                            QuantizationLevel.FP32, QuantizationLevel.FP16,
-                            QuantizationLevel.INT8,
-                        ],
-                        priority=2,
-                    ))
+                    accelerators.append(
+                        AcceleratorInfo(
+                            backend=ComputeBackend.OPENVINO,
+                            device_name=dev,
+                            memory_total_mb=0,
+                            memory_free_mb=0,
+                            compute_capability=f"OpenVINO-{dev}",
+                            driver_version=core.get_versions(dev).get(dev, {}).get("description", "unknown"),
+                            supported_quantizations=[
+                                QuantizationLevel.FP32,
+                                QuantizationLevel.FP16,
+                                QuantizationLevel.INT8,
+                            ],
+                            priority=2,
+                        )
+                    )
         except ImportError:
             pass
 
         # 4. ONNX Runtime (general)
         try:
             import onnxruntime as ort
+
             providers = ort.get_available_providers()
-            accelerators.append(AcceleratorInfo(
-                backend=ComputeBackend.ONNXRUNTIME,
-                device_name=f"ONNX ({', '.join(providers[:3])})",
-                memory_total_mb=0,
-                memory_free_mb=0,
-                compute_capability="ONNX Runtime",
-                driver_version=ort.__version__,
-                supported_quantizations=[
-                    QuantizationLevel.FP32, QuantizationLevel.FP16,
-                    QuantizationLevel.INT8,
-                ],
-                priority=3,
-            ))
+            accelerators.append(
+                AcceleratorInfo(
+                    backend=ComputeBackend.ONNXRUNTIME,
+                    device_name=f"ONNX ({', '.join(providers[:3])})",
+                    memory_total_mb=0,
+                    memory_free_mb=0,
+                    compute_capability="ONNX Runtime",
+                    driver_version=ort.__version__,
+                    supported_quantizations=[
+                        QuantizationLevel.FP32,
+                        QuantizationLevel.FP16,
+                        QuantizationLevel.INT8,
+                    ],
+                    priority=3,
+                )
+            )
         except ImportError:
             pass
 
         # 5. CPU Fallback (always available)
         import multiprocessing
-        accelerators.append(AcceleratorInfo(
-            backend=ComputeBackend.CPU,
-            device_name=platform.processor() or "Unknown CPU",
-            memory_total_mb=_get_total_ram_mb(),
-            memory_free_mb=_get_free_ram_mb(),
-            compute_capability=f"{multiprocessing.cpu_count()} cores",
-            driver_version=platform.platform(),
-            supported_quantizations=[
-                QuantizationLevel.FP32, QuantizationLevel.INT8,
-            ],
-            priority=99,
-        ))
+
+        accelerators.append(
+            AcceleratorInfo(
+                backend=ComputeBackend.CPU,
+                device_name=platform.processor() or "Unknown CPU",
+                memory_total_mb=_get_total_ram_mb(),
+                memory_free_mb=_get_free_ram_mb(),
+                compute_capability=f"{multiprocessing.cpu_count()} cores",
+                driver_version=platform.platform(),
+                supported_quantizations=[
+                    QuantizationLevel.FP32,
+                    QuantizationLevel.INT8,
+                ],
+                priority=99,
+            )
+        )
 
         accelerators.sort(key=lambda a: a.priority)
         logger.info("Detected %d compute accelerators", len(accelerators))
@@ -195,6 +218,7 @@ class HardwareDetector:
 def _get_total_ram_mb() -> int:
     try:
         import psutil
+
         return psutil.virtual_memory().total // (1024 * 1024)
     except ImportError:
         return 0
@@ -203,6 +227,7 @@ def _get_total_ram_mb() -> int:
 def _get_free_ram_mb() -> int:
     try:
         import psutil
+
         return psutil.virtual_memory().available // (1024 * 1024)
     except ImportError:
         return 0
@@ -210,15 +235,30 @@ def _get_free_ram_mb() -> int:
 
 # ── Task-to-Backend Preference Map ───────────────────────────────────────────
 
-TASK_BACKEND_PREFERENCE: Dict[TaskType, List[ComputeBackend]] = {
-    TaskType.LLM_INFERENCE:    [ComputeBackend.CUDA, ComputeBackend.DIRECTML, ComputeBackend.OPENVINO, ComputeBackend.CPU],
-    TaskType.VISION_CLASSIFY:  [ComputeBackend.CUDA, ComputeBackend.OPENVINO, ComputeBackend.DIRECTML, ComputeBackend.CPU],
-    TaskType.SPEECH_TO_TEXT:   [ComputeBackend.CUDA, ComputeBackend.OPENVINO, ComputeBackend.ONNXRUNTIME, ComputeBackend.CPU],
-    TaskType.TEXT_TO_SPEECH:   [ComputeBackend.CUDA, ComputeBackend.ONNXRUNTIME, ComputeBackend.CPU],
-    TaskType.EMBEDDING:        [ComputeBackend.CUDA, ComputeBackend.ONNXRUNTIME, ComputeBackend.CPU],
-    TaskType.OBJECT_DETECTION: [ComputeBackend.CUDA, ComputeBackend.OPENVINO, ComputeBackend.DIRECTML, ComputeBackend.CPU],
+TASK_BACKEND_PREFERENCE: dict[TaskType, list[ComputeBackend]] = {
+    TaskType.LLM_INFERENCE: [ComputeBackend.CUDA, ComputeBackend.DIRECTML, ComputeBackend.OPENVINO, ComputeBackend.CPU],
+    TaskType.VISION_CLASSIFY: [
+        ComputeBackend.CUDA,
+        ComputeBackend.OPENVINO,
+        ComputeBackend.DIRECTML,
+        ComputeBackend.CPU,
+    ],
+    TaskType.SPEECH_TO_TEXT: [
+        ComputeBackend.CUDA,
+        ComputeBackend.OPENVINO,
+        ComputeBackend.ONNXRUNTIME,
+        ComputeBackend.CPU,
+    ],
+    TaskType.TEXT_TO_SPEECH: [ComputeBackend.CUDA, ComputeBackend.ONNXRUNTIME, ComputeBackend.CPU],
+    TaskType.EMBEDDING: [ComputeBackend.CUDA, ComputeBackend.ONNXRUNTIME, ComputeBackend.CPU],
+    TaskType.OBJECT_DETECTION: [
+        ComputeBackend.CUDA,
+        ComputeBackend.OPENVINO,
+        ComputeBackend.DIRECTML,
+        ComputeBackend.CPU,
+    ],
     TaskType.GESTURE_TRACKING: [ComputeBackend.OPENVINO, ComputeBackend.CUDA, ComputeBackend.CPU],
-    TaskType.GENERAL_COMPUTE:  [ComputeBackend.CUDA, ComputeBackend.DIRECTML, ComputeBackend.CPU],
+    TaskType.GENERAL_COMPUTE: [ComputeBackend.CUDA, ComputeBackend.DIRECTML, ComputeBackend.CPU],
 }
 
 
@@ -231,12 +271,12 @@ class NeuralAccelerationEngine:
     """
 
     def __init__(self):
-        self._accelerators: List[AcceleratorInfo] = []
-        self._metrics_history: List[InferenceMetrics] = []
+        self._accelerators: list[AcceleratorInfo] = []
+        self._metrics_history: list[InferenceMetrics] = []
         self._max_metrics = 200
         self._lock = threading.Lock()
         self._monitoring = False
-        self._monitor_thread: Optional[threading.Thread] = None
+        self._monitor_thread: threading.Thread | None = None
         self._gpu_utilization: float = 0.0
         self._gpu_temperature: float = 0.0
         self._thermal_throttle = False
@@ -244,7 +284,7 @@ class NeuralAccelerationEngine:
         self._initialized = False
         logger.info("NeuralAccelerationEngine created")
 
-    def initialize(self) -> Dict[str, Any]:
+    def initialize(self) -> dict[str, Any]:
         """Detect hardware and initialize backends."""
         self._accelerators = HardwareDetector.detect_all()
         self._initialized = True
@@ -263,8 +303,7 @@ class NeuralAccelerationEngine:
             ],
         }
 
-    def select_backend(self, task_type: TaskType,
-                       preferred: Optional[ComputeBackend] = None) -> AcceleratorInfo:
+    def select_backend(self, task_type: TaskType, preferred: ComputeBackend | None = None) -> AcceleratorInfo:
         """Select optimal backend for a given task type."""
         if not self._initialized:
             self.initialize()
@@ -284,18 +323,23 @@ class NeuralAccelerationEngine:
                 return available_backends[backend]
 
         # Absolute fallback
-        return self._accelerators[-1] if self._accelerators else AcceleratorInfo(
-            backend=ComputeBackend.CPU, device_name="Fallback CPU",
-            memory_total_mb=0, memory_free_mb=0,
-            compute_capability="1", driver_version="unknown",
+        return (
+            self._accelerators[-1]
+            if self._accelerators
+            else AcceleratorInfo(
+                backend=ComputeBackend.CPU,
+                device_name="Fallback CPU",
+                memory_total_mb=0,
+                memory_free_mb=0,
+                compute_capability="1",
+                driver_version="unknown",
+            )
         )
 
-    def run_inference(self, task_type: TaskType, model_name: str,
-                      input_data: Any, **kwargs) -> Dict[str, Any]:
+    def run_inference(self, task_type: TaskType, model_name: str, input_data: Any, **kwargs) -> dict[str, Any]:
         """Route and execute an inference task on optimal hardware."""
         start_time = time.time()
-        backend_info = self.select_backend(task_type,
-                                           kwargs.get("preferred_backend"))
+        backend_info = self.select_backend(task_type, kwargs.get("preferred_backend"))
 
         quantization = kwargs.get("quantization", QuantizationLevel.FP16)
 
@@ -329,8 +373,7 @@ class NeuralAccelerationEngine:
         result["latency_ms"] = round(elapsed_ms, 2)
         return result
 
-    def recommend_quantization(self, model_size_mb: float,
-                               task_type: TaskType) -> Dict[str, Any]:
+    def recommend_quantization(self, model_size_mb: float, task_type: TaskType) -> dict[str, Any]:
         """Recommend optimal quantization level for a model."""
         backend = self.select_backend(task_type)
         free_mb = backend.memory_free_mb
@@ -367,8 +410,7 @@ class NeuralAccelerationEngine:
                 self._update_gpu_stats()
                 time.sleep(interval)
 
-        self._monitor_thread = threading.Thread(target=_monitor, daemon=True,
-                                                 name="GPUMonitor")
+        self._monitor_thread = threading.Thread(target=_monitor, daemon=True, name="GPUMonitor")
         self._monitor_thread.start()
         logger.info("GPU monitoring started (interval=%.1fs)", interval)
         return True
@@ -384,10 +426,12 @@ class NeuralAccelerationEngine:
         """Update GPU utilization and temperature."""
         try:
             import subprocess
+
             proc = subprocess.run(
-                ["nvidia-smi", "--query-gpu=utilization.gpu,temperature.gpu",
-                 "--format=csv,noheader,nounits"],
-                capture_output=True, text=True, timeout=5,
+                ["nvidia-smi", "--query-gpu=utilization.gpu,temperature.gpu", "--format=csv,noheader,nounits"],
+                capture_output=True,
+                text=True,
+                timeout=5,
             )
             if proc.returncode == 0:
                 parts = proc.stdout.strip().split(",")
@@ -398,7 +442,7 @@ class NeuralAccelerationEngine:
         except (FileNotFoundError, subprocess.TimeoutExpired, ValueError):
             pass
 
-    def get_gpu_stats(self) -> Dict[str, Any]:
+    def get_gpu_stats(self) -> dict[str, Any]:
         """Return current GPU statistics."""
         return {
             "utilization_pct": self._gpu_utilization,
@@ -409,7 +453,7 @@ class NeuralAccelerationEngine:
 
     # ── Status ───────────────────────────────────────────────────────────
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Return full accelerator engine status."""
         return {
             "initialized": self._initialized,
@@ -429,13 +473,13 @@ class NeuralAccelerationEngine:
             "total_inferences": len(self._metrics_history),
         }
 
-    def get_performance_summary(self) -> Dict[str, Any]:
+    def get_performance_summary(self) -> dict[str, Any]:
         """Summarize recent inference performance."""
         if not self._metrics_history:
             return {"message": "No inference history yet."}
 
         avg_latency = sum(m.latency_ms for m in self._metrics_history) / len(self._metrics_history)
-        backend_counts: Dict[str, int] = {}
+        backend_counts: dict[str, int] = {}
         for m in self._metrics_history:
             backend_counts[m.backend_used.value] = backend_counts.get(m.backend_used.value, 0) + 1
 

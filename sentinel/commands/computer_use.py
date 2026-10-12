@@ -5,9 +5,11 @@ Core command plugin for desktop automation.
 """
 
 import logging
+
 from sentinel.app.voice import speak
 
 logger = logging.getLogger("ComputerUsePlugin")
+
 
 class ComputerUse:
     def __init__(self, orchestrator):
@@ -29,7 +31,7 @@ class ComputerUse:
                     return analysis if analysis else "I can see the screen, but I'm having trouble describing it."
                 except Exception as e:
                     logger.error(f"Vision fallback failed: {e}")
-            
+
             if not agent:
                 return "Computer Use Agent is not initialized, and Vision fallback also failed."
 
@@ -39,9 +41,10 @@ class ComputerUse:
         # The 'entity' usually contains the core instruction for the agent.
         goal = entity or command
         logger.info(f"Triggering ComputerUseAgent with goal: {goal}")
-        
+
         # Run in a background thread to avoid blocking the orchestrator
         import threading
+
         def _run():
             try:
                 result = agent.execute(goal)
@@ -51,5 +54,5 @@ class ComputerUse:
                 speak("I encountered an error during computer use automation.")
 
         threading.Thread(target=_run, daemon=True).start()
-        
+
         return f"Initiating desktop automation for: {goal}. Please do not use the mouse or keyboard while I work."

@@ -9,7 +9,6 @@ Handles: "npu status", "gpu status", "accelerator info",
 """
 
 import logging
-from typing import Optional
 
 from sentinel.neuro.npu_accelerator import NeuralAccelerationEngine
 
@@ -21,24 +20,23 @@ class NPUCommand:
         self.orchestrator = orchestrator
         self.engine = NeuralAccelerationEngine()
 
-    def execute(self, command: str, entity: Optional[str] = None) -> str:
+    def execute(self, command: str, entity: str | None = None) -> str:
         cmd = command.lower().strip()
 
         # 1. Initialize / detect
-        if any(k in cmd for k in ("detect accelerator", "initialize npu", "detect gpu",
-                                   "scan hardware", "npu init")):
+        if any(k in cmd for k in ("detect accelerator", "initialize npu", "detect gpu", "scan hardware", "npu init")):
             result = self.engine.initialize()
             devices = [f"  • {d['backend']}: {d['device']}" for d in result["devices"]]
             return (
                 f"⚡ Neural acceleration initialized!\n"
                 f"Backends detected: {result['backends_available']}\n"
-                f"Primary: {result['primary']}\n" +
-                "\n".join(devices)
+                f"Primary: {result['primary']}\n" + "\n".join(devices)
             )
 
         # 2. Status
-        if any(k in cmd for k in ("npu status", "gpu status", "accelerator status",
-                                   "accelerator info", "neural status")):
+        if any(
+            k in cmd for k in ("npu status", "gpu status", "accelerator status", "accelerator info", "neural status")
+        ):
             if not self.engine._initialized:
                 self.engine.initialize()
             status = self.engine.get_status()
@@ -52,8 +50,7 @@ class NPUCommand:
             return "\n".join(lines)
 
         # 3. Start monitoring
-        if any(k in cmd for k in ("start gpu monitor", "monitor gpu", "start npu monitor",
-                                   "track gpu")):
+        if any(k in cmd for k in ("start gpu monitor", "monitor gpu", "start npu monitor", "track gpu")):
             if not self.engine._initialized:
                 self.engine.initialize()
             self.engine.start_monitoring()
@@ -65,8 +62,7 @@ class NPUCommand:
             return "GPU/NPU monitoring stopped."
 
         # 5. GPU temperature / stats
-        if any(k in cmd for k in ("gpu temperature", "gpu temp", "how hot is gpu",
-                                   "gpu utilization")):
+        if any(k in cmd for k in ("gpu temperature", "gpu temp", "how hot is gpu", "gpu utilization")):
             stats = self.engine.get_gpu_stats()
             return (
                 f"GPU Stats:\n"
@@ -77,8 +73,7 @@ class NPUCommand:
             )
 
         # 6. Performance summary
-        if any(k in cmd for k in ("inference performance", "npu performance",
-                                   "acceleration stats")):
+        if any(k in cmd for k in ("inference performance", "npu performance", "acceleration stats")):
             perf = self.engine.get_performance_summary()
             if "message" in perf:
                 return perf["message"]

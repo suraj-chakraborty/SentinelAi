@@ -4,9 +4,8 @@ sentinel/commands/voice_profile_command.py
 Command plugin for recording voice samples and configuring custom agent voice profiles.
 """
 
-import os
 import logging
-from typing import Optional
+import os
 
 from sentinel.voice.voice_cloner import VoiceProfileManager
 
@@ -20,11 +19,20 @@ class VoiceProfileCommand:
         self.orchestrator = orchestrator
         self.manager = VoiceProfileManager()
 
-    def execute(self, command: str, entity: Optional[str] = None) -> str:
+    def execute(self, command: str, entity: str | None = None) -> str:
         cmd = command.lower().strip()
 
         # 1. Record voice sample
-        if any(k in cmd for k in ["record voice sample", "record my voice", "clone my voice", "sample my voice", "record voice for agent"]):
+        if any(
+            k in cmd
+            for k in [
+                "record voice sample",
+                "record my voice",
+                "clone my voice",
+                "sample my voice",
+                "record voice for agent",
+            ]
+        ):
             success, msg = self.manager.record_voice_sample(duration=5.0)
             return msg
 

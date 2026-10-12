@@ -6,16 +6,17 @@ Detects user presence at the desk, locks workstation on prolonged absence,
 and flags when the user is directly looking at Sentinel.
 """
 
+import logging
+import sys
 import threading
 import time
-import sys
-import logging
-from typing import Optional, Callable
+from collections.abc import Callable
 
 logger = logging.getLogger("GazePresence")
 
 try:
     import cv2
+
     _CV2_AVAILABLE = True
 except ImportError:
     _CV2_AVAILABLE = False
@@ -31,8 +32,8 @@ class GazePresenceDetector:
         camera_id: int = 0,
         absence_timeout: float = 120.0,
         auto_lock_enabled: bool = False,
-        on_absence: Optional[Callable[[], None]] = None,
-        on_presence_restored: Optional[Callable[[], None]] = None
+        on_absence: Callable[[], None] | None = None,
+        on_presence_restored: Callable[[], None] | None = None,
     ):
         self.camera_id = camera_id
         self.absence_timeout = absence_timeout
@@ -41,7 +42,7 @@ class GazePresenceDetector:
         self.on_presence_restored = on_presence_restored
 
         self._running = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._lock = threading.Lock()
 
         self._user_present = True
@@ -79,6 +80,7 @@ class GazePresenceDetector:
         if sys.platform == "win32":
             try:
                 import ctypes
+
                 ctypes.windll.user32.LockWorkStation()
                 self._locked = True
                 logger.info("Workstation locked by GazePresenceDetector.")
@@ -89,7 +91,7 @@ class GazePresenceDetector:
         cap = None
         try:
             # Load standard OpenCV Haar cascade for lightweight CPU face detection
-            cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+            cascade_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
             face_cascade = cv2.CascadeClassifier(cascade_path)
 
             cap = cv2.VideoCapture(self.camera_id)
@@ -114,8 +116,10 @@ class GazePresenceDetector:
                             self._user_present = True
                             logger.info("User returned to desk.")
                             if self.on_presence_restored:
-                                try: self.on_presence_restored()
-                                except Exception: pass
+                                try:
+                                    self.on_presence_restored()
+                                except Exception:
+                                    pass
 
                         # Check gaze engagement: larger centered face indicates looking directly at screen
                         (x, y, w, h) = faces[0]
@@ -130,8 +134,10 @@ class GazePresenceDetector:
                             if self.auto_lock_enabled and not self._locked:
                                 self.lock_workstation()
                             if self.on_absence:
-                                try: self.on_absence()
-                                except Exception: pass
+                                try:
+                                    self.on_absence()
+                                except Exception:
+                                    pass
 
                 # Check every 1.5 seconds for minimal CPU footprint
                 time.sleep(1.5)
@@ -140,5 +146,7 @@ class GazePresenceDetector:
             logger.debug(f"GazePresence monitor loop exception: {e}")
         finally:
             if cap:
-                try: cap.release()
-                except Exception: pass
+                try:
+                    cap.release()
+                except Exception:
+                    pass

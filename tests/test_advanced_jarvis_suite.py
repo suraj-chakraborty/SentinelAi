@@ -12,34 +12,32 @@ Unit tests for the 6 Advanced Real-Time JARVIS capabilities:
 
 import os
 import sys
-import pytest
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+from sentinel.automation.deep_rpa import DeepRPA
 from sentinel.automation.ide_watcher import IDEWatcher
+from sentinel.commands.focus_command import FocusCommand
 from sentinel.commands.git_copilot import GitCopilotCommand
 from sentinel.commands.meeting_command import MeetingCommand
-from sentinel.perception.gaze_presence import GazePresenceDetector
-from sentinel.automation.deep_rpa import DeepRPA
 from sentinel.commands.ui_automation import UIAutomationCommand
 from sentinel.commands.web_automation import WebAutomation
+from sentinel.core.intent_detector import Intent, IntentDetector
+from sentinel.perception.gaze_presence import GazePresenceDetector
 from sentinel.security.focus_guardian import FocusGuardian
-from sentinel.commands.focus_command import FocusCommand
-from sentinel.core.intent_detector import IntentDetector, Intent
 
 
 class TestAdvancedJarvisCapabilities:
-
     def test_ide_watcher_and_git_copilot(self):
         """Test stack trace analysis and git copilot commands."""
         watcher = IDEWatcher()
-        trace = '''
+        trace = """
 Traceback (most recent call last):
   File "sentinel/core/command_router.py", line 42, in run_command
     return self.plugins[plugin_key].execute()
 KeyError: 'unknown_plugin'
-'''
+"""
         res = watcher.analyze_stack_trace(trace)
         assert res["file"] == "sentinel/core/command_router.py"
         assert res["line"] == "42"
@@ -90,8 +88,10 @@ KeyError: 'unknown_plugin'
         # 2. Directory sorting
         test_dir = str(tmp_path / "downloads")
         os.makedirs(test_dir, exist_ok=True)
-        with open(os.path.join(test_dir, "invoice.pdf"), "w") as f: f.write("test")
-        with open(os.path.join(test_dir, "setup.exe"), "w") as f: f.write("test")
+        with open(os.path.join(test_dir, "invoice.pdf"), "w") as f:
+            f.write("test")
+        with open(os.path.join(test_dir, "setup.exe"), "w") as f:
+            f.write("test")
 
         sort_res = rpa.organize_directory(test_dir)
         assert sort_res["success"] is True

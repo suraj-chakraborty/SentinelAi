@@ -5,14 +5,14 @@ Extracts real-time foreground window metadata and process identity on Windows.
 Enables instant awareness of what application and document the user is working on.
 """
 
-import sys
 import logging
-from typing import Dict, Any
+import sys
+from typing import Any
 
 logger = logging.getLogger("WindowContext")
 
 
-def get_active_window_info() -> Dict[str, Any]:
+def get_active_window_info() -> dict[str, Any]:
     """
     Returns metadata about the currently focused desktop window:
     {
@@ -23,13 +23,7 @@ def get_active_window_info() -> Dict[str, Any]:
         "is_fullscreen": bool
     }
     """
-    info: Dict[str, Any] = {
-        "title": "Desktop",
-        "app_name": "Explorer",
-        "pid": 0,
-        "rect": None,
-        "is_fullscreen": False
-    }
+    info: dict[str, Any] = {"title": "Desktop", "app_name": "Explorer", "pid": 0, "rect": None, "is_fullscreen": False}
 
     if sys.platform != "win32":
         return info
@@ -64,6 +58,7 @@ def get_active_window_info() -> Dict[str, Any]:
         # Get Process Executable name via psutil if available
         try:
             import psutil
+
             proc = psutil.Process(pid.value)
             info["app_name"] = proc.name()
         except Exception:

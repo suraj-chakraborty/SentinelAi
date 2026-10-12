@@ -33,7 +33,6 @@ import logging
 import os
 import time
 import uuid
-from typing import List, Optional
 
 logger = logging.getLogger("LongTermMemory")
 
@@ -51,9 +50,9 @@ class LongTermMemory:
     """
 
     _SUMMARY_COLLECTION = "session_summaries"
-    _FACTS_COLLECTION   = "user_facts"
-    _MAX_CONTEXT_ITEMS  = 3       # how many past summaries to inject
-    _SUMMARY_INTERVAL   = 20      # turns before auto-summarise
+    _FACTS_COLLECTION = "user_facts"
+    _MAX_CONTEXT_ITEMS = 3  # how many past summaries to inject
+    _SUMMARY_INTERVAL = 20  # turns before auto-summarise
 
     def __init__(
         self,
@@ -66,18 +65,18 @@ class LongTermMemory:
         self._summaries_col = None
         self._facts_col = None
         # Privacy opt-out controls memory usage
-        self._privacy_opt_out = (os.getenv("SENTINEL_MEMORY_PRIVACY_OPT_OUT", "0").lower() in ("1", "true", "yes"))
+        self._privacy_opt_out = os.getenv("SENTINEL_MEMORY_PRIVACY_OPT_OUT", "0").lower() in ("1", "true", "yes")
         # In-memory fallback toggle (for Phase 2: lightweight test/dev backend)
-        self._in_memory = (os.getenv("SENTINEL_LT_MEM_BACKEND", "" ).lower() == "memory")
-        self._mem_summaries: List[str] = []
-        self._mem_facts: List[str] = []
-        self._mem_summaries_times: List[float] = []
+        self._in_memory = os.getenv("SENTINEL_LT_MEM_BACKEND", "").lower() == "memory"
+        self._mem_summaries: list[str] = []
+        self._mem_facts: list[str] = []
+        self._mem_summaries_times: list[float] = []
         if self._in_memory:
             logger.info("LongTermMemory: using in-memory backend (SENTINEL_LT_MEM_BACKEND=memory)")
         # TTL for in-memory summaries (hours). 0 means disabled.
         self._turns_since_last_summary = 0
         self._memory_ttl_hours = int(os.getenv("SENTINEL_MEMORY_TTL_HOURS", "0"))
-        
+
     def _prune_summaries_if_needed(self):
         ttl = getattr(self, "_memory_ttl_hours", 0)
         if not ttl:
@@ -158,7 +157,7 @@ class LongTermMemory:
             self.summarize_session(conversation_manager)
             self._turns_since_last_summary = 0
 
-    def summarize_session(self, conversation_manager) -> Optional[str]:
+    def summarize_session(self, conversation_manager) -> str | None:
         """
         Ask the LLM to condense recent conversation into bullet-point facts,
         then store in ChromaDB.
@@ -190,11 +189,13 @@ class LongTermMemory:
             doc_id = f"session_{uuid.uuid4().hex}"
             self._summaries_col.add(
                 documents=[summary],
-                metadatas=[{
-                    "timestamp": time.time(),
-                    "date": time.strftime("%Y-%m-%d %H:%M"),
-                    "turns": self._turns_since_last_summary,
-                }],
+                metadatas=[
+                    {
+                        "timestamp": time.time(),
+                        "date": time.strftime("%Y-%m-%d %H:%M"),
+                        "turns": self._turns_since_last_summary,
+                    }
+                ],
                 ids=[doc_id],
             )
             logger.info("Session summary stored (id=%s).", doc_id)
@@ -333,15 +334,15 @@ class LongTermMemory:
 
     def export_memory(self) -> dict:
         """Export memory. In in-memory mode, export full content; otherwise export summaries/facts counts."""
-        if getattr(self, '_in_memory', False):
+        if getattr(self, "_in_memory", False):
             return {
-                'summaries': list(self._mem_summaries),
-                'facts': list(self._mem_facts),
+                "summaries": list(self._mem_summaries),
+                "facts": list(self._mem_facts),
             }
         # Non in-memory: export counts to avoid leaking data from persistent store
         return {
-            'summaries_count': int(self._summaries_col.count()) if not self._in_memory and self._summaries_col else 0,
-            'facts_count': int(self._facts_col.count()) if not self._in_memory and self._facts_col else 0,
+            "summaries_count": int(self._summaries_col.count()) if not self._in_memory and self._summaries_col else 0,
+            "facts_count": int(self._facts_col.count()) if not self._in_memory and self._facts_col else 0,
         }
 
     def import_memory(self, payload: dict) -> bool:
@@ -349,8 +350,8 @@ class LongTermMemory:
         if not payload:
             return False
         if self._in_memory:
-            self._mem_summaries = list(payload.get('summaries', []))
-            self._mem_facts = list(payload.get('facts', []))
+            self._mem_summaries = list(payload.get("summaries", []))
+            self._mem_facts = list(payload.get("facts", []))
             return True
         # For non in-memory, simply return False and rely on persisted memory load paths
         return False

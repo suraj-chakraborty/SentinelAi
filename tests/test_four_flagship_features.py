@@ -11,13 +11,14 @@ Unit tests for the 4 flagship functionalities:
 import os
 import unittest
 from unittest.mock import MagicMock, patch
+
 from fastapi.testclient import TestClient
 
 
 class TestFourFlagshipFeatures(unittest.TestCase):
-
     def setUp(self):
         from sentinel.core.web_server import SentinelWebServer
+
         self.orchestrator = MagicMock()
         self.orchestrator.run_command.return_value = "Mocked execution successful"
         self.server = SentinelWebServer(orchestrator=self.orchestrator)
@@ -25,10 +26,7 @@ class TestFourFlagshipFeatures(unittest.TestCase):
 
     # ── Feature 1: Real-Time 3D Viseme Lip-Sync ──────────────────────────────
     def test_viseme_hologram_in_index_html(self):
-        tmpl_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
-            "sentinel", "templates", "index.html"
-        )
+        tmpl_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "sentinel", "templates", "index.html")
         self.assertTrue(os.path.exists(tmpl_path), "index.html must exist")
         with open(tmpl_path, "r", encoding="utf-8") as f:
             html = f.read()
@@ -49,12 +47,13 @@ class TestFourFlagshipFeatures(unittest.TestCase):
     @patch("PIL.ImageGrab.grab")
     def test_screen_vision_hud_endpoint(self, mock_grab, mock_window):
         from PIL import Image
+
         mock_img = Image.new("RGB", (640, 360), color="blue")
         mock_grab.return_value = mock_img
         mock_window.return_value = {
             "title": "Exception in thread 'main' - Visual Studio Code",
             "app_name": "Code",
-            "pid": 1234
+            "pid": 1234,
         }
 
         resp = self.client.get("/vision/screen/inspect")
@@ -72,10 +71,7 @@ class TestFourFlagshipFeatures(unittest.TestCase):
 
     # ── Feature 3: Browser-Native Hands-Free Voice Streaming ─────────────────
     def test_hands_free_voice_in_index_html(self):
-        tmpl_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
-            "sentinel", "templates", "index.html"
-        )
+        tmpl_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "sentinel", "templates", "index.html")
         with open(tmpl_path, "r", encoding="utf-8") as f:
             html = f.read()
 
@@ -106,9 +102,9 @@ class TestFourFlagshipFeatures(unittest.TestCase):
 
     # ── Feature 4: Transparent Floating Desktop Widget ───────────────────────
     def test_floating_widget_companion_classes(self):
-        from sentinel.app.floating_widget import TransparentFloatingWidget, get_floating_widget
-        from sentinel.utils.hotkey_manager import GlobalHotkeyManager
+        from sentinel.app.floating_widget import TransparentFloatingWidget
         from sentinel.commands.companion_command import CompanionCommand
+        from sentinel.utils.hotkey_manager import GlobalHotkeyManager
 
         self.assertIsNotNone(TransparentFloatingWidget)
         self.assertIsNotNone(GlobalHotkeyManager)
@@ -123,17 +119,21 @@ class TestFourFlagshipFeatures(unittest.TestCase):
         self.assertIn("shortcut", data)
         self.assertIn("Win + Space", data["shortcut"])
 
-
     # ── Security Shield Process Normalization ────────────────────────────────
     @patch("psutil.process_iter")
     def test_security_shield_terminal_alert_normalization(self, mock_iter):
         from sentinel.modules.security_shield import SecurityShieldModule
+
         notifier = MagicMock()
         shield = SecurityShieldModule(notifier)
 
         # 1. Owner's PowerShell e.g. "DESKTOP-ABC\suraj"
         owner_proc = MagicMock()
-        owner_proc.info = {"pid": 1111, "name": "powershell.exe", "username": f"DESKTOP-PC\\{os.environ.get('USERNAME', 'suraj')}"}
+        owner_proc.info = {
+            "pid": 1111,
+            "name": "powershell.exe",
+            "username": f"DESKTOP-PC\\{os.environ.get('USERNAME', 'suraj')}",
+        }
 
         # 2. Windows System cmd.exe
         sys_proc = MagicMock()

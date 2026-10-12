@@ -6,7 +6,6 @@ Handles "who called me", "check phone notifications", and phone status.
 """
 
 import logging
-from typing import Optional
 
 from sentinel.core.mobile_hub import MobileHubAgent
 
@@ -18,7 +17,7 @@ class MobileCommand:
         self.orchestrator = orchestrator
         self.hub = MobileHubAgent(orchestrator=orchestrator)
 
-    def execute(self, command: str, entity: Optional[str] = None) -> str:
+    def execute(self, command: str, entity: str | None = None) -> str:
         cmd_lower = command.lower()
 
         # 1. Who called me / recent phone notifications

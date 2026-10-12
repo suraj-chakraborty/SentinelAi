@@ -13,10 +13,9 @@ Trigger examples:
 
 from __future__ import annotations
 
+import logging
 import re
 import threading
-import logging
-from typing import Dict, Optional
 
 from sentinel.core.plugin_system import PluginBase
 
@@ -35,7 +34,7 @@ _DURATION_RE = re.compile(
 )
 
 
-def _parse_duration(command: str) -> Optional[float]:
+def _parse_duration(command: str) -> float | None:
     """Return duration in seconds, or None if not found."""
     match = _DURATION_RE.search(command)
     if not match:
@@ -56,7 +55,7 @@ class TimerPlugin(PluginBase):
 
     def __init__(self, orchestrator=None):
         super().__init__(orchestrator)
-        self._timers: Dict[int, threading.Timer] = {}
+        self._timers: dict[int, threading.Timer] = {}
         self._counter = 0
         self._lock = threading.Lock()
 
@@ -85,10 +84,7 @@ class TimerPlugin(PluginBase):
     def _set_timer(self, command: str) -> str:
         seconds = _parse_duration(command)
         if seconds is None:
-            return (
-                "I couldn't figure out the duration. "
-                "Try 'set a timer for 5 minutes'."
-            )
+            return "I couldn't figure out the duration. Try 'set a timer for 5 minutes'."
 
         with self._lock:
             self._counter += 1
@@ -121,6 +117,7 @@ class TimerPlugin(PluginBase):
         # Windows notification
         try:
             from win10toast import ToastNotifier
+
             ToastNotifier().show_toast("SentinelAI Timer", msg, duration=8, threaded=True)
         except Exception:
             pass
@@ -137,9 +134,7 @@ class TimerPlugin(PluginBase):
         with self._lock:
             if not self._timers:
                 return "No active timers."
-            return f"{len(self._timers)} active timer(s): " + ", ".join(
-                f"#{tid}" for tid in self._timers
-            )
+            return f"{len(self._timers)} active timer(s): " + ", ".join(f"#{tid}" for tid in self._timers)
 
     @staticmethod
     def _format_duration(seconds: float) -> str:

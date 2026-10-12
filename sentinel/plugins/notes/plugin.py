@@ -19,18 +19,17 @@ import logging
 import os
 import re
 import time
-from typing import List
 
 from sentinel.core.plugin_system import PluginBase
 
 logger = logging.getLogger("NotesPlugin")
 
-APPDATA_DIR  = os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "SentinelAi")
-_NOTES_PATH  = os.path.join(APPDATA_DIR, "notes.json")
+APPDATA_DIR = os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "SentinelAi")
+_NOTES_PATH = os.path.join(APPDATA_DIR, "notes.json")
 
 _TAKE_RE = re.compile(
-    r'\b(?:take\s+a?\s*note|note\s+that|jot\s+(?:this\s+)?down|'
-    r'write\s+(?:this\s+)?down|add\s+a?\s*note|remember)\s*[:\-]?\s*(.+)',
+    r"\b(?:take\s+a?\s*note|note\s+that|jot\s+(?:this\s+)?down|"
+    r"write\s+(?:this\s+)?down|add\s+a?\s*note|remember)\s*[:\-]?\s*(.+)",
     re.IGNORECASE,
 )
 
@@ -40,10 +39,20 @@ class NotesPlugin(PluginBase):
 
     def can_handle(self, command: str) -> bool:
         cmd = command.lower()
-        return any(kw in cmd for kw in (
-            "note", "jot", "write down", "my notes", "show notes",
-            "read notes", "list notes", "clear notes", "delete notes"
-        ))
+        return any(
+            kw in cmd
+            for kw in (
+                "note",
+                "jot",
+                "write down",
+                "my notes",
+                "show notes",
+                "read notes",
+                "list notes",
+                "clear notes",
+                "delete notes",
+            )
+        )
 
     def handle(self, command: str) -> str:
         cmd = command.lower()
@@ -66,8 +75,10 @@ class NotesPlugin(PluginBase):
         else:
             # Strip known filler and use the whole command
             content = re.sub(
-                r'\b(take a note|note that|jot down|remember|write down|add a note)[:\-]?\s*',
-                '', command, flags=re.IGNORECASE,
+                r"\b(take a note|note that|jot down|remember|write down|add a note)[:\-]?\s*",
+                "",
+                command,
+                flags=re.IGNORECASE,
             ).strip()
             if not content:
                 return "What would you like me to note down?"
@@ -76,20 +87,20 @@ class NotesPlugin(PluginBase):
         note = {"id": len(notes) + 1, "content": content, "timestamp": time.strftime("%Y-%m-%d %H:%M")}
         notes.append(note)
         self._save(notes)
-        return f"Noted: \"{content}\""
+        return f'Noted: "{content}"'
 
     def _read_notes(self) -> str:
         notes = self._load()
         if not notes:
             return "You have no notes yet. Say 'take a note' to create one."
-        
+
         # Filter out any non-dictionary items that might have corrupted the list
         valid_notes = [n for n in notes if isinstance(n, dict)]
         if not valid_notes:
             return "I couldn't find any valid notes. Say 'take a note' to create one."
-            
+
         lines = [f"You have {len(valid_notes)} note(s):"]
-        for n in valid_notes[-10:]:    # show last 10 to avoid huge TTS output
+        for n in valid_notes[-10:]:  # show last 10 to avoid huge TTS output
             lines.append(f"  [{n.get('timestamp', 'N/A')}] {n.get('content', 'Empty content')}")
         return "\n".join(lines)
 
@@ -98,7 +109,7 @@ class NotesPlugin(PluginBase):
         self._save([])
         return f"Cleared {count} note(s)."
 
-    def _load(self) -> List[dict]:
+    def _load(self) -> list[dict]:
         try:
             if os.path.exists(_NOTES_PATH):
                 with open(_NOTES_PATH, "r", encoding="utf-8") as f:
@@ -107,7 +118,7 @@ class NotesPlugin(PluginBase):
             logger.error("Failed to load notes: %s", exc)
         return []
 
-    def _save(self, notes: List[dict]) -> None:
+    def _save(self, notes: list[dict]) -> None:
         try:
             with open(_NOTES_PATH, "w", encoding="utf-8") as f:
                 json.dump(notes, f, indent=2, ensure_ascii=False)

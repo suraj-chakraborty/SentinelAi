@@ -12,7 +12,8 @@ and signals the system to enter 'listening' mode without latency.
 import logging
 import threading
 import time
-from typing import Callable, List, Optional
+from collections.abc import Callable
+
 import numpy as np
 
 logger = logging.getLogger("VoiceBargeIn")
@@ -32,9 +33,9 @@ class BargeInEngine:
     ):
         self.energy_threshold = energy_threshold
         self.min_speech_duration_ms = min_speech_duration_ms
-        self._callbacks: List[Callable[[str], None]] = []
+        self._callbacks: list[Callable[[str], None]] = []
         self._is_monitoring = False
-        self._monitor_thread: Optional[threading.Thread] = None
+        self._monitor_thread: threading.Thread | None = None
         self._last_barge_in_time = 0.0
         self._lock = threading.Lock()
 
@@ -62,6 +63,7 @@ class BargeInEngine:
 
         try:
             from sentinel.app.voice import is_speaking, stop_speaking
+
             if is_speaking():
                 self._last_barge_in_time = now
                 logger.info(f"⚡ [Barge-In] Interrupting active speech (source: {source})")
@@ -91,6 +93,7 @@ class BargeInEngine:
 
         try:
             from sentinel.app.voice import is_speaking
+
             if not is_speaking():
                 return False
 
@@ -112,7 +115,7 @@ class BargeInMonitor:
     def __init__(
         self,
         tts_engine=None,
-        on_barge_in: Optional[Callable[[], None]] = None,
+        on_barge_in: Callable[[], None] | None = None,
         samplerate: int = 16000,
         energy_threshold: float = 0.05,
     ):
@@ -141,7 +144,7 @@ class BargeInMonitor:
         return interrupted
 
 
-_global_barge_in: Optional[BargeInEngine] = None
+_global_barge_in: BargeInEngine | None = None
 _barge_in_lock = threading.Lock()
 
 

@@ -5,18 +5,22 @@ Focus Shield & Ergonomic Health Guardian.
 Protects deep work sessions, minimizes distractions, and monitors continuous screen fatigue.
 """
 
-import sys
-import os
-import time
-import threading
 import logging
-from typing import Optional, List, Dict, Any, Callable
+import sys
+import threading
+import time
+from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger("FocusGuardian")
 
 DISTRACTION_PROCESS_NAMES = [
-    "discord.exe", "steam.exe", "epicgameslauncher.exe",
-    "telegram.exe", "spotify.exe", "battle.net.exe"
+    "discord.exe",
+    "steam.exe",
+    "epicgameslauncher.exe",
+    "telegram.exe",
+    "spotify.exe",
+    "battle.net.exe",
 ]
 
 
@@ -30,7 +34,7 @@ class FocusGuardian:
         self,
         orchestrator=None,
         ergonomic_limit_minutes: int = 60,
-        on_ergonomic_alert: Optional[Callable[[str], None]] = None
+        on_ergonomic_alert: Callable[[str], None] | None = None,
     ):
         self.orchestrator = orchestrator
         self.ergonomic_limit_minutes = ergonomic_limit_minutes
@@ -40,7 +44,7 @@ class FocusGuardian:
         self._focus_end_time = 0.0
 
         self._running = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
 
         self._active_streak_seconds = 0.0
         self._last_ergo_alert = 0.0
@@ -71,7 +75,7 @@ class FocusGuardian:
             pass
         return 0.0
 
-    def start_focus_mode(self, duration_minutes: int = 45) -> Dict[str, Any]:
+    def start_focus_mode(self, duration_minutes: int = 45) -> dict[str, Any]:
         """Activates focus shield: closes/minimizes distractions and suppresses non-critical alerts."""
         self._in_focus_mode = True
         self._focus_end_time = time.time() + (duration_minutes * 60)
@@ -80,22 +84,21 @@ class FocusGuardian:
         suppressed = []
         try:
             import psutil
-            for proc in psutil.process_iter(['name', 'pid']):
-                p_name = proc.info['name'].lower() if proc.info['name'] else ''
+
+            for proc in psutil.process_iter(["name", "pid"]):
+                p_name = proc.info["name"].lower() if proc.info["name"] else ""
                 if p_name in DISTRACTION_PROCESS_NAMES:
-                    suppressed.append(proc.info['name'])
+                    suppressed.append(proc.info["name"])
                     # We terminate or suspend to eliminate distraction
-                    try: proc.terminate()
-                    except Exception: pass
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass
         except Exception as e:
             logger.debug(f"Process inspection during focus mode: {e}")
 
         logger.info(f"Focus mode activated for {duration_minutes} min. Suppressed: {suppressed}")
-        return {
-            "success": True,
-            "duration_minutes": duration_minutes,
-            "suppressed_apps": suppressed
-        }
+        return {"success": True, "duration_minutes": duration_minutes, "suppressed_apps": suppressed}
 
     def end_focus_mode(self) -> bool:
         """Ends focus shield session."""
@@ -139,15 +142,20 @@ class FocusGuardian:
                 logger.info(f"[HEALTH GUARDIAN] {msg}")
                 self._last_ergo_alert = now
                 if self.on_ergonomic_alert:
-                    try: self.on_ergonomic_alert(msg)
-                    except Exception: pass
+                    try:
+                        self.on_ergonomic_alert(msg)
+                    except Exception:
+                        pass
                 elif self.orchestrator and hasattr(self.orchestrator, "speak_fn"):
-                    try: self.orchestrator.speak_fn(msg)
-                    except Exception: pass
+                    try:
+                        self.orchestrator.speak_fn(msg)
+                    except Exception:
+                        pass
 
 
 # Singleton accessor
-_focus_guardian: Optional[FocusGuardian] = None
+_focus_guardian: FocusGuardian | None = None
+
 
 def get_focus_guardian(orchestrator=None) -> FocusGuardian:
     global _focus_guardian

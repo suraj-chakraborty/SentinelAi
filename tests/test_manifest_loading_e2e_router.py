@@ -2,16 +2,12 @@ import json
 import os
 import tempfile
 import unittest
-from unittest import mock
 
 
 class TestManifestLoadingE2ERouter(unittest.TestCase):
     def test_end_to_end_dispatch_through_router(self):
         # Setup a temporary manifest plugin and patch the PLUGINS_DIR
-        from sentinel.core import command_router as cr
-        import sentinel.core.command_router as cr_mod
         from sentinel.core.command_router import CommandRouter
-        from sentinel.core.plugin_system import PluginSystem
 
         with tempfile.TemporaryDirectory() as tmpdir:
             plugins_root = os.path.join(tmpdir, "plugins_e2e")
@@ -43,10 +39,14 @@ class Manifest(PluginBase):
 """
                 )
             import sentinel.core.plugin_system as plugin_sys
+
             old_dir = plugin_sys.PLUGINS_DIR
             try:
                 plugin_sys.PLUGINS_DIR = plugins_root
-                class DummyOrchestrator: pass
+
+                class DummyOrchestrator:
+                    pass
+
                 router = CommandRouter(orchestrator=DummyOrchestrator())
                 result = router.run_command("test manifest plugin")
                 self.assertEqual(result, "Manifest Plugin Activated")
@@ -54,5 +54,5 @@ class Manifest(PluginBase):
                 plugin_sys.PLUGINS_DIR = old_dir
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

@@ -32,6 +32,7 @@ class Brightness:
         if "set brightness" in cmd:
             m = None
             import re
+
             m = re.search(r"set\s+brightness\s+to\s+(\d{1,3})", cmd)
             if m:
                 val = int(m.group(1))

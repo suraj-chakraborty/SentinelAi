@@ -1,14 +1,16 @@
 try:
     from win10toast import ToastNotifier
+
     _TOAST_AVAILABLE = True
 except ImportError:
     _TOAST_AVAILABLE = False
     ToastNotifier = None
 
-from queue import Queue
-import threading
 import logging
 import os
+import threading
+from queue import Queue
+
 
 class WindowsNotifier:
     def __init__(self):
@@ -28,13 +30,7 @@ class WindowsNotifier:
                 self.logger.debug(f"[Notification] {title}: {message}")
                 continue
             try:
-                self.toaster.show_toast(
-                    title,
-                    message,
-                    icon_path=self.icon_path,
-                    duration=duration,
-                    threaded=False
-                )
+                self.toaster.show_toast(title, message, icon_path=self.icon_path, duration=duration, threaded=False)
             except Exception as e:
                 self.logger.debug(f"Toast notification suppressed: {e}")
 

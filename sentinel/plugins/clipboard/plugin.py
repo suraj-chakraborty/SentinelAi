@@ -20,8 +20,8 @@ from sentinel.core.plugin_system import PluginBase
 logger = logging.getLogger("ClipboardPlugin")
 
 _WRITE_RE = re.compile(
-    r'\b(?:copy\s+(?:this\s+)?to\s+clipboard|save\s+to\s+clipboard|'
-    r'add\s+to\s+clipboard)[:\-]?\s*(.+)',
+    r"\b(?:copy\s+(?:this\s+)?to\s+clipboard|save\s+to\s+clipboard|"
+    r"add\s+to\s+clipboard)[:\-]?\s*(.+)",
     re.IGNORECASE,
 )
 
@@ -30,6 +30,7 @@ def _get_clipboard() -> str:
     """Read current clipboard text."""
     try:
         import win32clipboard
+
         win32clipboard.OpenClipboard()
         try:
             return win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
@@ -40,6 +41,7 @@ def _get_clipboard() -> str:
         # Fallback: tkinter
         try:
             import tkinter as tk
+
             root = tk.Tk()
             root.withdraw()
             text = root.clipboard_get()
@@ -53,6 +55,7 @@ def _set_clipboard(text: str) -> bool:
     """Write text to the clipboard."""
     try:
         import win32clipboard
+
         win32clipboard.OpenClipboard()
         try:
             win32clipboard.EmptyClipboard()
@@ -64,6 +67,7 @@ def _set_clipboard(text: str) -> bool:
         logger.warning("Clipboard write (win32) error: %s", exc)
         try:
             import subprocess
+
             subprocess.run("clip", input=text.encode("utf-16-le"), check=True)
             return True
         except Exception as exc2:
@@ -76,16 +80,14 @@ class ClipboardPlugin(PluginBase):
 
     def can_handle(self, command: str) -> bool:
         cmd = command.lower()
-        return any(kw in cmd for kw in (
-            "clipboard", "what did i copy", "paste", "copy this"
-        ))
+        return any(kw in cmd for kw in ("clipboard", "what did i copy", "paste", "copy this"))
 
     def handle(self, command: str) -> str:
         match = _WRITE_RE.search(command)
         if match:
             text = match.group(1).strip()
             success = _set_clipboard(text)
-            return f"Copied to clipboard: \"{text[:80]}\"" if success else "Failed to write to clipboard."
+            return f'Copied to clipboard: "{text[:80]}"' if success else "Failed to write to clipboard."
 
         # Read
         content = _get_clipboard()

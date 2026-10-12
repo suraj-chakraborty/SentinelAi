@@ -6,7 +6,6 @@ Handles "start live speech", "translate live to <lang>", and "acoustic mirroring
 """
 
 import logging
-from typing import Optional
 
 from sentinel.voice.live_speech_stream import LiveSpeechStream
 
@@ -18,7 +17,7 @@ class S2SCommand:
         self.orchestrator = orchestrator
         self.stream = LiveSpeechStream()
 
-    def execute(self, command: str, entity: Optional[str] = None) -> str:
+    def execute(self, command: str, entity: str | None = None) -> str:
         cmd_lower = command.lower()
 
         # 1. Connect / Start live streaming

@@ -5,10 +5,8 @@ Ambient Glassmorphism Floating HUD & Audio Visualizer.
 Sleek, frameless desktop island that dynamically reflects assistant states.
 """
 
-import tkinter as tk
-from typing import Optional, List
-import math
 import logging
+import tkinter as tk
 
 logger = logging.getLogger("FloatingHUD")
 
@@ -28,7 +26,7 @@ class FloatingHUD:
     Displays dynamic audio waveform and status animations.
     """
 
-    def __init__(self, parent: Optional[tk.Tk] = None):
+    def __init__(self, parent: tk.Tk | None = None):
         self.root = parent or tk.Tk()
         self.win = tk.Toplevel(self.root)
         self.win.overrideredirect(True)
@@ -44,7 +42,9 @@ class FloatingHUD:
         self.win.geometry(f"{self.width}x{self.height}+{x}+{y}")
 
         # Border / Container
-        self.frame = tk.Frame(self.win, bg=HUD_BG, bd=1, relief="solid", highlightbackground=HUD_SURFACE, highlightthickness=1)
+        self.frame = tk.Frame(
+            self.win, bg=HUD_BG, bd=1, relief="solid", highlightbackground=HUD_SURFACE, highlightthickness=1
+        )
         self.frame.place(relx=0, rely=0, relwidth=1, relheight=1)
 
         # Status Label
@@ -61,27 +61,22 @@ class FloatingHUD:
         self.canvas = tk.Canvas(self.frame, width=320, height=36, bg=HUD_BG, highlightthickness=0)
         self.canvas.pack(pady=(0, 6))
 
-        self.wave_history: List[float] = [0.05] * 40
+        self.wave_history: list[float] = [0.05] * 40
         self.state = "IDLE"
         self._pulse_phase = 0.0
         self._visible = True
 
-    def set_state(self, state: str, text: Optional[str] = None):
+    def set_state(self, state: str, text: str | None = None):
         """Update HUD state: 'IDLE', 'LISTENING', 'PROCESSING', 'SPEAKING'."""
         self.state = state.upper()
         display_text = text or f"SENTINEL // {self.state}"
-        
-        color_map = {
-            "IDLE": HUD_MUTED,
-            "LISTENING": HUD_CYAN,
-            "PROCESSING": HUD_VIOLET,
-            "SPEAKING": HUD_EMERALD
-        }
+
+        color_map = {"IDLE": HUD_MUTED, "LISTENING": HUD_CYAN, "PROCESSING": HUD_VIOLET, "SPEAKING": HUD_EMERALD}
         color = color_map.get(self.state, HUD_CYAN)
 
         def _update():
             self.status_lbl.configure(text=display_text[:40], fg=color)
-        
+
         try:
             self.win.after(0, _update)
         except Exception:
@@ -104,7 +99,9 @@ class FloatingHUD:
                 mid_y = h // 2
                 spacing = w / 40
 
-                color = HUD_CYAN if self.state == "LISTENING" else (HUD_EMERALD if self.state == "SPEAKING" else HUD_VIOLET)
+                color = (
+                    HUD_CYAN if self.state == "LISTENING" else (HUD_EMERALD if self.state == "SPEAKING" else HUD_VIOLET)
+                )
 
                 for i, v in enumerate(self.wave_history):
                     x = int(i * spacing)
@@ -120,15 +117,21 @@ class FloatingHUD:
 
     def hide(self):
         self._visible = False
-        try: self.win.withdraw()
-        except Exception: pass
+        try:
+            self.win.withdraw()
+        except Exception:
+            pass
 
     def show(self):
         self._visible = True
-        try: self.win.deiconify()
-        except Exception: pass
+        try:
+            self.win.deiconify()
+        except Exception:
+            pass
 
     def destroy(self):
         self._visible = False
-        try: self.win.destroy()
-        except Exception: pass
+        try:
+            self.win.destroy()
+        except Exception:
+            pass

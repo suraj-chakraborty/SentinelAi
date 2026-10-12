@@ -5,15 +5,16 @@ Screen capture module for semantic screen memory.
 Captures screenshots and extracts text via OCR.
 """
 
-import os
 import logging
+import os
 from datetime import datetime
-from typing import Optional, Tuple
 from pathlib import Path
 
 import numpy as np
+
 try:
     from PIL import Image
+
     PIL_OK = True
 except ImportError:
     Image = None
@@ -21,6 +22,7 @@ except ImportError:
 
 try:
     import pytesseract
+
     PYTESSERACT_OK = True
 except ImportError:
     PYTESSERACT_OK = False
@@ -39,43 +41,46 @@ class ScreenCapture:
         self.save_screenshots = save_screenshots
         self._screenshot_count = 0
 
-    def capture_full_screen(self) -> Optional[np.ndarray]:
+    def capture_full_screen(self) -> np.ndarray | None:
         try:
             import pyautogui
+
             screenshot = pyautogui.screenshot()
             return np.array(screenshot)
         except Exception as e:
             logger.error(f"Failed to capture screen: {e}")
             return None
 
-    def capture_window(self, window_title: str) -> Optional[np.ndarray]:
+    def capture_window(self, window_title: str) -> np.ndarray | None:
         try:
             import pygetwindow as gw
+
             windows = gw.getWindowsWithTitle(window_title)
             if not windows:
                 logger.warning(f"Window not found: {window_title}")
                 return None
-            
+
             win = windows[0]
             left, top = win.left, win.top
             width, height = win.width, win.height
-            
+
             import pyautogui
+
             screenshot = pyautogui.screenshot(region=(left, top, width, height))
             return np.array(screenshot)
         except Exception as e:
             logger.error(f"Failed to capture window '{window_title}': {e}")
             return None
 
-    def save_screenshot(self, image: np.ndarray, prefix: str = "screen") -> Optional[str]:
+    def save_screenshot(self, image: np.ndarray, prefix: str = "screen") -> str | None:
         if not self.save_screenshots:
             return None
-        
+
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"{prefix}_{timestamp}_{self._screenshot_count:04d}.png"
             filepath = os.path.join(SCREENSHOTS_DIR, filename)
-            
+
             Image.fromarray(image).save(filepath)
             self._screenshot_count += 1
             logger.info(f"Screenshot saved: {filepath}")
@@ -96,16 +101,16 @@ class ScreenCapture:
             logger.error(f"OCR failed: {e}")
             return ""
 
-    def capture_and_index(self) -> Optional[Tuple[str, str, Optional[str]]]:
+    def capture_and_index(self) -> tuple[str, str, str | None] | None:
         image = self.capture_full_screen()
         if image is None:
             return None
-        
+
         text = self.extract_text(image)
         if not text:
             logger.warning("No text extracted from screenshot")
             return None
-        
+
         filepath = self.save_screenshot(image)
         return text, filepath
 

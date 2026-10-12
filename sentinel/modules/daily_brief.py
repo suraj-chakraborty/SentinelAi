@@ -5,8 +5,9 @@ Executive Morning & Session Briefing for SentinelAI.
 Compiles calendar schedule, system health, and pending priorities.
 """
 
-from datetime import datetime
 import logging
+from datetime import datetime
+
 import psutil
 
 logger = logging.getLogger("DailyBrief")

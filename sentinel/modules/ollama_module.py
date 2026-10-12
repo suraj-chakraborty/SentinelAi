@@ -17,7 +17,7 @@ import os
 import subprocess
 import threading
 import time
-from typing import Callable, Optional
+from collections.abc import Callable
 
 logger = logging.getLogger("OllamaModule")
 
@@ -26,13 +26,13 @@ class OllamaModule:
     """Manages the local Ollama daemon and LLM inference."""
 
     _INSTALL_URL = "https://ollama.com/download/OllamaSetup.exe"
-    _AVAILABILITY_TTL = 30          # seconds between ping checks
+    _AVAILABILITY_TTL = 30  # seconds between ping checks
     _HIGH_SPEC_RAM_GB = 16
 
     def __init__(self):
         self.model: str = self._choose_model()
         self.is_installing: bool = False
-        self._available_cache: Optional[bool] = None
+        self._available_cache: bool | None = None
         self._last_check: float = 0.0
         self._lock = threading.Lock()
 
@@ -42,7 +42,8 @@ class OllamaModule:
         """Pick llama3 for high-spec machines, tinyllama otherwise."""
         try:
             import psutil
-            ram_gb = psutil.virtual_memory().total / (1024 ** 3)
+
+            ram_gb = psutil.virtual_memory().total / (1024**3)
             has_gpu = self._detect_gpu()
             if ram_gb >= self._HIGH_SPEC_RAM_GB or has_gpu:
                 logger.info("High-spec detected (%.1f GB RAM, GPU=%s). Using llama3.", ram_gb, has_gpu)
@@ -57,6 +58,7 @@ class OllamaModule:
     def _detect_gpu() -> bool:
         try:
             import GPUtil
+
             return bool(GPUtil.getGPUs())
         except Exception:
             return False
@@ -81,6 +83,7 @@ class OllamaModule:
     def _ping(self) -> bool:
         try:
             import ollama as _ollama
+
             _ollama.list()
             return True
         except ImportError:
@@ -103,6 +106,7 @@ class OllamaModule:
         logger.info("Ollama offline — attempting to start daemon…")
         try:
             import platform
+
             if platform.system() == "Windows":
                 result = subprocess.run(["where", "ollama"], capture_output=True, text=True)
                 if result.returncode != 0:
@@ -141,12 +145,12 @@ class OllamaModule:
             self.is_installing = True
             try:
                 import requests
+
                 logger.info("Downloading Ollama installer from %s …", self._INSTALL_URL)
                 with requests.get(self._INSTALL_URL, stream=True, timeout=60) as r:
                     r.raise_for_status()
                     with open(installer_path, "wb") as f:
-                        for chunk in r.iter_content(chunk_size=8192):
-                            f.write(chunk)
+                        f.writelines(r.iter_content(chunk_size=8192))
                 logger.info("Download complete. Launching installer…")
                 subprocess.Popen([installer_path])
             except Exception as exc:
@@ -164,9 +168,10 @@ class OllamaModule:
             return
         try:
             import ollama as _ollama
+
             models_resp = _ollama.list()
             local_names = []
-            for m in (models_resp.get("models") or []):
+            for m in models_resp.get("models") or []:
                 name = m.get("name") or m.get("model")
                 if name:
                     local_names.append(name.split(":")[0])
@@ -185,6 +190,7 @@ class OllamaModule:
             return "Ollama service is not running. Please start it for offline support."
         try:
             import ollama as _ollama
+
             logger.debug("Generating offline with %s …", self.model)
             response = _ollama.generate(model=self.model, prompt=prompt)
             return response.get("response", "")
@@ -192,10 +198,7 @@ class OllamaModule:
             return "Ollama Python package is not installed (pip install ollama)."
         except Exception as exc:
             if "not found" in str(exc).lower():
-                return (
-                    f"Model '{self.model}' not found locally. "
-                    f"Run: ollama pull {self.model}"
-                )
+                return f"Model '{self.model}' not found locally. Run: ollama pull {self.model}"
             logger.error("Ollama generation error: %s", exc)
             return f"Offline generation failed: {exc}"
 
@@ -210,6 +213,7 @@ class OllamaModule:
             return msg
         try:
             import ollama as _ollama
+
             full_response = []
             for chunk in _ollama.generate(model=self.model, prompt=prompt, stream=True):
                 token = chunk.get("response", "")

@@ -5,19 +5,20 @@ Context-aware background daemon manager.
 Schedules and runs background tasks with triggers and context awareness.
 """
 
-import os
-import time
 import logging
-import threading
+import os
 import queue
-import json
-from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, Callable, List
-from dataclasses import dataclass, field
+import threading
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
+from typing import Any
 
 try:
     import schedule
+
     SCHEDULE_OK = True
 except ImportError:
     SCHEDULE_OK = False
@@ -41,6 +42,7 @@ class DaemonStatus(Enum):
 @dataclass
 class DaemonTask:
     """Represents a background task."""
+
     id: str
     name: str
     description: str
@@ -48,11 +50,11 @@ class DaemonTask:
     trigger: str
     interval_seconds: int = 0
     enabled: bool = True
-    last_run: Optional[datetime] = None
-    next_run: Optional[datetime] = None
+    last_run: datetime | None = None
+    next_run: datetime | None = None
     status: DaemonStatus = DaemonStatus.PENDING
-    result: Optional[str] = None
-    error: Optional[str] = None
+    result: str | None = None
+    error: str | None = None
 
 
 class DaemonManager:
@@ -60,11 +62,11 @@ class DaemonManager:
 
     def __init__(self, orchestrator=None):
         self.orchestrator = orchestrator
-        self._tasks: Dict[str, DaemonTask] = {}
+        self._tasks: dict[str, DaemonTask] = {}
         self._running = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._event_queue = queue.Queue()
-        self._schedule_thread: Optional[threading.Thread] = None
+        self._schedule_thread: threading.Thread | None = None
 
     def register_task(
         self,
@@ -73,7 +75,7 @@ class DaemonManager:
         action: Callable,
         trigger: str = "manual",
         interval_seconds: int = 0,
-        description: str = ""
+        description: str = "",
     ) -> bool:
         """Register a new background task."""
         try:
@@ -83,16 +85,16 @@ class DaemonManager:
                 description=description,
                 action=action,
                 trigger=trigger,
-                interval_seconds=interval_seconds
+                interval_seconds=interval_seconds,
             )
             self._tasks[task_id] = task
-            
+
             if trigger == "interval" and interval_seconds > 0:
                 if SCHEDULE_OK:
                     schedule.every(interval_seconds).seconds.do(self._run_task, task_id)
                 else:
                     logger.warning("Schedule module not available - interval tasks won't run")
-            
+
             logger.info(f"Registered daemon task: {task_id} (trigger: {trigger})")
             return True
         except Exception as e:
@@ -111,15 +113,15 @@ class DaemonManager:
         if self._running:
             logger.warning("Daemon manager already running")
             return
-        
+
         self._running = True
-        
+
         self._thread = threading.Thread(target=self._run_loop, daemon=True, name="DaemonManager")
         self._thread.start()
-        
+
         self._schedule_thread = threading.Thread(target=self._schedule_loop, daemon=True, name="ScheduleRunner")
         self._schedule_thread.start()
-        
+
         logger.info("Daemon manager started")
 
     def stop(self):
@@ -157,43 +159,38 @@ class DaemonManager:
         """Execute a task."""
         if task_id not in self._tasks:
             return
-        
+
         task = self._tasks[task_id]
         task.status = DaemonStatus.RUNNING
         task.last_run = datetime.now()
-        
+
         try:
             logger.info(f"Running daemon task: {task_id}")
             result = task.action()
             task.result = str(result) if result else "Completed"
             task.status = DaemonStatus.COMPLETED
-            
-            self._event_queue.put({
-                "type": "task_completed",
-                "task_id": task_id,
-                "timestamp": task.last_run.isoformat()
-            })
+
+            self._event_queue.put(
+                {"type": "task_completed", "task_id": task_id, "timestamp": task.last_run.isoformat()}
+            )
         except Exception as e:
             task.error = str(e)
             task.status = DaemonStatus.FAILED
             logger.error(f"Task {task_id} failed: {e}")
-            
-            self._event_queue.put({
-                "type": "task_failed",
-                "task_id": task_id,
-                "error": str(e),
-                "timestamp": datetime.now().isoformat()
-            })
 
-    def run_task_now(self, task_id: str) -> Dict[str, Any]:
+            self._event_queue.put(
+                {"type": "task_failed", "task_id": task_id, "error": str(e), "timestamp": datetime.now().isoformat()}
+            )
+
+    def run_task_now(self, task_id: str) -> dict[str, Any]:
         """Manually trigger a task."""
         if task_id not in self._tasks:
             return {"success": False, "error": f"Task {task_id} not found"}
-        
+
         self._run_task(task_id)
         return {"success": True, "task_id": task_id, "status": self._tasks[task_id].status.value}
 
-    def get_task_status(self, task_id: str) -> Optional[Dict[str, Any]]:
+    def get_task_status(self, task_id: str) -> dict[str, Any] | None:
         """Get status of a task."""
         if task_id not in self._tasks:
             return None
@@ -205,10 +202,10 @@ class DaemonManager:
             "last_run": task.last_run.isoformat() if task.last_run else None,
             "next_run": task.next_run.isoformat() if task.next_run else None,
             "result": task.result,
-            "error": task.error
+            "error": task.error,
         }
 
-    def list_tasks(self) -> List[Dict[str, Any]]:
+    def list_tasks(self) -> list[dict[str, Any]]:
         """List all registered tasks."""
         return [
             {
@@ -218,7 +215,7 @@ class DaemonManager:
                 "trigger": t.trigger,
                 "interval_seconds": t.interval_seconds,
                 "enabled": t.enabled,
-                "status": t.status.value
+                "status": t.status.value,
             }
             for t in self._tasks.values()
         ]
@@ -237,7 +234,7 @@ class DaemonManager:
             return True
         return False
 
-    def get_events(self, timeout: float = 0.1) -> List[Dict[str, Any]]:
+    def get_events(self, timeout: float = 0.1) -> list[dict[str, Any]]:
         """Get recent daemon events."""
         events = []
         while True:
@@ -248,28 +245,23 @@ class DaemonManager:
                 break
         return events
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get daemon manager statistics."""
         return {
             "running": self._running,
             "total_tasks": len(self._tasks),
             "enabled_tasks": sum(1 for t in self._tasks.values() if t.enabled),
-            "tasks": self.list_tasks()
+            "tasks": self.list_tasks(),
         }
 
 
 def create_daemon_task(action: Callable, name: str, description: str = ""):
     """Decorator to create a daemon task."""
     task_id = f"daemon_{name.lower().replace(' ', '_')}"
-    return {
-        "id": task_id,
-        "name": name,
-        "action": action,
-        "description": description
-    }
+    return {"id": task_id, "name": name, "action": action, "description": description}
 
 
-_daemon_manager: Optional[DaemonManager] = None
+_daemon_manager: DaemonManager | None = None
 
 
 def get_daemon_manager() -> DaemonManager:

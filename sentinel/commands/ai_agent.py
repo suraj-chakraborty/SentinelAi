@@ -13,16 +13,40 @@ def _should_run_autonomous_agent(goal: str) -> bool:
     words = g.split()
 
     action_markers = (
-        "automate", "organize", "install", "download", "open ", "click ",
-        "on my screen", "my desktop", "this folder", "run the", "execute ",
-        "search for", "find all", "create a file", "fill out", "submit the",
+        "automate",
+        "organize",
+        "install",
+        "download",
+        "open ",
+        "click ",
+        "on my screen",
+        "my desktop",
+        "this folder",
+        "run the",
+        "execute ",
+        "search for",
+        "find all",
+        "create a file",
+        "fill out",
+        "submit the",
     )
     if any(m in g for m in action_markers):
         return True
 
     chat_prefixes = (
-        "what is ", "what are ", "who is ", "who are ", "why ", "when did ",
-        "define ", "explain ", "translate ", "hello", "hi ", "thanks", "thank you",
+        "what is ",
+        "what are ",
+        "who is ",
+        "who are ",
+        "why ",
+        "when did ",
+        "define ",
+        "explain ",
+        "translate ",
+        "hello",
+        "hi ",
+        "thanks",
+        "thank you",
     )
     if any(g.startswith(p) for p in chat_prefixes):
         return False

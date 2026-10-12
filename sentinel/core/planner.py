@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
 
 
 @dataclass
@@ -14,14 +13,14 @@ class PlanStep:
 class Planner:
     def __init__(self, orchestrator=None):
         self.orchestrator = orchestrator
-        self._plan: List[PlanStep] = []
+        self._plan: list[PlanStep] = []
 
-    def plan(self, goal: str) -> List[PlanStep]:
+    def plan(self, goal: str) -> list[PlanStep]:
         """Generate a tiny plan for the given goal. This is intentionally simple for Phase 1."""
         self._plan = [PlanStep(id=1, text=f"Execute: {goal}")]
         return self._plan
 
-    def get_next_step(self) -> Optional[PlanStep]:
+    def get_next_step(self) -> PlanStep | None:
         if not self._plan:
             return None
         return self._plan[0]

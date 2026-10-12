@@ -4,45 +4,45 @@ sentinel/app/orchestration.py
 Main command routing, agent handling, and high-level logic.
 """
 
-import os
-import time
 import logging
+import os
 import threading
-from typing import Optional
+import time
 
 # Config & Core
-from sentinel.app.config import COMMAND_WAV
 from sentinel.app.state import get_state
-from sentinel.app.voice import speak, transcribe
-from sentinel.app.audio import record_until_silence
+from sentinel.app.voice import speak
 from sentinel.core.repair import RepairAgent
 
 logger = logging.getLogger("SentinelOrchestration")
 
 # ── Command Routing ──────────────────────────────────────────────────────────
 
+
 def execute_command(command: str, orchestrator_ref=None):
     """
     Main entry point for command routing with autonomous repair.
     """
-    if not command: return
-    
+    if not command:
+        return
+
     cmd = command.strip().lower()
     logger.info(f"Processing command: {cmd}")
-    
+
     # 1. System Overrides (Priority)
     if cmd in ("stop", "stop agent", "disable agent"):
         speak("Stopping autonomous agent.")
         get_state().set_status("AGENT_ACTIVE", False)
         return
-    
+
     # Stop speaking commands
     stop_speaking_cmds = ("stop speaking", "silence", "quiet", "be quiet", "shut up", "stop talking")
     if any(cmd.startswith(sc) for sc in stop_speaking_cmds):
         from sentinel.voice.tts import get_tts
+
         get_tts().stop_speaking()
         return
-        
+
     if cmd in ("pause listening", "stop listening"):
         get_state().set_status("LISTENING_PAUSED", True)
         speak("Pausing listening for 5 minutes.")
@@ -61,31 +61,33 @@ def execute_command(command: str, orchestrator_ref=None):
 
     # 3. Fallback to AI Analysis
     from sentinel.app.intelligence import interpret_command
+
     try:
         response = interpret_command(command)
         if response:
             # Check if user explicitly wants browser/search actions
             search_keywords = ("search", "look up", "find", "google", "bing", "web search", "open browser")
             allow_execute = any(sk in cmd for sk in search_keywords)
-            
+
             clean_response = response
             execute_cmd = None
             if "[EXECUTE:" in response:
                 import re
-                match = re.search(r'\[EXECUTE:\s*(.*?)\]', response)
+
+                match = re.search(r"\[EXECUTE:\s*(.*?)\]", response)
                 if match:
                     execute_cmd = match.group(1).strip()
-                
+
                 if allow_execute and execute_cmd:
                     logger.info(f"Auto-executing: {execute_cmd}")
                 else:
                     # Remove execute for non-search commands (e.g., translate, weather)
-                    clean_response = re.sub(r'\[EXECUTE:.*?\]', '', response).strip()
+                    clean_response = re.sub(r"\[EXECUTE:.*?\]", "", response).strip()
                     logger.info("Removed auto-execute suggestion from AI response")
-            
+
             if clean_response:
                 speak(clean_response)
-            
+
             # Execute the command if allowed
             if allow_execute and execute_cmd:
                 try:
@@ -106,7 +108,9 @@ def execute_command(command: str, orchestrator_ref=None):
         else:
             speak("I encountered a system error and could not find an immediate repair path.")
 
+
 # ── Agent Strategy ───────────────────────────────────────────────────────────
+
 
 def handle_agent_step(command: str, orchestrator_ref=None):
     """
@@ -114,7 +118,7 @@ def handle_agent_step(command: str, orchestrator_ref=None):
     """
     state = get_state()
     cmd = (command or "").strip().lower()
-    
+
     if "confirm" in cmd or "yes" in cmd:
         pending = state.get_status("PENDING_STEP")
         if pending:
@@ -130,10 +134,13 @@ def handle_agent_step(command: str, orchestrator_ref=None):
     speak("Analyzing agent step...")
     execute_command(command, orchestrator_ref=orchestrator_ref)
 
+
 # ── Alert Loop ──────────────────────────────────────────────────────────────
+
 
 def start_alert_loop(orchestrator_ref):
     """Periodically checks for system alerts and reminders."""
+
     def _run():
         while True:
             try:
@@ -144,5 +151,5 @@ def start_alert_loop(orchestrator_ref):
             except Exception:
                 pass
             time.sleep(60)
-            
+
     threading.Thread(target=_run, daemon=True).start()

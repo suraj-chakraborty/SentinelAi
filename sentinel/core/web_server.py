@@ -23,33 +23,44 @@ import asyncio
 import json
 import logging
 import os
-import time
-_time = time
 import secrets
 import threading
-from typing import Any, Dict, List, Optional, Set
+import time
+from typing import Any
 
+from sentinel.app.config import AUDIT_LOG_PATH, ROTATION_LOG_PATH
+from sentinel.core.auth import require_role
+
+_time = time
 logger = logging.getLogger("SentinelWebServer")
 
 APPDATA_DIR = os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "SentinelAi")
-_KEY_FILE   = os.path.join(APPDATA_DIR, "web_api_key.txt")
-_NO_AUTH    = {
-    "/", "/health", "/stats", "/command", "/history",
-    "/ws", "/voice/barge_in", "/voice/state",
-    "/swarm/status", "/swarm/run",
-    "/vision/stream/frame", "/vision/stream/stats",
+_KEY_FILE = os.path.join(APPDATA_DIR, "web_api_key.txt")
+_NO_AUTH = {
+    "/",
+    "/health",
+    "/stats",
+    "/command",
+    "/history",
+    "/ws",
+    "/voice/barge_in",
+    "/voice/state",
+    "/swarm/status",
+    "/swarm/run",
+    "/vision/stream/frame",
+    "/vision/stream/stats",
     "/vision/screen/inspect",
-    "/companion/toggle", "/companion/status"
-}                  # paths that skip HTTP auth check
-from sentinel.app.config import ROTATION_LOG_PATH, AUDIT_LOG_PATH
-from sentinel.core.auth import require_role
+    "/companion/toggle",
+    "/companion/status",
+}  # paths that skip HTTP auth check
 
 try:
-    from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
-    from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
-    from fastapi.middleware.cors import CORSMiddleware
-    from pydantic import BaseModel
     import uvicorn
+    from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+    from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+    from pydantic import BaseModel
+
     _FASTAPI_OK = True
 except ImportError:
     _FASTAPI_OK = False
@@ -58,22 +69,24 @@ except ImportError:
 # ── Pydantic models ───────────────────────────────────────────────────────────
 
 if _FASTAPI_OK:
+
     class CommandRequest(BaseModel):
         command: str
 
     class KBAddRequest(BaseModel):
         text: str
-        source: Optional[str] = "web_dashboard"
+        source: str | None = "web_dashboard"
 
     class KBQueryRequest(BaseModel):
         query: str
-        n_results: Optional[int] = 3
+        n_results: int | None = 3
 
     class UIGeneratorRequest(BaseModel):
         prompt: str
 
 
 # ── API key helpers ───────────────────────────────────────────────────────────
+
 
 def _load_or_create_api_key() -> str:
     os.makedirs(APPDATA_DIR, exist_ok=True)
@@ -90,16 +103,17 @@ def _load_or_create_api_key() -> str:
 
 # ── WebSocket connection manager ──────────────────────────────────────────────
 
+
 class _ConnectionManager:
     def __init__(self):
-        self._connections: Set["WebSocket"] = set()
+        self._connections: set[WebSocket] = set()
         self._lock = threading.Lock()
 
-    def connect(self, ws: "WebSocket"):
+    def connect(self, ws: WebSocket):
         with self._lock:
             self._connections.add(ws)
 
-    def disconnect(self, ws: "WebSocket"):
+    def disconnect(self, ws: WebSocket):
         with self._lock:
             self._connections.discard(ws)
 
@@ -114,6 +128,7 @@ class _ConnectionManager:
                 # WebSocket.send_text must be called from an async context;
                 # we schedule it via the event loop stored on the websocket.
                 import asyncio
+
                 loop = getattr(ws, "_loop", None)
                 if loop and loop.is_running():
                     asyncio.run_coroutine_threadsafe(ws.send_text(payload), loop)
@@ -126,6 +141,7 @@ class _ConnectionManager:
 
 
 # ── Server ────────────────────────────────────────────────────────────────────
+
 
 class SentinelWebServer:
     """
@@ -145,16 +161,16 @@ class SentinelWebServer:
             logger.error("fastapi/uvicorn not installed — web dashboard disabled.")
             return
 
-        self.orchestrator  = orchestrator
-        self.command_fn    = command_fn
-        self.host          = host or os.getenv("SENTINEL_WEB_HOST", "127.0.0.1")
-        self.port          = int(os.getenv("SENTINEL_WEB_PORT", str(port)))
-        self._api_key      = _load_or_create_api_key()
-        self._manager      = _ConnectionManager()
-        self._alerts_buf: List[str] = []
+        self.orchestrator = orchestrator
+        self.command_fn = command_fn
+        self.host = host or os.getenv("SENTINEL_WEB_HOST", "127.0.0.1")
+        self.port = int(os.getenv("SENTINEL_WEB_PORT", str(port)))
+        self._api_key = _load_or_create_api_key()
+        self._manager = _ConnectionManager()
+        self._alerts_buf: list[str] = []
         # Track last key rotation timestamp for admin visibility
         self._last_key_rotation = None
-        self._server_thread: Optional[threading.Thread] = None
+        self._server_thread: threading.Thread | None = None
         self._start_time = _time.time()
 
         self.app = FastAPI(
@@ -165,12 +181,17 @@ class SentinelWebServer:
 
         # CORS
         _cors = (os.getenv("SENTINEL_CORS_ORIGINS") or "").strip()
-        allow = ["*"] if _cors == "*" else (
-            [o.strip() for o in _cors.split(",") if o.strip()]
-            if _cors else [
-                f"http://127.0.0.1:{self.port}",
-                f"http://localhost:{self.port}",
-            ]
+        allow = (
+            ["*"]
+            if _cors == "*"
+            else (
+                [o.strip() for o in _cors.split(",") if o.strip()]
+                if _cors
+                else [
+                    f"http://127.0.0.1:{self.port}",
+                    f"http://localhost:{self.port}",
+                ]
+            )
         )
         self.app.add_middleware(
             CORSMiddleware,
@@ -219,10 +240,7 @@ class SentinelWebServer:
             if path in _NO_AUTH or path == "/user/profile" or path.startswith("/jarvis/"):
                 return await call_next(request)
             # Check header or query param
-            token = (
-                request.headers.get("X-Sentinel-Key")
-                or request.query_params.get("key")
-            )
+            token = request.headers.get("X-Sentinel-Key") or request.query_params.get("key")
             if not token or token != self._api_key:
                 return JSONResponse(
                     {"detail": "Unauthorized — provide valid X-Sentinel-Key header."},
@@ -233,8 +251,8 @@ class SentinelWebServer:
     # ── Routes ────────────────────────────────────────────────────────────────
 
     def _register_routes(self):
-        app  = self.app
-        mgr  = self._manager
+        app = self.app
+        mgr = self._manager
 
         # ── Dashboard HTML ───────────────────────────────────────────────────
         @app.get("/", response_class=HTMLResponse)
@@ -254,8 +272,11 @@ class SentinelWebServer:
         async def voice_barge_in():
             try:
                 from sentinel.voice.barge_in import get_barge_in_engine
+
                 interrupted = get_barge_in_engine().trigger_barge_in("http_api")
-                mgr.broadcast({"type": "barge_in", "status": "speech_interrupted" if interrupted else "no_speech_active"})
+                mgr.broadcast(
+                    {"type": "barge_in", "status": "speech_interrupted" if interrupted else "no_speech_active"}
+                )
                 return {"success": True, "interrupted": interrupted}
             except Exception as exc:
                 return {"success": False, "error": str(exc)}
@@ -265,11 +286,12 @@ class SentinelWebServer:
             try:
                 from sentinel.app.voice import is_speaking
                 from sentinel.voice.tts import get_tts
+
                 tts = get_tts()
                 return {
                     "is_speaking": is_speaking(),
                     "engine_type": tts.engine_type,
-                    "queue_size": getattr(tts, "_queue", None).qsize() if hasattr(tts, "_queue") else 0
+                    "queue_size": getattr(tts, "_queue", None).qsize() if hasattr(tts, "_queue") else 0,
                 }
             except Exception as exc:
                 return {"is_speaking": False, "error": str(exc)}
@@ -279,6 +301,7 @@ class SentinelWebServer:
         async def swarm_status():
             try:
                 from sentinel.core.swarm_engine import get_swarm_state
+
                 return get_swarm_state()
             except Exception as exc:
                 return {"status": "error", "error": str(exc), "agents": {}}
@@ -292,16 +315,14 @@ class SentinelWebServer:
                     raise HTTPException(400, "Empty swarm goal.")
 
                 from sentinel.core.swarm_engine import get_swarm_orchestrator
+
                 swarm = get_swarm_orchestrator()
 
                 def _run_bg():
                     result = swarm.run_swarm(goal)
-                    mgr.broadcast({
-                        "type": "swarm_completed",
-                        "goal": goal,
-                        "result": result[:500],
-                        "state": swarm.get_state()
-                    })
+                    mgr.broadcast(
+                        {"type": "swarm_completed", "goal": goal, "result": result[:500], "state": swarm.get_state()}
+                    )
 
                 threading.Thread(target=_run_bg, daemon=True).start()
                 return {"success": True, "goal": goal, "status": "dispatched"}
@@ -311,6 +332,7 @@ class SentinelWebServer:
         # Connect BargeInEngine callbacks to WebSocket broadcast
         try:
             from sentinel.voice.barge_in import get_barge_in_engine
+
             get_barge_in_engine().register_callback(
                 lambda src: mgr.broadcast({"type": "barge_in", "source": src, "time": _time.time()})
             )
@@ -325,17 +347,24 @@ class SentinelWebServer:
             except Exception:
                 data = {}
             goal = data.get("goal", "")
-            status = self.orchestrator.start_jarvis(goal) if hasattr(self.orchestrator, 'start_jarvis') else {"error": "not supported"}
+            status = (
+                self.orchestrator.start_jarvis(goal)
+                if hasattr(self.orchestrator, "start_jarvis")
+                else {"error": "not supported"}
+            )
             return status
 
         @app.get("/jarvis/status")
         async def jarvis_status():
-            plan = getattr(self.orchestrator, 'jarvis_plan', None) or []
-            return {"plan": [step.text if hasattr(step, 'text') else str(step) for step in plan], "progress": getattr(self.orchestrator, '_jarvis_progress', 0)}
+            plan = getattr(self.orchestrator, "jarvis_plan", None) or []
+            return {
+                "plan": [step.text if hasattr(step, "text") else str(step) for step in plan],
+                "progress": getattr(self.orchestrator, "_jarvis_progress", 0),
+            }
 
         @app.get("/jarvis/reflect")
         async def jarvis_reflect():
-            if not self.orchestrator or not hasattr(self.orchestrator, 'jarvis_reflect'):
+            if not self.orchestrator or not hasattr(self.orchestrator, "jarvis_reflect"):
                 return {"status": "not_supported"}
             return self.orchestrator.jarvis_reflect()
 
@@ -359,7 +388,7 @@ class SentinelWebServer:
 
         @app.post("/jarvis/execute_next")
         async def jarvis_execute_next():
-            if not hasattr(self.orchestrator, 'jarvis_execute_next'):
+            if not hasattr(self.orchestrator, "jarvis_execute_next"):
                 return {"status": "not_supported"}
             return self.orchestrator.jarvis_execute_next()
 
@@ -393,7 +422,7 @@ class SentinelWebServer:
             response_text = "No executor configured."
             try:
                 if self.command_fn:
-                    holder: Dict[str, Any] = {"response": ""}
+                    holder: dict[str, Any] = {"response": ""}
                     ev = threading.Event()
 
                     def _run():
@@ -423,10 +452,10 @@ class SentinelWebServer:
         async def get_history():
             try:
                 from sentinel.core.conversation import get_conversation
+
                 conv = get_conversation()
                 turns = [
-                    {"role": t.role, "content": t.content,
-                     "timestamp": t.timestamp, "emotion": t.emotion}
+                    {"role": t.role, "content": t.content, "timestamp": t.timestamp, "emotion": t.emotion}
                     for t in list(conv._history)
                 ]
                 return {"turns": turns, "count": len(turns)}
@@ -450,9 +479,7 @@ class SentinelWebServer:
         async def kb_query(req: KBQueryRequest):
             try:
                 if self.orchestrator and self.orchestrator.knowledge_base:
-                    result = self.orchestrator.knowledge_base.query_knowledge(
-                        req.query, n_results=req.n_results
-                    )
+                    result = self.orchestrator.knowledge_base.query_knowledge(req.query, n_results=req.n_results)
                     return {"result": result, "query": req.query}
                 return {"result": "Knowledge base not available", "query": req.query}
             except Exception as exc:
@@ -498,6 +525,7 @@ class SentinelWebServer:
         async def screen_memory_stats():
             try:
                 from sentinel.commands.search_memory import get_search_memory_command
+
                 cmd = get_search_memory_command()
                 return cmd.get_stats()
             except Exception as e:
@@ -507,6 +535,7 @@ class SentinelWebServer:
         async def search_screen_memory(req: KBQueryRequest):
             try:
                 from sentinel.commands.search_memory import get_search_memory_command
+
                 cmd = get_search_memory_command()
                 return cmd.execute(req.query, req.n_results or 5)
             except Exception as e:
@@ -516,6 +545,7 @@ class SentinelWebServer:
         async def get_recent_screens(limit: int = 10):
             try:
                 from sentinel.commands.search_memory import get_search_memory_command
+
                 cmd = get_search_memory_command()
                 return cmd.get_recent(limit)
             except Exception as e:
@@ -525,6 +555,7 @@ class SentinelWebServer:
         async def capture_screen():
             try:
                 from sentinel.commands.search_memory import get_search_memory_command
+
                 cmd = get_search_memory_command()
                 return cmd.capture_now()
             except Exception as e:
@@ -534,6 +565,7 @@ class SentinelWebServer:
         async def start_screen_indexing(interval: int = 60):
             try:
                 from sentinel.commands.search_memory import get_search_memory_command
+
                 cmd = get_search_memory_command()
                 return cmd.start_indexing(interval)
             except Exception as e:
@@ -543,6 +575,7 @@ class SentinelWebServer:
         async def stop_screen_indexing():
             try:
                 from sentinel.commands.search_memory import get_search_memory_command
+
                 cmd = get_search_memory_command()
                 return cmd.stop_indexing()
             except Exception as e:
@@ -552,6 +585,7 @@ class SentinelWebServer:
         async def delete_screen(screen_id: str):
             try:
                 from sentinel.commands.search_memory import get_search_memory_command
+
                 cmd = get_search_memory_command()
                 return cmd.delete_screen(screen_id)
             except Exception as e:
@@ -562,6 +596,7 @@ class SentinelWebServer:
         async def uia_window_info():
             try:
                 from sentinel.commands.ui_automation import get_uia_command
+
                 cmd = get_uia_command()
                 return cmd._get_window_info()
             except Exception as e:
@@ -571,6 +606,7 @@ class SentinelWebServer:
         async def uia_list_windows():
             try:
                 from sentinel.commands.ui_automation import get_uia_command
+
                 cmd = get_uia_command()
                 return cmd.execute("list_windows")
             except Exception as e:
@@ -580,6 +616,7 @@ class SentinelWebServer:
         async def uia_list_children(parent_hwnd: int = None):
             try:
                 from sentinel.commands.ui_automation import get_uia_command
+
                 cmd = get_uia_command()
                 return cmd.execute("list_children", parent_hwnd=parent_hwnd)
             except Exception as e:
@@ -589,6 +626,7 @@ class SentinelWebServer:
         async def uia_click(handle: int, double_click: bool = False):
             try:
                 from sentinel.commands.ui_automation import get_uia_command
+
                 cmd = get_uia_command()
                 return cmd.execute("click", handle=handle, double_click=double_click)
             except Exception as e:
@@ -598,6 +636,7 @@ class SentinelWebServer:
         async def uia_send_keys(text: str, handle: int = None):
             try:
                 from sentinel.commands.ui_automation import get_uia_command
+
                 cmd = get_uia_command()
                 return cmd.execute("send_keys", text=text, handle=handle)
             except Exception as e:
@@ -607,6 +646,7 @@ class SentinelWebServer:
         async def uia_focus(handle: int):
             try:
                 from sentinel.commands.ui_automation import get_uia_command
+
                 cmd = get_uia_command()
                 return cmd.execute("focus", handle=handle)
             except Exception as e:
@@ -616,6 +656,7 @@ class SentinelWebServer:
         async def uia_close(handle: int):
             try:
                 from sentinel.commands.ui_automation import get_uia_command
+
                 cmd = get_uia_command()
                 return cmd.execute("close_window", handle=handle)
             except Exception as e:
@@ -626,6 +667,7 @@ class SentinelWebServer:
         async def start_vision_stream(camera_id: int = 0, fps: int = 10):
             try:
                 from sentinel.vision.live_vision import start_vision_stream
+
                 success = start_vision_stream(camera_id, fps)
                 return {"success": success, "message": "Vision stream started" if success else "Failed to start"}
             except Exception as e:
@@ -635,6 +677,7 @@ class SentinelWebServer:
         async def stop_vision_stream():
             try:
                 from sentinel.vision.live_vision import stop_vision_stream
+
                 stop_vision_stream()
                 return {"success": True, "message": "Vision stream stopped"}
             except Exception as e:
@@ -644,6 +687,7 @@ class SentinelWebServer:
         async def get_vision_frame():
             try:
                 from sentinel.vision.live_vision import get_vision_frame
+
                 frame_b64 = get_vision_frame()
                 if frame_b64:
                     return {"success": True, "frame": frame_b64, "format": "jpeg"}
@@ -655,6 +699,7 @@ class SentinelWebServer:
         async def get_vision_stats():
             try:
                 from sentinel.vision.live_vision import get_live_vision
+
                 stream = get_live_vision()
                 return stream.get_stats()
             except Exception as e:
@@ -664,6 +709,7 @@ class SentinelWebServer:
         async def capture_vision_frame():
             try:
                 from sentinel.vision.live_vision import get_live_vision
+
                 stream = get_live_vision()
                 filepath = stream.capture_frame()
                 if filepath:
@@ -676,6 +722,7 @@ class SentinelWebServer:
         async def analyze_vision_frame(prompt: str = "Describe what you see in this image."):
             try:
                 from sentinel.vision.live_vision import get_live_vision
+
                 stream = get_live_vision()
                 result = stream.analyze_current_frame(prompt)
                 return {"success": True, "analysis": result}
@@ -688,7 +735,9 @@ class SentinelWebServer:
             try:
                 import base64
                 import io
+
                 from PIL import ImageGrab
+
                 from sentinel.utils.window_context import get_active_window_info
 
                 win_info = get_active_window_info()
@@ -705,20 +754,25 @@ class SentinelWebServer:
                 app_name = win_info.get("app_name") or ""
                 title_lower = title.lower()
 
-                has_error = any(k in title_lower for k in ("error", "exception", "failed", "traceback", "crash", "debug"))
+                has_error = any(
+                    k in title_lower for k in ("error", "exception", "failed", "traceback", "crash", "debug")
+                )
                 if has_error:
                     alerts.append(f"Detected issue in {app_name}: {title}")
-                    bounding_boxes.append({
-                        "label": "Exception / Error Hotspot",
-                        "x": 120, "y": 80, "w": 720, "h": 220,
-                        "type": "error"
-                    })
+                    bounding_boxes.append(
+                        {"label": "Exception / Error Hotspot", "x": 120, "y": 80, "w": 720, "h": 220, "type": "error"}
+                    )
                 else:
-                    bounding_boxes.append({
-                        "label": f"Active Application: {app_name}",
-                        "x": 60, "y": 40, "w": 840, "h": 460,
-                        "type": "active"
-                    })
+                    bounding_boxes.append(
+                        {
+                            "label": f"Active Application: {app_name}",
+                            "x": 60,
+                            "y": 40,
+                            "w": 840,
+                            "h": 460,
+                            "type": "active",
+                        }
+                    )
 
                 return {
                     "success": True,
@@ -726,7 +780,7 @@ class SentinelWebServer:
                     "window": win_info,
                     "alerts": alerts,
                     "bounding_boxes": bounding_boxes,
-                    "timestamp": _time.time()
+                    "timestamp": _time.time(),
                 }
             except Exception as e:
                 return {"success": False, "error": str(e)}
@@ -735,8 +789,10 @@ class SentinelWebServer:
         @app.post("/companion/toggle")
         async def companion_toggle():
             try:
-                from sentinel.app.floating_widget import get_floating_widget, start_floating_widget
                 import threading
+
+                from sentinel.app.floating_widget import get_floating_widget, start_floating_widget
+
                 widget = get_floating_widget(self.orchestrator)
                 if not getattr(widget, "_running", False):
                     t = threading.Thread(target=lambda: start_floating_widget(self.orchestrator), daemon=True)
@@ -744,7 +800,11 @@ class SentinelWebServer:
                     return {"success": True, "action": "launched", "message": "Desktop Companion launched."}
                 else:
                     widget.toggle_visibility()
-                    return {"success": True, "action": "toggled", "visible": widget.root.winfo_viewable() if widget.root else False}
+                    return {
+                        "success": True,
+                        "action": "toggled",
+                        "visible": widget.root.winfo_viewable() if widget.root else False,
+                    }
             except Exception as e:
                 return {"success": False, "error": str(e)}
 
@@ -752,11 +812,14 @@ class SentinelWebServer:
         async def companion_status():
             try:
                 from sentinel.app.floating_widget import _widget_instance
+
                 is_active = _widget_instance is not None and getattr(_widget_instance, "_running", False)
                 return {
                     "active": is_active,
                     "shortcut": "Win + Space / Ctrl + Shift + Space / Alt + J",
-                    "visible": _widget_instance.root.winfo_viewable() if (is_active and _widget_instance.root) else False
+                    "visible": _widget_instance.root.winfo_viewable()
+                    if (is_active and _widget_instance.root)
+                    else False,
                 }
             except Exception as e:
                 return {"active": False, "error": str(e)}
@@ -766,6 +829,7 @@ class SentinelWebServer:
         async def list_daemons():
             try:
                 from sentinel.daemons.daemon_manager import get_daemon_manager
+
                 manager = get_daemon_manager()
                 return manager.get_stats()
             except Exception as e:
@@ -775,6 +839,7 @@ class SentinelWebServer:
         async def start_daemons():
             try:
                 from sentinel.daemons.daemon_manager import start_daemon_manager
+
                 start_daemon_manager()
                 return {"success": True, "message": "Daemon manager started"}
             except Exception as e:
@@ -784,6 +849,7 @@ class SentinelWebServer:
         async def stop_daemons():
             try:
                 from sentinel.daemons.daemon_manager import stop_daemon_manager
+
                 stop_daemon_manager()
                 return {"success": True, "message": "Daemon manager stopped"}
             except Exception as e:
@@ -793,6 +859,7 @@ class SentinelWebServer:
         async def get_daemon_status(task_id: str):
             try:
                 from sentinel.daemons.daemon_manager import get_daemon_manager
+
                 manager = get_daemon_manager()
                 status = manager.get_task_status(task_id)
                 if status:
@@ -805,6 +872,7 @@ class SentinelWebServer:
         async def run_daemon_task(task_id: str):
             try:
                 from sentinel.daemons.daemon_manager import get_daemon_manager
+
                 manager = get_daemon_manager()
                 return manager.run_task_now(task_id)
             except Exception as e:
@@ -814,6 +882,7 @@ class SentinelWebServer:
         async def enable_daemon(task_id: str):
             try:
                 from sentinel.daemons.daemon_manager import get_daemon_manager
+
                 manager = get_daemon_manager()
                 if manager.enable_task(task_id):
                     return {"success": True, "message": f"Task {task_id} enabled"}
@@ -825,6 +894,7 @@ class SentinelWebServer:
         async def disable_daemon(task_id: str):
             try:
                 from sentinel.daemons.daemon_manager import get_daemon_manager
+
                 manager = get_daemon_manager()
                 if manager.disable_task(task_id):
                     return {"success": True, "message": f"Task {task_id} disabled"}
@@ -836,6 +906,7 @@ class SentinelWebServer:
         async def get_daemon_events():
             try:
                 from sentinel.daemons.daemon_manager import get_daemon_manager
+
                 manager = get_daemon_manager()
                 return {"events": manager.get_events()}
             except Exception as e:
@@ -871,17 +942,14 @@ class SentinelWebServer:
             origin = ws.headers.get("origin")
             if origin:
                 from urllib.parse import urlparse
+
                 host = urlparse(origin).netloc or urlparse(origin).hostname
                 if host and not any(h in host for h in ("localhost", "127.0.0.1", "::1", str(self.port))):
                     await ws.close(code=1008)
                     return
 
             # 2. Authenticate token (allow local same-origin without token for embedded UI)
-            token = (
-                ws.query_params.get("token")
-                or ws.query_params.get("key")
-                or ws.headers.get("X-Sentinel-Key")
-            )
+            token = ws.query_params.get("token") or ws.query_params.get("key") or ws.headers.get("X-Sentinel-Key")
             is_local = origin and any(h in origin for h in ("localhost", "127.0.0.1"))
             if not is_local and (not token or token != self._api_key):
                 await ws.close(code=1008)
@@ -901,6 +969,7 @@ class SentinelWebServer:
                             mtype = msg.get("type", "")
                             if mtype == "barge_in":
                                 from sentinel.voice.barge_in import get_barge_in_engine
+
                                 get_barge_in_engine().trigger_barge_in("websocket")
                                 mgr.broadcast({"type": "barge_in", "status": "interrupted", "timestamp": time.time()})
                             elif mtype == "command":
@@ -918,22 +987,31 @@ class SentinelWebServer:
                             elif mtype == "voice_audio":
                                 b64_audio = msg.get("audio", "")
                                 if b64_audio:
+
                                     def _handle_voice(audio_str):
                                         try:
                                             import base64
                                             import tempfile
+
                                             audio_bytes = base64.b64decode(audio_str)
                                             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
                                                 tf.write(audio_bytes)
                                                 tmp_name = tf.name
                                             from sentinel.app.voice import transcribe
+
                                             transcript = transcribe(tmp_name)
                                             try:
                                                 os.remove(tmp_name)
                                             except Exception:
                                                 pass
                                             if transcript:
-                                                mgr.broadcast({"type": "voice_transcript", "text": transcript, "timestamp": _time.time()})
+                                                mgr.broadcast(
+                                                    {
+                                                        "type": "voice_transcript",
+                                                        "text": transcript,
+                                                        "timestamp": _time.time(),
+                                                    }
+                                                )
                                                 resp = ""
                                                 if self.command_fn:
                                                     try:
@@ -943,13 +1021,21 @@ class SentinelWebServer:
                                                         resp = f"Error: {exc}"
                                                 elif self.orchestrator:
                                                     resp = self.orchestrator.run_command(transcript)
-                                                mgr.broadcast({"type": "response", "text": resp, "command": transcript, "timestamp": _time.time()})
+                                                mgr.broadcast(
+                                                    {
+                                                        "type": "response",
+                                                        "text": resp,
+                                                        "command": transcript,
+                                                        "timestamp": _time.time(),
+                                                    }
+                                                )
                                         except Exception as exc:
                                             logger.error("Voice stream handling error: %s", exc)
+
                                     threading.Thread(target=_handle_voice, args=(b64_audio,), daemon=True).start()
                         except json.JSONDecodeError:
                             pass
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         await ws.send_json({"type": "ping"})
             except WebSocketDisconnect:
                 pass
@@ -974,14 +1060,14 @@ class SentinelWebServer:
 
         # ── Admin: memory export ───────────────────────────────────────────────
         @app.get("/admin/memory/export")
-        @require_role('admin')
+        @require_role("admin")
         async def memory_export(request: Request):
             """Export current memory state for admin diagnostics."""
             token = request.headers.get("X-Sentinel-Key") or request.query_params.get("key")
             if not token or token != self._api_key:
                 return JSONResponse({"detail": "Unauthorized"}, status_code=401)
             try:
-                mem = getattr(self.orchestrator, 'long_term_memory', None)
+                mem = getattr(self.orchestrator, "long_term_memory", None)
                 if not mem:
                     return {"error": "Memory backend not available"}
                 # In-memory mode exposure
@@ -995,13 +1081,13 @@ class SentinelWebServer:
                 return {
                     "summaries_count": mem.get_stats().get("session_summaries", 0),
                     "facts_count": mem.get_stats().get("stored_facts", 0),
-                    "db_path": mem.db_path if hasattr(mem, 'db_path') else None,
+                    "db_path": mem.db_path if hasattr(mem, "db_path") else None,
                 }
             except Exception as exc:
                 return {"error": str(exc)}
 
         @app.post("/admin/memory/import")
-        @require_role('admin')
+        @require_role("admin")
         async def memory_import(request: Request):
             try:
                 payload = await request.json()
@@ -1010,7 +1096,7 @@ class SentinelWebServer:
             token = request.headers.get("X-Sentinel-Key") or request.query_params.get("key")
             if not token or token != self._api_key:
                 return JSONResponse({"detail": "Unauthorized"}, status_code=401)
-            if getattr(self.orchestrator, 'long_term_memory', None) and payload:
+            if getattr(self.orchestrator, "long_term_memory", None) and payload:
                 ok = self.orchestrator.long_term_memory.import_memory(payload)
                 return {"imported": ok}
             return {"imported": False}
@@ -1041,7 +1127,7 @@ class SentinelWebServer:
             }
 
         @app.get("/admin/audit")
-        @require_role('admin')
+        @require_role("admin")
         async def admin_audit(request: Request, limit: int = 50):
             try:
                 if not AUDIT_LOG_PATH or not os.path.exists(AUDIT_LOG_PATH):
@@ -1061,18 +1147,20 @@ class SentinelWebServer:
         async def memory_clear(request: Request):
             """Admin: clear memory stores (summaries and facts)."""
             from sentinel.core.auth import is_admin
+
             if not is_admin(request):
                 return JSONResponse({"detail": "Forbidden"}, status_code=403)
             token = request.headers.get("X-Sentinel-Key") or request.query_params.get("key")
             if not token or token != self._api_key:
                 return JSONResponse({"detail": "Unauthorized"}, status_code=401)
-            if self.long_term_memory and hasattr(self.long_term_memory, 'clear_memory'):
+            if self.long_term_memory and hasattr(self.long_term_memory, "clear_memory"):
                 ok = self.long_term_memory.clear_memory()
                 from sentinel.core.audit import log_audit
+
                 log_audit("admin", "clear_memory", "Phase 4: per-topic TTL clear")
                 return {"cleared": ok}
             return {"cleared": False}
-        
+
         @app.post("/user/profile")
         async def user_profile(request: Request):
             # Phase 5 MVP: per-user profile (in-memory, patch ready)
@@ -1083,16 +1171,25 @@ class SentinelWebServer:
                 payload = await request.json()
             except Exception:
                 payload = {}
-            persona = payload.get('persona') if isinstance(payload, dict) else None
-            memory_ttl_hours = int(payload.get('memory_ttl_hours', 0)) if isinstance(payload, dict) else 0
-            opt_in_privacy = bool(payload.get('opt_in_privacy', True)) if isinstance(payload, dict) else True
-            preferred_tools = payload.get('preferred_tools', []) if isinstance(payload, dict) else []
-            if self.orchestrator and getattr(self.orchestrator, 'user_profiles', None):
+            persona = payload.get("persona") if isinstance(payload, dict) else None
+            memory_ttl_hours = int(payload.get("memory_ttl_hours", 0)) if isinstance(payload, dict) else 0
+            opt_in_privacy = bool(payload.get("opt_in_privacy", True)) if isinstance(payload, dict) else True
+            preferred_tools = payload.get("preferred_tools", []) if isinstance(payload, dict) else []
+            if self.orchestrator and getattr(self.orchestrator, "user_profiles", None):
                 upm = self.orchestrator.user_profiles
-                profile = upm.set_profile(user_id, persona=persona, memory_ttl_hours=memory_ttl_hours,
-                                        opt_in_privacy=opt_in_privacy, preferred_tools=preferred_tools)
+                profile = upm.set_profile(
+                    user_id,
+                    persona=persona,
+                    memory_ttl_hours=memory_ttl_hours,
+                    opt_in_privacy=opt_in_privacy,
+                    preferred_tools=preferred_tools,
+                )
                 self.orchestrator.current_user_id = user_id
-                p_dict = profile.to_dict() if hasattr(profile, 'to_dict') else (vars(profile) if hasattr(profile, '__dict__') else str(profile))
+                p_dict = (
+                    profile.to_dict()
+                    if hasattr(profile, "to_dict")
+                    else (vars(profile) if hasattr(profile, "__dict__") else str(profile))
+                )
                 return {"status": "updated", "profile": p_dict}
             return {"status": "ok"}
 
@@ -1101,15 +1198,24 @@ class SentinelWebServer:
             user_id = request.headers.get("X-User-Id") or request.query_params.get("user_id")
             if not user_id:
                 return {"error": "user_id required"}
-            if self.orchestrator and getattr(self.orchestrator, 'user_profiles', None):
+            if self.orchestrator and getattr(self.orchestrator, "user_profiles", None):
                 profile = self.orchestrator.user_profiles.get_profile(user_id)
-                p_dict = profile.to_dict() if hasattr(profile, 'to_dict') else (vars(profile) if hasattr(profile, '__dict__') else str(profile))
+                p_dict = (
+                    profile.to_dict()
+                    if hasattr(profile, "to_dict")
+                    else (vars(profile) if hasattr(profile, "__dict__") else str(profile))
+                )
                 return {"profile": p_dict if profile else None}
             return {"profile": None}
+
         @app.get("/admin/memory/ttl")
-        @require_role('admin')
+        @require_role("admin")
         async def memory_ttl_get(request: Request):
-            ttl_hours = getattr(self.orchestrator.long_term_memory, '_memory_ttl_hours', 0) if getattr(self.orchestrator, 'long_term_memory', None) else 0
+            ttl_hours = (
+                getattr(self.orchestrator.long_term_memory, "_memory_ttl_hours", 0)
+                if getattr(self.orchestrator, "long_term_memory", None)
+                else 0
+            )
             return {"memory_ttl_hours": int(ttl_hours)}
 
         # ── Plugin Generator (Self-Healing) ─────────────────────────────────────
@@ -1117,10 +1223,12 @@ class SentinelWebServer:
         async def generate_plugin(request: Request, command: str, description: str = ""):
             """Admin: auto-generate a plugin for a command."""
             from sentinel.core.auth import is_admin
+
             if not is_admin(request):
                 return JSONResponse({"detail": "Forbidden"}, status_code=403)
             try:
                 from sentinel.core.plugin_generator import get_plugin_generator
+
                 gen = get_plugin_generator(self.orchestrator)
                 success, name, message = gen.generate_plugin(command, description)
                 return {"success": success, "plugin_name": name, "message": message}
@@ -1132,6 +1240,7 @@ class SentinelWebServer:
             """List all auto-generated plugins."""
             try:
                 from sentinel.core.plugin_generator import get_plugin_generator
+
                 gen = get_plugin_generator()
                 plugins = gen.list_generated_plugins()
                 return {"plugins": plugins}
@@ -1142,10 +1251,12 @@ class SentinelWebServer:
         async def delete_generated_plugin(request: Request, plugin_name: str):
             """Admin: delete an auto-generated plugin."""
             from sentinel.core.auth import is_admin
+
             if not is_admin(request):
                 return JSONResponse({"detail": "Forbidden"}, status_code=403)
             try:
                 from sentinel.core.plugin_generator import get_plugin_generator
+
                 gen = get_plugin_generator()
                 success = gen.delete_plugin(plugin_name)
                 return {"success": success}
@@ -1153,18 +1264,19 @@ class SentinelWebServer:
                 return {"success": False, "error": str(e)}
 
         @app.post("/admin/memory/ttl")
-        @require_role('admin')
+        @require_role("admin")
         async def memory_ttl_set(request: Request):
             try:
                 data = await request.json()
             except Exception:
                 data = {}
             hours = int(data.get("ttl_hours", 0))
-            if getattr(self.orchestrator, 'long_term_memory', None):
+            if getattr(self.orchestrator, "long_term_memory", None):
                 mem = self.orchestrator.long_term_memory
                 mem._memory_ttl_hours = max(0, hours)
                 return {"memory_ttl_hours": mem._memory_ttl_hours}
             return {"memory_ttl_hours": 0}
+
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def broadcast(self, event: dict) -> None:
@@ -1177,8 +1289,8 @@ class SentinelWebServer:
             self._alerts_buf = self._alerts_buf[-50:]
         self._manager.broadcast({"type": "alert", "message": message, "timestamp": time.time()})
 
-    def _get_stats(self) -> Dict[str, Any]:
-        stats: Dict[str, Any] = {
+    def _get_stats(self) -> dict[str, Any]:
+        stats: dict[str, Any] = {
             "gemini_status": "Active" if os.getenv("GEMINI_API_KEY") else "No Key",
             "ollama_status": "Unknown",
             "cpu_temp": None,
@@ -1189,8 +1301,8 @@ class SentinelWebServer:
             return stats
         orc = self.orchestrator
         for attr, key, method in [
-            ("system_monitor", "cpu_temp",    "get_cpu_temp"),
-            ("system_monitor", "gpu_temp",    "get_gpu_temp"),
+            ("system_monitor", "cpu_temp", "get_cpu_temp"),
+            ("system_monitor", "gpu_temp", "get_gpu_temp"),
         ]:
             obj = getattr(orc, attr, None)
             if obj and hasattr(obj, method):
@@ -1210,38 +1322,53 @@ class SentinelWebServer:
                 pass
         return stats
 
-    def _module_health(self) -> Dict[str, bool]:
+    def _module_health(self) -> dict[str, bool]:
         if not self.orchestrator:
             return {}
         attrs = [
-            "vision_module", "knowledge_base", "emotion_module", "habit_learner",
-            "security_shield", "iot_hub", "coding_module", "automation_module",
-            "gesture_module", "file_intel", "calendar_module", "web_agent",
-            "playwright_agent", "agentic_engine", "daily_brief", "ollama_module",
-            "swarm_engine", "computer_use", "long_term_memory", "quantum",
+            "vision_module",
+            "knowledge_base",
+            "emotion_module",
+            "habit_learner",
+            "security_shield",
+            "iot_hub",
+            "coding_module",
+            "automation_module",
+            "gesture_module",
+            "file_intel",
+            "calendar_module",
+            "web_agent",
+            "playwright_agent",
+            "agentic_engine",
+            "daily_brief",
+            "ollama_module",
+            "swarm_engine",
+            "computer_use",
+            "long_term_memory",
+            "quantum",
         ]
         health = {a: getattr(self.orchestrator, a, None) is not None for a in attrs}
         # Phase 2: include plugin health (if available via CommandRouter)
         try:
             plugin_health = {}
-            rom = getattr(self.orchestrator, 'command_router', None)
-            if rom and hasattr(rom, 'plugins'):
+            rom = getattr(self.orchestrator, "command_router", None)
+            if rom and hasattr(rom, "plugins"):
                 for pname, p in rom.plugins.items():
                     status = True
                     try:
-                        if hasattr(p, 'health') and callable(p.health):
+                        if hasattr(p, "health") and callable(p.health):
                             res = p.health()
                             if isinstance(res, bool):
                                 status = res
                             elif isinstance(res, dict):
-                                status = bool(res.get('healthy', True))
+                                status = bool(res.get("healthy", True))
                     except Exception:
                         status = False
                     plugin_health[str(pname)] = status
-            health['plugins'] = plugin_health
+            health["plugins"] = plugin_health
         except Exception:
             # If anything goes wrong, omit plugin health gracefully
-            health['plugins'] = {}
+            health["plugins"] = {}
         return health
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────

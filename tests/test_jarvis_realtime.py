@@ -11,26 +11,22 @@ Comprehensive unit tests for the 5 JARVIS real-time features:
 
 import os
 import sys
-import time
-import pytest
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from sentinel.voice.tts import TTSEngine
+from sentinel.commands.search_memory import SearchMemoryCommand
+from sentinel.core.proactive_sentinel import ProactiveSentinel
+from sentinel.memory.episodic_logger import EpisodicLogger
+from sentinel.modules.daily_brief import DailyBriefModule
+from sentinel.modules.vision import VisionModule
+from sentinel.utils.hotkey_manager import GlobalHotkeyManager
+from sentinel.utils.window_context import get_active_window_info
 from sentinel.voice.barge_in import BargeInMonitor
 from sentinel.voice.streaming_tts import StreamingTTSPlayer
-from sentinel.utils.window_context import get_active_window_info
-from sentinel.modules.vision import VisionModule
-from sentinel.core.proactive_sentinel import ProactiveSentinel
-from sentinel.modules.daily_brief import DailyBriefModule
-from sentinel.utils.hotkey_manager import GlobalHotkeyManager
-from sentinel.memory.episodic_logger import EpisodicLogger
-from sentinel.commands.search_memory import SearchMemoryCommand
 
 
 class TestJarvisRealtimeFeatures:
-
     def test_barge_in_and_streaming_tts(self):
         """Test TTS interruption, queue purging, and sentence streaming."""
         mock_tts = MagicMock()
@@ -47,10 +43,7 @@ class TestJarvisRealtimeFeatures:
 
         # Test barge-in monitor trigger
         triggered = []
-        monitor = BargeInMonitor(
-            tts_engine=mock_tts,
-            on_barge_in=lambda: triggered.append(True)
-        )
+        monitor = BargeInMonitor(tts_engine=mock_tts, on_barge_in=lambda: triggered.append(True))
         assert monitor.samplerate == 16000
 
     def test_active_window_context_and_vision(self):
@@ -96,14 +89,14 @@ class TestJarvisRealtimeFeatures:
             intent="OPEN_APP",
             response="Launching Visual Studio Code",
             active_app="Explorer",
-            active_window="Desktop"
+            active_window="Desktop",
         )
         logger.log_turn(
             user_command="run pytest test suite",
             intent="CODE_EXECUTE",
             response="All 151 tests passed",
             active_app="Code",
-            active_window="Terminal"
+            active_window="Terminal",
         )
 
         recent = logger.get_recent(limit=5)

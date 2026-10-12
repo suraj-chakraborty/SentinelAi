@@ -6,7 +6,6 @@ Handles "start screen watcher", "where is the <element> button", and live coding
 """
 
 import logging
-from typing import Optional
 
 from sentinel.vision.continuous_screen_agent import ContinuousScreenAgent
 
@@ -18,11 +17,14 @@ class LiveVisionCommand:
         self.orchestrator = orchestrator
         self.agent = ContinuousScreenAgent()
 
-    def execute(self, command: str, entity: Optional[str] = None) -> str:
+    def execute(self, command: str, entity: str | None = None) -> str:
         cmd_lower = command.lower()
 
         # 1. Start continuous screen agent
-        if any(k in cmd_lower for k in ("start screen watcher", "watch my screen", "continuous vision", "monitor my coding")):
+        if any(
+            k in cmd_lower
+            for k in ("start screen watcher", "watch my screen", "continuous vision", "monitor my coding")
+        ):
             self.agent.start()
             return "Continuous screen observer active. Monitoring live coding context at 2 FPS."
 

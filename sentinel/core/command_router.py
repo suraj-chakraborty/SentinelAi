@@ -1,16 +1,16 @@
+import importlib.util
 import logging
 import os
-import importlib.util
-from typing import Dict, Any, Optional
+from typing import Any
 
+from sentinel.core.intent_detector import Intent, IntentDetector
 from sentinel.core.preprocessor import preprocess_command
-from sentinel.core.intent_detector import IntentDetector, Intent
 from sentinel.memory.context_manager import ContextManager
 
 logger = logging.getLogger("CommandRouter")
 
 # Intent enum values often differ from plugin module names (e.g. shutdown → system_control).
-INTENT_TO_PLUGIN: Dict[Intent, str] = {
+INTENT_TO_PLUGIN: dict[Intent, str] = {
     Intent.OPEN_APP: "open_app",
     Intent.CLOSE_APP: "close_app",
     Intent.SHUTDOWN: "system_control",
@@ -49,13 +49,16 @@ INTENT_TO_PLUGIN: Dict[Intent, str] = {
     Intent.TASK_DISPATCHER: "dispatcher_command",
 }
 
+
 class CommandRouter:
     def __init__(self, orchestrator):
         self.orchestrator = orchestrator
         self.preprocessor = preprocess_command
         self.detector = IntentDetector()
-        self.context = ContextManager(os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "SentinelAi", "context.json"))
-        self.plugins: Dict[str, Any] = {}
+        self.context = ContextManager(
+            os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "SentinelAi", "context.json")
+        )
+        self.plugins: dict[str, Any] = {}
         self._load_core_commands()
         self._plugin_system = None
         self._load_manifest_plugins()
@@ -90,9 +93,10 @@ class CommandRouter:
                     spec = importlib.util.spec_from_file_location(plugin_name, module_path)
                     module = importlib.util.module_from_spec(spec)
                     spec.loader.exec_module(module)
-                    
+
                     # Look for PascalCase, PascalCaseCommand, or classes defined in module
                     import inspect
+
                     plugin_class = None
                     candidates = [
                         "".join(word.title() for word in plugin_name.split("_")),
@@ -122,7 +126,7 @@ class CommandRouter:
                 except Exception as e:
                     logger.error(f"Failed to load plugin {plugin_name}: {e}")
 
-    def run_command(self, raw_command: str) -> Optional[str]:
+    def run_command(self, raw_command: str) -> str | None:
         """
         Processes a raw command and routes it to the appropriate plugin or AI.
         """
@@ -134,7 +138,7 @@ class CommandRouter:
         # 2. Detect Intent
         intent = self.detector.detect_intent(cleaned)
         entity = self.detector.extract_entity(cleaned, intent)
-        
+
         # 3. Update Context
         self.context.update_context("command", raw_command)
         self.context.update_context("intent", intent.value)
@@ -169,7 +173,7 @@ class CommandRouter:
         if result is None and (intent == Intent.AUTONOMOUS_AGENT or intent == Intent.UNKNOWN):
             # If unknown but looks like a complex task, try autonomous agent
             result = self.ai_fallback(cleaned)
-            
+
             # If AI also couldn't handle it well, try to generate a plugin
             if result and self._should_auto_generate(raw_command):
                 self._try_generate_plugin(raw_command)
@@ -179,13 +183,14 @@ class CommandRouter:
             try:
                 from sentinel.memory.episodic_logger import get_episodic_logger
                 from sentinel.utils.window_context import get_active_window_info
+
                 win = get_active_window_info()
                 get_episodic_logger().log_turn(
                     user_command=raw_command,
                     intent=intent.name,
                     response=str(result),
                     active_app=win.get("app_name", ""),
-                    active_window=win.get("title", "")
+                    active_window=win.get("title", ""),
                 )
             except Exception as log_err:
                 logger.debug(f"Episodic logging error: {log_err}")
@@ -200,39 +205,39 @@ class CommandRouter:
         # or in the ai_agent.py plugin.
         if "ai_agent" in self.plugins:
             return self.plugins["ai_agent"].execute(command, command)
-            
+
         # Last resort fallback to raw LLM call
         if self.orchestrator and hasattr(self.orchestrator, "_safe_llm_call"):
             return self.orchestrator._safe_llm_call(command)
-            
+
         return "I'm not sure how to handle that command yet."
 
     def _should_auto_generate(self, command: str) -> bool:
         """Determine if we should auto-generate a plugin for this command."""
         self._unknown_command_count += 1
-        
+
         if self._unknown_command_count >= 3:
             self._unknown_command_count = 0
             return True
-        
+
         return False
 
     def _try_generate_plugin(self, command: str):
         """Attempt to generate a plugin for an unknown command."""
         try:
-            from sentinel.core.plugin_generator import get_plugin_generator
             from sentinel.core.dynamic_plugin_loader import create_dynamic_loader
-            
+            from sentinel.core.plugin_generator import get_plugin_generator
+
             generator = get_plugin_generator(self.orchestrator)
             success, name, message = generator.generate_plugin(command)
-            
+
             if success:
                 if self._plugin_system and not self._dynamic_loader:
                     self._dynamic_loader = create_dynamic_loader(self._plugin_system)
-                
+
                 if self._dynamic_loader:
                     self._dynamic_loader.load_generated_plugins()
-                    
+
                 logger.info(f"Auto-generated plugin for command: {command}")
         except Exception as e:
             logger.error(f"Plugin auto-generation failed: {e}")

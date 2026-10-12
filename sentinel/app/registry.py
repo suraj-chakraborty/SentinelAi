@@ -4,28 +4,26 @@ sentinel/app/registry.py
 Windows application registry, fuzzy matching, and MRU tracking.
 """
 
-import os
-import winreg
 import json
 import logging
-import subprocess
+import os
+import winreg
+from pathlib import Path
+
 import pythoncom
 import win32com.client
-from pathlib import Path
-from typing import Dict, Optional, List
 
-from sentinel.app.config import (
-    APPS_REGISTRY_PATH, MRU_PATH, ALIASES, APPDATA_DIR,
-    ensure_appdata_dir
-)
+from sentinel.app.config import ALIASES, APPS_REGISTRY_PATH, MRU_PATH, ensure_appdata_dir
 
 logger = logging.getLogger("SentinelRegistry")
 
 # ── Normalize & Index ────────────────────────────────────────────────────────
 
+
 def normalize_name(name: str) -> str:
     """Lowercase and strip a name for indexing."""
     return (name or "").lower().strip()
+
 
 def load_apps_index() -> dict:
     """Load the apps index from JSON."""
@@ -37,6 +35,7 @@ def load_apps_index() -> dict:
         return {}
     return {}
 
+
 def save_apps_index(index: dict):
     """Save the apps index to JSON."""
     ensure_appdata_dir()
@@ -46,7 +45,9 @@ def save_apps_index(index: dict):
     except Exception:
         pass
 
+
 # ── MRU (Most Recently Used) ────────────────────────────────────────────────
+
 
 def load_mru() -> dict:
     """Load MRU data."""
@@ -58,6 +59,7 @@ def load_mru() -> dict:
         return {}
     return {}
 
+
 def save_mru(mru: dict):
     """Save MRU data."""
     ensure_appdata_dir()
@@ -66,6 +68,7 @@ def save_mru(mru: dict):
             json.dump(mru, f, indent=2)
     except Exception:
         pass
+
 
 def record_mru(name: str):
     """Increment use count for an app."""
@@ -76,15 +79,18 @@ def record_mru(name: str):
     mru[n] = rec
     save_mru(mru)
 
-def get_top_mru(limit=10) -> List[str]:
+
+def get_top_mru(limit=10) -> list[str]:
     """Get list of most used app names."""
     mru = load_mru()
     items = sorted(mru.items(), key=lambda kv: kv[1].get("count", 0), reverse=True)
     return [k for k, _ in items[:limit]]
 
+
 # ── Registry Scanning ───────────────────────────────────────────────────────
 
-def _scan_uninstall_key(root) -> Dict[str, str]:
+
+def _scan_uninstall_key(root) -> dict[str, str]:
     """Scan a Windows Uninstall registry key for display names and icons/exes."""
     results = {}
     try:
@@ -99,21 +105,26 @@ def _scan_uninstall_key(root) -> Dict[str, str]:
                 try:
                     with winreg.OpenKey(key, sub) as sk:
                         name, _ = winreg.QueryValueEx(sk, "DisplayName")
-                        if not name: continue
-                        
+                        if not name:
+                            continue
+
                         icon = None
                         loc = None
-                        try: icon, _ = winreg.QueryValueEx(sk, "DisplayIcon")
-                        except OSError: pass
-                        try: loc, _ = winreg.QueryValueEx(sk, "InstallLocation")
-                        except OSError: pass
-                        
+                        try:
+                            icon, _ = winreg.QueryValueEx(sk, "DisplayIcon")
+                        except OSError:
+                            pass
+                        try:
+                            loc, _ = winreg.QueryValueEx(sk, "InstallLocation")
+                        except OSError:
+                            pass
+
                         exe = None
                         if icon:
-                            c = str(icon).split(',')[0].strip(' "\'')
+                            c = str(icon).split(",")[0].strip(" \"'")
                             if c.lower().endswith(".exe") and os.path.exists(c):
                                 exe = c
-                        
+
                         if not exe and loc and os.path.isdir(loc):
                             norm_name = normalize_name(name)
                             candidates = list(Path(loc).glob("*.exe"))
@@ -124,7 +135,7 @@ def _scan_uninstall_key(root) -> Dict[str, str]:
                                         break
                                 if not exe:
                                     exe = str(candidates[0])
-                        
+
                         if name:
                             results[normalize_name(name)] = exe or ""
                 except (OSError, ValueError):
@@ -133,21 +144,23 @@ def _scan_uninstall_key(root) -> Dict[str, str]:
         pass
     return results
 
-def scan_start_menu_apps() -> Dict[str, str]:
+
+def scan_start_menu_apps() -> dict[str, str]:
     """Scan start menu shortcuts for executables."""
     try:
         pythoncom.CoInitialize()
         shell = win32com.client.Dispatch("WScript.Shell")
     except Exception:
         return {}
-    
+
     paths = [
         os.path.expandvars(r"%ProgramData%\Microsoft\Windows\Start Menu\Programs"),
-        os.path.expandvars(r"%AppData%\Microsoft\Windows\Start Menu\Programs")
+        os.path.expandvars(r"%AppData%\Microsoft\Windows\Start Menu\Programs"),
     ]
     apps = {}
     for base in paths:
-        if not os.path.isdir(base): continue
+        if not os.path.isdir(base):
+            continue
         for root, dirs, files in os.walk(base):
             for f in files:
                 if f.lower().endswith(".lnk"):
@@ -162,12 +175,13 @@ def scan_start_menu_apps() -> Dict[str, str]:
                         pass
     return apps
 
+
 def build_app_registry(fast_only=False) -> dict:
     """Rebuild the entire application registry."""
     idx = {}
     idx.update(_scan_uninstall_key(winreg.HKEY_LOCAL_MACHINE))
     idx.update(_scan_uninstall_key(winreg.HKEY_CURRENT_USER))
-    
+
     if not fast_only:
         try:
             # Note: scan_windows_app_aliases appears to be missing or a typo in original.
@@ -190,47 +204,53 @@ def build_app_registry(fast_only=False) -> dict:
     for k, v in known.items():
         if k not in idx and os.path.exists(v):
             idx[k] = v
-            
+
     save_apps_index(idx)
     return idx
 
+
 # ── Search & Match ──────────────────────────────────────────────────────────
+
 
 def _fuzzy_match(query: str, target: str) -> float:
     """Simple fuzzy score."""
     q = normalize_name(query)
     t = normalize_name(target)
-    if q == t: return 1.0
-    if q in t: return 0.8 + (len(q) / len(t)) * 0.15
+    if q == t:
+        return 1.0
+    if q in t:
+        return 0.8 + (len(q) / len(t)) * 0.15
     qw = set(q.split())
     tw = set(t.split())
     if qw.intersection(tw):
         return 0.5 + (len(qw.intersection(tw)) / len(qw)) * 0.3
     return 0.0
 
-def find_app_executable(name: str) -> Optional[str]:
+
+def find_app_executable(name: str) -> str | None:
     """Find the full path to an app's executable."""
     n = normalize_name(name)
     if n in ALIASES:
         n = ALIASES[n]
-        
+
     index = load_apps_index()
     if not index:
         index = build_app_registry(fast_only=True)
-    
+
     # 1. Exact
     exe = index.get(n)
-    if exe and os.path.exists(str(exe).strip(' "\'')):
-        return str(exe).strip(' "\'')
-        
+    if exe and os.path.exists(str(exe).strip(" \"'")):
+        return str(exe).strip(" \"'")
+
     # 2. Fuzzy
     best_match = None
     best_score = 0.65
     for k, v in index.items():
-        if not v or not os.path.exists(str(v).strip(' "\'')): continue
+        if not v or not os.path.exists(str(v).strip(" \"'")):
+            continue
         score = _fuzzy_match(n, k)
         if score > best_score:
             best_score = score
-            best_match = str(v).strip(' "\'')
-            
+            best_match = str(v).strip(" \"'")
+
     return best_match

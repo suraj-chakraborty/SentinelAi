@@ -5,12 +5,12 @@ Dynamic plugin loader that can load plugins at runtime
 including auto-generated plugins.
 """
 
-import os
 import logging
-from typing import Optional, List, Dict, Any
+import os
+from typing import Any
 
-from sentinel.core.plugin_system import PluginSystem, LoadedPlugin, PLUGINS_DIR
 from sentinel.core.plugin_generator import GENERATED_PLUGINS_DIR
+from sentinel.core.plugin_system import PluginSystem
 
 logger = logging.getLogger("DynamicPluginLoader")
 
@@ -26,7 +26,7 @@ class DynamicPluginLoader:
         """Load all auto-generated plugins."""
         if not os.path.exists(GENERATED_PLUGINS_DIR):
             return 0
-        
+
         loaded = 0
         for entry in os.scandir(GENERATED_PLUGINS_DIR):
             if entry.is_dir():
@@ -35,7 +35,7 @@ class DynamicPluginLoader:
                     if self._plugin_system.load_plugin(entry.path):
                         self._loaded_paths.add(entry.path)
                         loaded += 1
-        
+
         logger.info(f"Loaded {loaded} generated plugin(s)")
         return loaded
 
@@ -44,7 +44,7 @@ class DynamicPluginLoader:
         if plugin_dir in self._loaded_paths:
             logger.debug(f"Plugin already loaded: {plugin_dir}")
             return True
-        
+
         if self._plugin_system.load_plugin(plugin_dir):
             self._loaded_paths.add(plugin_dir)
             return True
@@ -58,7 +58,7 @@ class DynamicPluginLoader:
                 plugin.instance.on_unload()
             except Exception as e:
                 logger.warning(f"Plugin on_unload error: {e}")
-            
+
             del self._plugin_system._plugins[plugin_name]
             logger.info(f"Unloaded plugin: {plugin_name}")
             return True
@@ -70,24 +70,19 @@ class DynamicPluginLoader:
         if plugin_name in self._plugin_system._plugins:
             plugin_path = self._plugin_system._plugins[plugin_name].path
             self.unload_plugin(plugin_name)
-        
+
         if plugin_path:
             return self.load_plugin_at_path(plugin_path)
         return False
 
-    def get_loaded_plugins(self) -> List[Dict[str, Any]]:
+    def get_loaded_plugins(self) -> list[dict[str, Any]]:
         """Get list of all loaded plugins."""
         plugins = []
         for name, plugin in self._plugin_system._plugins.items():
-            plugins.append({
-                "name": name,
-                "version": plugin.version,
-                "path": plugin.path,
-                "triggers": plugin.triggers
-            })
+            plugins.append({"name": name, "version": plugin.version, "path": plugin.path, "triggers": plugin.triggers})
         return plugins
 
-    def discover_unloaded_plugins(self) -> List[Dict[str, str]]:
+    def discover_unloaded_plugins(self) -> list[dict[str, str]]:
         """Find plugins in plugin directories that aren't loaded."""
         unloaded = []
         for plugins_dir in [GENERATED_PLUGINS_DIR]:
@@ -97,10 +92,7 @@ class DynamicPluginLoader:
                 if entry.is_dir() and entry.path not in self._loaded_paths:
                     manifest_path = os.path.join(entry.path, "manifest.json")
                     if os.path.exists(manifest_path):
-                        unloaded.append({
-                            "name": entry.name,
-                            "path": entry.path
-                        })
+                        unloaded.append({"name": entry.name, "path": entry.path})
         return unloaded
 
 

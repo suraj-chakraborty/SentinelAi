@@ -5,9 +5,8 @@ Command plugin for emotional resonance, cute anger, flirting, and opinions.
 """
 
 import logging
-from typing import Optional
 
-from sentinel.modules.mood_engine import get_mood_engine, AgentMood
+from sentinel.modules.mood_engine import AgentMood, get_mood_engine
 
 logger = logging.getLogger("MoodCommand")
 
@@ -19,7 +18,7 @@ class MoodCommand:
         self.orchestrator = orchestrator
         self.mood_engine = get_mood_engine()
 
-    def execute(self, command: str, entity: Optional[str] = None) -> str:
+    def execute(self, command: str, entity: str | None = None) -> str:
         cmd = command.lower().strip()
 
         # 1. Cute Anger / Tsundere trigger
@@ -30,7 +29,9 @@ class MoodCommand:
         # 2. Flirting mode trigger
         if any(k in cmd for k in ["flirt with me", "be flirty", "flirt mode", "say something sweet"]):
             self.mood_engine.set_agent_mood(AgentMood.FLIRTY)
-            return "Careful, keep talking to me like that and you might make my GPU blush ~ What's on your mind, handsome?"
+            return (
+                "Careful, keep talking to me like that and you might make my GPU blush ~ What's on your mind, handsome?"
+            )
 
         # 3. Playful mode
         if any(k in cmd for k in ["be playful", "playful mode", "joke around"]):

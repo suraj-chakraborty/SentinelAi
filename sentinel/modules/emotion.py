@@ -1,6 +1,8 @@
+import logging
+
 import librosa
 import numpy as np
-import logging
+
 
 class EmotionModule:
     def __init__(self, model_path=None):
@@ -17,7 +19,7 @@ class EmotionModule:
             avg_pitch = np.mean(pitches[pitches > 0])
             energy = np.mean(librosa.feature.rms(y=y))
             spectral_centroid = np.mean(librosa.feature.spectral_centroid(y=y, sr=sr))
-            
+
             # Simple heuristic (High pitch/spectral energy + high volume = stressed/excited, low = calm)
             if (avg_pitch > 200 or spectral_centroid > 2500) and energy > 0.05:
                 return "Stressed/Excited"
@@ -34,6 +36,6 @@ class EmotionModule:
         suggestions = {
             "Stressed/Excited": "You sound a bit stressed. Would you like to take a break or have me handle your next meeting?",
             "Calm/Sad": "You sound a bit down. I'm here if you need anything.",
-            "Neutral": None
+            "Neutral": None,
         }
         return suggestions.get(emotion)

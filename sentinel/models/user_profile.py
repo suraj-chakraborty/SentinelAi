@@ -1,6 +1,6 @@
 from __future__ import annotations
-from dataclasses import dataclass, asdict
-from typing import List, Optional
+
+from dataclasses import asdict, dataclass
 
 
 @dataclass
@@ -9,7 +9,7 @@ class UserProfile:
     persona: str = "calm Jarvis"
     memory_ttl_hours: int = 0  # 0 means TTL disabled
     opt_in_privacy: bool = True
-    preferred_tools: List[str] = None
+    preferred_tools: list[str] = None
 
     def __post_init__(self):
         if self.preferred_tools is None:
@@ -19,7 +19,7 @@ class UserProfile:
         return asdict(self)
 
     @staticmethod
-    def from_dict(data: dict) -> Optional[UserProfile]:
+    def from_dict(data: dict) -> UserProfile | None:
         if not data:
             return None
         return UserProfile(

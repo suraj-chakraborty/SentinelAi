@@ -1,8 +1,9 @@
-import subprocess
-import os
-import tempfile
 import ast
 import logging
+import os
+import subprocess
+import tempfile
+
 
 class CodingModule:
     def __init__(self):
@@ -21,7 +22,7 @@ class CodingModule:
         is_valid, error = self.validate_code(code)
         if not is_valid:
             if retry_count < max_retries and llm_callback:
-                self.logger.info(f"Syntax error, attempting self-correction (retry {retry_count+1})...")
+                self.logger.info(f"Syntax error, attempting self-correction (retry {retry_count + 1})...")
                 correction_prompt = f"The following Python code has a syntax error: {error}\n\nCode:\n```python\n{code}\n```\nPlease fix the code and return only the corrected code block."
                 corrected_code_response = llm_callback(correction_prompt)
                 corrected_code = self._extract_code(corrected_code_response)
@@ -47,9 +48,7 @@ class CodingModule:
                     )
                     corrected_code_response = llm_callback(correction_prompt)
                     corrected_code = self._extract_code(corrected_code_response)
-                    return self.execute_python_code(
-                        corrected_code, retry_count + 1, max_retries, llm_callback
-                    )
+                    return self.execute_python_code(corrected_code, retry_count + 1, max_retries, llm_callback)
                 return f"Execution error: {output}"
             except ImportError:
                 pass
@@ -80,9 +79,7 @@ class CodingModule:
                     )
                     corrected_code_response = llm_callback(correction_prompt)
                     corrected_code = self._extract_code(corrected_code_response)
-                    return self.execute_python_code(
-                        corrected_code, retry_count + 1, max_retries, llm_callback
-                    )
+                    return self.execute_python_code(corrected_code, retry_count + 1, max_retries, llm_callback)
                 return f"Execution error: {stderr}"
             except subprocess.TimeoutExpired:
                 return "Execution timed out (max 30s)."

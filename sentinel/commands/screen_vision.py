@@ -8,8 +8,6 @@ Handles "analyze my screen", "what is on my screen" commands.
 
 import logging
 import threading
-import time
-from typing import Optional, Dict, Any
 
 logger = logging.getLogger("ScreenVision")
 
@@ -28,29 +26,34 @@ class ScreenVision:
         if self._vision is None:
             try:
                 from sentinel.modules.vision import VisionModule
+
                 self._vision = VisionModule()
             except Exception as e:
                 logger.error(f"Vision module error: {e}")
         return self._vision
 
-    def execute(self, command: str, entity: Optional[str] = None) -> str:
+    def execute(self, command: str, entity: str | None = None) -> str:
         """
         Execute screen vision command with fast response.
         """
         # Quick acknowledgment first (parallel execution)
         self._speak_early("Analyzing your screen.")
-        
+
         # Then analyze in background
         def analyze_background():
             try:
                 vision = self._get_vision()
                 if vision:
-                    is_window_focused = any(k in command.lower() for k in ("window", "active", "this app", "this error"))
+                    is_window_focused = any(
+                        k in command.lower() for k in ("window", "active", "this app", "this error")
+                    )
                     if is_window_focused:
                         result = vision.describe_active_window()
                     else:
-                        result = vision.analyze_screen(f"Context: {command}. Describe what is on this screen in detail.")
-                    
+                        result = vision.analyze_screen(
+                            f"Context: {command}. Describe what is on this screen in detail."
+                        )
+
                     # Speak result after analysis
                     if result and len(result) > 10:
                         self._speak(result)
@@ -72,20 +75,22 @@ class ScreenVision:
         """Speak immediately without waiting."""
         try:
             from sentinel.app.voice import speak
+
             speak(text, block=False)
-        except:
+        except Exception:
             pass
 
     def _speak(self, text: str):
         """Speak result."""
         try:
             from sentinel.app.voice import speak
+
             speak(text, block=False)
-        except:
+        except Exception:
             pass
 
 
-_screen_vision_command: Optional[ScreenVision] = None
+_screen_vision_command: ScreenVision | None = None
 
 
 def get_screen_vision_command() -> ScreenVision:

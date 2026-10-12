@@ -7,22 +7,24 @@ Delegates to core voice modules with fallback logic.
 
 import logging
 import threading
+
 import pythoncom
 import pyttsx3
 import speech_recognition as sr
-from typing import Optional
+
+from sentinel.voice.stt import transcribe as stt_transcribe
 
 # Core voice modules
 from sentinel.voice.tts import get_tts
-from sentinel.voice.stt import transcribe as stt_transcribe
 
 logger = logging.getLogger("SentinelVoice")
 
 # ── Speech Output (TTS) ─────────────────────────────────────────────────────
 
+
 def speak(text: str, emotion: str = "Neutral", block: bool = False):
     """
-    High-level speak interface. 
+    High-level speak interface.
     Uses neural Edge-TTS by default, falling back to local pyttsx3.
     """
     if not text or not str(text).strip():
@@ -38,18 +40,20 @@ def speak(text: str, emotion: str = "Neutral", block: bool = False):
         logger.warning(f"Neural TTS failed: {e}. Falling back to pyttsx3.")
         _speak_fallback(text, emotion, block)
 
+
 def _speak_fallback(text: str, emotion: str, block: bool):
     """Legacy pyttsx3 fallback for offline/error cases."""
+
     def _run():
         try:
             pythoncom.CoInitialize()
             engine = pyttsx3.init()
             # Basic emotional mapping for pyttsx3
             if "Stressed" in emotion or "Excited" in emotion:
-                engine.setProperty('rate', engine.getProperty('rate') + 50)
+                engine.setProperty("rate", engine.getProperty("rate") + 50)
             elif "Calm" in emotion or "Sad" in emotion:
-                engine.setProperty('rate', max(engine.getProperty('rate') - 30, 80))
-            
+                engine.setProperty("rate", max(engine.getProperty("rate") - 30, 80))
+
             engine.say(text)
             engine.runAndWait()
             pythoncom.CoUninitialize()
@@ -61,6 +65,7 @@ def _speak_fallback(text: str, emotion: str, block: bool):
     else:
         threading.Thread(target=_run, daemon=True).start()
 
+
 def stop_speaking():
     """Immediately halt any active or queued speech."""
     try:
@@ -68,12 +73,14 @@ def stop_speaking():
     except Exception as e:
         logger.error(f"Failed to stop speech: {e}")
 
+
 def is_speaking() -> bool:
     """Return True if TTS playback is currently active."""
     try:
         return get_tts().is_speaking
     except Exception:
         return False
+
 
 def trigger_barge_in() -> bool:
     """
@@ -86,7 +93,9 @@ def trigger_barge_in() -> bool:
         return True
     return False
 
+
 # ── Speech Recognition (STT) ──────────────────────────────────────────────
+
 
 def transcribe(filename: str) -> str:
     """

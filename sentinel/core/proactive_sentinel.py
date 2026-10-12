@@ -6,15 +6,15 @@ Monitors system vitals, battery, and processes autonomously,
 speaking proactive warnings before critical issues impact the user.
 """
 
+import logging
 import threading
 import time
-import logging
-from typing import Optional, Dict
 
 logger = logging.getLogger("ProactiveSentinel")
 
 try:
     import psutil
+
     _PSUTIL_AVAILABLE = True
 except ImportError:
     _PSUTIL_AVAILABLE = False
@@ -30,7 +30,7 @@ class ProactiveSentinel:
         self.orchestrator = orchestrator
         self.check_interval = check_interval
         self._running = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
 
         # Tracking state & cooldowns (seconds)
         self._last_cpu_alert = 0.0
@@ -84,16 +84,18 @@ class ProactiveSentinel:
                         top_proc = "a background task"
                         try:
                             procs = sorted(
-                                psutil.process_iter(['name', 'cpu_percent']),
-                                key=lambda p: p.info['cpu_percent'] or 0,
-                                reverse=True
+                                psutil.process_iter(["name", "cpu_percent"]),
+                                key=lambda p: p.info["cpu_percent"] or 0,
+                                reverse=True,
                             )
-                            if procs and procs[0].info['name']:
-                                top_proc = procs[0].info['name']
+                            if procs and procs[0].info["name"]:
+                                top_proc = procs[0].info["name"]
                         except Exception:
                             pass
 
-                        self._speak_alert(f"Pardon the interruption, sir. CPU usage is peaking at {int(cpu_pct)} percent due to {top_proc}.")
+                        self._speak_alert(
+                            f"Pardon the interruption, sir. CPU usage is peaking at {int(cpu_pct)} percent due to {top_proc}."
+                        )
                         self._last_cpu_alert = now
                         self._high_cpu_streak = 0
                 else:
@@ -104,15 +106,19 @@ class ProactiveSentinel:
                 if battery is not None:
                     if not battery.power_plugged and battery.percent <= 15:
                         if (now - self._last_battery_alert) > self._cooldown:
-                            self._speak_alert(f"Battery is down to {int(battery.percent)} percent. Please connect your charger.")
+                            self._speak_alert(
+                                f"Battery is down to {int(battery.percent)} percent. Please connect your charger."
+                            )
                             self._last_battery_alert = now
 
                 # 3. Disk Space Check
                 try:
                     disk = psutil.disk_usage("C:\\")
-                    free_gb = disk.free / (1024 ** 3)
+                    free_gb = disk.free / (1024**3)
                     if free_gb < 4.0 and (now - self._last_disk_alert) > (self._cooldown * 2):
-                        self._speak_alert(f"Warning: Primary drive has less than {int(free_gb)} gigabytes of free storage remaining.")
+                        self._speak_alert(
+                            f"Warning: Primary drive has less than {int(free_gb)} gigabytes of free storage remaining."
+                        )
                         self._last_disk_alert = now
                 except Exception:
                     pass

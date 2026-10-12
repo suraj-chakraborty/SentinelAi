@@ -10,40 +10,24 @@ Features:
 - Human-like emotional intonation
 """
 
-import os
 import asyncio
 import logging
+import os
 import threading
 import time
-from typing import Optional
 
 logger = logging.getLogger("EnhancedTTS")
 
 VOICE_PRESETS = {
-    "jarvis": {
-        "voice": "en-US-JennyNeural",
-        "rate": "+10%",
-        "volume": "+0%",
-        "description": "Friendly AI assistant"
-    },
-    "tony": {
-        "voice": "en-US-GuyNeural",
-        "rate": "+0%",
-        "volume": "+0%",
-        "description": "Professional male"
-    },
-    "friday": {
-        "voice": "en-US-AriaNeural",
-        "rate": "+15%",
-        "volume": "+5%",
-        "description": "Female AI"
-    },
+    "jarvis": {"voice": "en-US-JennyNeural", "rate": "+10%", "volume": "+0%", "description": "Friendly AI assistant"},
+    "tony": {"voice": "en-US-GuyNeural", "rate": "+0%", "volume": "+0%", "description": "Professional male"},
+    "friday": {"voice": "en-US-AriaNeural", "rate": "+15%", "volume": "+5%", "description": "Female AI"},
     "classic": {
         "voice": "en-US-GuyNeural",
         "rate": "-10%",
         "volume": "-5%",
-        "description": "Classic robotic (fallback)"
-    }
+        "description": "Classic robotic (fallback)",
+    },
 }
 
 
@@ -55,15 +39,16 @@ class EnhancedTTS:
     def __init__(self, voice_preset: str = "jarvis"):
         self.voice_preset = voice_preset
         self._current_voice = VOICE_PRESETS.get(voice_preset, VOICE_PRESETS["jarvis"])
-        
+
         self._edge_available = False
         self._coqui_available = False
         self._pygame_available = False
-        
+
         self._init_engines()
 
     def _init_engines(self):
         import importlib.util
+
         # Check edge-tts
         try:
             self._edge_available = importlib.util.find_spec("edge_tts") is not None
@@ -89,13 +74,14 @@ class EnhancedTTS:
         # Check pygame for playback
         try:
             import pygame
+
             pygame.mixer.init(frequency=22050, size=-16, channels=1, buffer=512)
             self._pygame_available = True
             logger.info("Pygame audio playback available")
         except Exception:
             logger.warning("Pygame not available")
 
-    def speak(self, text: str, preset: Optional[str] = None) -> bool:
+    def speak(self, text: str, preset: str | None = None) -> bool:
         """Speak text with neural voice."""
         if preset:
             self._current_voice = VOICE_PRESETS.get(preset, self._current_voice)
@@ -112,8 +98,9 @@ class EnhancedTTS:
     def _speak_edge(self, text: str, voice: str, rate: str, volume: str) -> bool:
         """Fast edge-tts synthesis."""
         try:
-            import edge_tts
             import tempfile
+
+            import edge_tts
 
             tmp_file = os.path.join(tempfile.gettempdir(), f"sentinel_tts_{int(time.time())}.mp3")
 
@@ -130,6 +117,7 @@ class EnhancedTTS:
             # Play
             if self._pygame_available:
                 import pygame
+
                 pygame.mixer.music.load(tmp_file)
                 pygame.mixer.music.play()
                 while pygame.mixer.music.get_busy():
@@ -140,7 +128,7 @@ class EnhancedTTS:
             # Cleanup
             try:
                 os.remove(tmp_file)
-            except:
+            except Exception:
                 pass
 
             return True
@@ -153,9 +141,10 @@ class EnhancedTTS:
         """Fallback to pyttsx3."""
         try:
             import pyttsx3
+
             engine = pyttsx3.init()
-            engine.setProperty('rate', 150)
-            engine.setProperty('volume', 1.0)
+            engine.setProperty("rate", 150)
+            engine.setProperty("volume", 1.0)
             engine.say(text)
             engine.runAndWait()
             return True
@@ -165,16 +154,17 @@ class EnhancedTTS:
 
     def speak_quick(self, text: str) -> bool:
         """Quick speak without waiting - non-blocking."""
+
         def _speak_async():
             self.speak(text)
-        
+
         thread = threading.Thread(target=_speak_async, daemon=True)
         thread.start()
         return True
 
 
 # Singleton
-_enhanced_tts: Optional[EnhancedTTS] = None
+_enhanced_tts: EnhancedTTS | None = None
 
 
 def get_enhanced_tts() -> EnhancedTTS:

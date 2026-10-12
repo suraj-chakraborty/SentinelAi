@@ -1,6 +1,5 @@
 import logging
 import os
-import re
 
 logger = logging.getLogger("FileManager")
 
@@ -50,6 +49,7 @@ class FileManager:
             if not pattern:
                 pattern = "**/*"
             import glob
+
             matches = glob.glob(pattern, recursive=True)
             return "\n".join(matches[:20]) if matches else "No files found."
 

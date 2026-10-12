@@ -32,19 +32,16 @@ plugin.py must expose a class with:
         def on_unload(self): ...
 """
 
-import os
-import sys
-import json
 import importlib.util
+import json
 import logging
+import os
 import subprocess
-from typing import Dict, List, Optional
+import sys
 
 logger = logging.getLogger("PluginSystem")
 
-PLUGINS_DIR = os.path.join(
-    os.path.expanduser("~"), "AppData", "Roaming", "SentinelAi", "plugins"
-)
+PLUGINS_DIR = os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "SentinelAi", "plugins")
 BUILTIN_PLUGINS_DIR = os.path.join(os.path.dirname(__file__), "..", "plugins")
 
 
@@ -67,17 +64,15 @@ class PluginBase:
         """Handle the command and return a response string."""
         return ""
 
-    def execute(self, command: str, entity: Optional[str] = None) -> str:
+    def execute(self, command: str, entity: str | None = None) -> str:
         """Execute the command and return a response string (alias for handle)."""
         return self.handle(command)
 
     def on_load(self):
         """Called when the plugin is loaded."""
-        pass
 
     def on_unload(self):
         """Called when the plugin is unloaded."""
-        pass
 
 
 class LoadedPlugin:
@@ -89,7 +84,7 @@ class LoadedPlugin:
         self.path = path
         self.name = manifest.get("name", "Unknown")
         self.version = manifest.get("version", "0.0")
-        self.triggers: List[str] = [t.lower() for t in manifest.get("triggers", [])]
+        self.triggers: list[str] = [t.lower() for t in manifest.get("triggers", [])]
 
     def matches(self, command: str) -> bool:
         """Check if command matches any trigger phrase, or plugin.can_handle()."""
@@ -101,7 +96,7 @@ class LoadedPlugin:
         except Exception:
             return False
 
-    def execute(self, command: str, entity: Optional[str] = None) -> str:
+    def execute(self, command: str, entity: str | None = None) -> str:
         """Execute the plugin handler."""
         try:
             # Check if custom execute is defined
@@ -109,6 +104,7 @@ class LoadedPlugin:
             base_exec = getattr(PluginBase, "execute", None)
             if inst_exec and inst_exec != base_exec:
                 import inspect
+
                 sig = inspect.signature(inst_exec)
                 params = [p for p in sig.parameters.values() if p.name != "self"]
                 if len(params) >= 2:
@@ -139,7 +135,7 @@ class PluginSystem:
 
     def __init__(self, orchestrator=None):
         self.orchestrator = orchestrator
-        self._plugins: Dict[str, LoadedPlugin] = {}
+        self._plugins: dict[str, LoadedPlugin] = {}
         os.makedirs(PLUGINS_DIR, exist_ok=True)
 
     # ─── Discovery & Loading ──────────────────────────────────────────────────
@@ -200,7 +196,7 @@ class PluginSystem:
             logger.error("Failed to load plugin '%s': %s", name, exc, exc_info=True)
             return False
 
-    def _install_requirements(self, plugin_name: str, requires: List[str]) -> bool:
+    def _install_requirements(self, plugin_name: str, requires: list[str]) -> bool:
         """
         Install each requirement in `requires` via pip if not already present.
         Returns True if all requirements are satisfied, False if any failed.
@@ -252,7 +248,7 @@ class PluginSystem:
 
     # ─── Dispatch ─────────────────────────────────────────────────────────────
 
-    def dispatch(self, command: str) -> Optional[str]:
+    def dispatch(self, command: str) -> str | None:
         """
         Try each plugin in order. Return the first non-empty response,
         or None if no plugin handles the command.
@@ -267,15 +263,10 @@ class PluginSystem:
 
     # ─── Introspection ────────────────────────────────────────────────────────
 
-    def list_plugins(self) -> List[dict]:
+    def list_plugins(self) -> list[dict]:
         """Returns info about all loaded plugins."""
         return [
-            {
-                "name": p.name,
-                "version": p.version,
-                "triggers": p.triggers,
-                "path": p.path
-            }
+            {"name": p.name, "version": p.version, "triggers": p.triggers, "path": p.path}
             for p in self._plugins.values()
         ]
 

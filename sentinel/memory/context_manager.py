@@ -1,18 +1,14 @@
-import logging
 import json
+import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Any
 
 logger = logging.getLogger("ContextManager")
 
+
 class ContextManager:
-    def __init__(self, storage_path: Optional[str] = None):
-        self.context: Dict[str, Any] = {
-            "last_app": None,
-            "last_intent": None,
-            "history": [],
-            "user_preferences": {}
-        }
+    def __init__(self, storage_path: str | None = None):
+        self.context: dict[str, Any] = {"last_app": None, "last_intent": None, "history": [], "user_preferences": {}}
         self.storage_path = storage_path
         if self.storage_path and os.path.exists(self.storage_path):
             self.load()
@@ -20,10 +16,10 @@ class ContextManager:
     def update_context(self, key: str, value: Any):
         self.context[key] = value
         if key == "intent":
-             self.context["last_intent"] = value
+            self.context["last_intent"] = value
         elif key == "entity" and self.context.get("last_intent") == "open_app":
-             self.context["last_app"] = value
-        
+            self.context["last_app"] = value
+
         # Keep a rolling history of the last 10 commands
         if key == "command":
             self.context["history"].append(value)

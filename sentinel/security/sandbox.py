@@ -17,39 +17,76 @@ Usage:
     result = Sandbox.execute(code, level=1)
 """
 
-import os
-import sys
-import re
-import subprocess
-import tempfile
+import ast
 import logging
-import threading
-from typing import Tuple
+import os
+import subprocess
+import sys
+import tempfile
 
 logger = logging.getLogger("SentinelSandbox")
-
-import ast
-
 
 # ── AST Safety Visitor ────────────────────────────────────────────────────────
 
 _BLOCKED_IMPORTS = {
-    "os", "subprocess", "shutil", "ctypes", "winreg", "socket",
-    "requests", "httpx", "sys", "builtins", "importlib", "pathlib",
-    "pty", "tty", "signal", "multiprocessing", "concurrent", "asyncio",
+    "os",
+    "subprocess",
+    "shutil",
+    "ctypes",
+    "winreg",
+    "socket",
+    "requests",
+    "httpx",
+    "sys",
+    "builtins",
+    "importlib",
+    "pathlib",
+    "pty",
+    "tty",
+    "signal",
+    "multiprocessing",
+    "concurrent",
+    "asyncio",
 }
 
 _BLOCKED_CALLS = {
-    "eval", "exec", "compile", "open", "__import__", "getattr",
-    "setattr", "delattr", "vars", "dir", "globals", "locals",
-    "breakpoint", "input",
+    "eval",
+    "exec",
+    "compile",
+    "open",
+    "__import__",
+    "getattr",
+    "setattr",
+    "delattr",
+    "vars",
+    "dir",
+    "globals",
+    "locals",
+    "breakpoint",
+    "input",
 }
 
 _BLOCKED_ATTRIBS = {
-    "system", "popen", "exec_", "execl", "execve", "spawn",
-    "rmdir", "remove", "unlink", "chmod", "chown", "kill",
-    "environ", "__subclasses__", "__mro__", "__globals__", 
-    "__builtins__", "__dict__", "func_globals", "mro",
+    "system",
+    "popen",
+    "exec_",
+    "execl",
+    "execve",
+    "spawn",
+    "rmdir",
+    "remove",
+    "unlink",
+    "chmod",
+    "chown",
+    "kill",
+    "environ",
+    "__subclasses__",
+    "__mro__",
+    "__globals__",
+    "__builtins__",
+    "__dict__",
+    "func_globals",
+    "mro",
 }
 
 
@@ -106,7 +143,7 @@ class Sandbox:
     """
 
     @classmethod
-    def execute(cls, code: str, level: int = 2, timeout: int = 15) -> Tuple[bool, str]:
+    def execute(cls, code: str, level: int = 2, timeout: int = 15) -> tuple[bool, str]:
         """
         Execute Python code safely.
 
@@ -142,10 +179,10 @@ class Sandbox:
     # ─── Level 1: RestrictedPython ─────────────────────────────────────────
 
     @classmethod
-    def _execute_restricted(cls, code: str) -> Tuple[bool, str]:
+    def _execute_restricted(cls, code: str) -> tuple[bool, str]:
         """Execute using RestrictedPython (AST-level restrictions)."""
         try:
-            from RestrictedPython import compile_restricted, safe_globals, limited_builtins
+            from RestrictedPython import compile_restricted, limited_builtins, safe_globals
             from RestrictedPython.Guards import safe_iter_unpack_sequence
 
             byte_code = compile_restricted(code, filename="<sandbox>", mode="exec")
@@ -179,6 +216,7 @@ class Sandbox:
 
             import io
             from contextlib import redirect_stdout
+
             output_buffer = io.StringIO()
 
             with redirect_stdout(output_buffer):
@@ -195,13 +233,11 @@ class Sandbox:
     # ─── Level 2: subprocess + timeout ────────────────────────────────────────
 
     @classmethod
-    def _execute_subprocess(cls, code: str, timeout: int = 15) -> Tuple[bool, str]:
+    def _execute_subprocess(cls, code: str, timeout: int = 15) -> tuple[bool, str]:
         """Execute in a subprocess with timeout. Safe for most use cases."""
         tmp_path = None
         try:
-            with tempfile.NamedTemporaryFile(
-                suffix=".py", delete=False, mode="w", encoding="utf-8"
-            ) as f:
+            with tempfile.NamedTemporaryFile(suffix=".py", delete=False, mode="w", encoding="utf-8") as f:
                 f.write(code)
                 tmp_path = f.name
 
@@ -216,7 +252,7 @@ class Sandbox:
                     "PYTHONPATH": os.environ.get("PYTHONPATH", ""),
                     "TEMP": os.environ.get("TEMP", ""),
                     "TMP": os.environ.get("TMP", ""),
-                }
+                },
             )
 
             if result.returncode == 0:
@@ -225,7 +261,7 @@ class Sandbox:
             else:
                 error = result.stderr.strip()
                 # Clean up traceback for readability
-                error_lines = [l for l in error.splitlines() if tmp_path not in l]
+                error_lines = [line for line in error.splitlines() if tmp_path not in line]
                 return False, "\n".join(error_lines) if error_lines else error
 
         except subprocess.TimeoutExpired:
@@ -242,10 +278,11 @@ class Sandbox:
     # ─── Level 3: Docker container ─────────────────────────────────────────────
 
     @classmethod
-    def _execute_docker(cls, code: str, timeout: int = 30) -> Tuple[bool, str]:
+    def _execute_docker(cls, code: str, timeout: int = 30) -> tuple[bool, str]:
         """Execute in an isolated Docker container. Requires Docker Desktop."""
         try:
             import docker
+
             client = docker.from_env()
             output = client.containers.run(
                 "python:3.11-slim",
@@ -254,7 +291,7 @@ class Sandbox:
                 network_disabled=True,
                 remove=True,
                 timeout=timeout,
-                stderr=True
+                stderr=True,
             )
             return True, output.decode("utf-8").strip() or "Done."
         except ImportError:
@@ -289,12 +326,12 @@ class Sandbox:
     def get_safety_report(cls, code: str) -> dict:
         """Analyse code and return a safety report without executing."""
         violation = cls._static_analysis(code)
-        syntax_ok  = not violation.startswith("Syntax error")
+        syntax_ok = not violation.startswith("Syntax error")
 
         return {
-            "safe"         : not violation,
-            "violation"    : violation or None,
-            "syntax_ok"    : syntax_ok,
-            "line_count"   : len(code.splitlines()),
+            "safe": not violation,
+            "violation": violation or None,
+            "syntax_ok": syntax_ok,
+            "line_count": len(code.splitlines()),
             "sandbox_level": int(os.getenv("SENTINEL_CODE_SANDBOX_LEVEL", "2")),
         }

@@ -1,15 +1,18 @@
 import logging
+
 try:
     from sentinel.voice.tts import speak
 except Exception:
     try:
         from sentinel.app.voice import speak
     except Exception:
+
         def speak(*args, **kwargs):
             pass
 # googlesearch is loaded lazily inside execute to avoid hard dependency in tests
 
 logger = logging.getLogger("SearchWeb")
+
 
 class SearchWeb:
     def __init__(self, orchestrator):
@@ -23,10 +26,11 @@ class SearchWeb:
 
         speak(f"Searching the web for {query}...", block=False)
         logger.info(f"Searching for: {query}")
-        
+
         try:
             # Lazy import: only import googlesearch if available in this environment
             from googlesearch import search  # type: ignore
+
             results = [url for url in search(query, num_results=3)]
             if not results:
                 return None

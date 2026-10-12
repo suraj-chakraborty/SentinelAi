@@ -19,86 +19,99 @@ import logging
 import os
 import re
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger("CodeWhisperer")
 
 
 class CodeLanguage(Enum):
-    PYTHON     = "python"
+    PYTHON = "python"
     JAVASCRIPT = "javascript"
     TYPESCRIPT = "typescript"
-    JAVA       = "java"
-    CPP        = "cpp"
-    CSHARP     = "csharp"
-    RUST       = "rust"
-    GO         = "go"
-    HTML       = "html"
-    CSS        = "css"
-    SQL        = "sql"
-    SHELL      = "shell"
-    UNKNOWN    = "unknown"
+    JAVA = "java"
+    CPP = "cpp"
+    CSHARP = "csharp"
+    RUST = "rust"
+    GO = "go"
+    HTML = "html"
+    CSS = "css"
+    SQL = "sql"
+    SHELL = "shell"
+    UNKNOWN = "unknown"
 
 
 class CodeAction(Enum):
-    EXPLAIN       = "explain"
-    COMPLETE      = "complete"
-    REFACTOR      = "refactor"
-    DEBUG         = "debug"
-    GENERATE      = "generate"
-    REVIEW        = "review"
+    EXPLAIN = "explain"
+    COMPLETE = "complete"
+    REFACTOR = "refactor"
+    DEBUG = "debug"
+    GENERATE = "generate"
+    REVIEW = "review"
     TEST_GENERATE = "test_generate"
-    OPTIMIZE      = "optimize"
-    DOCUMENT      = "document"
+    OPTIMIZE = "optimize"
+    DOCUMENT = "document"
 
 
 # File extension to language mapping
 _EXT_LANGUAGE_MAP = {
-    ".py": CodeLanguage.PYTHON, ".pyw": CodeLanguage.PYTHON,
-    ".js": CodeLanguage.JAVASCRIPT, ".jsx": CodeLanguage.JAVASCRIPT,
-    ".ts": CodeLanguage.TYPESCRIPT, ".tsx": CodeLanguage.TYPESCRIPT,
+    ".py": CodeLanguage.PYTHON,
+    ".pyw": CodeLanguage.PYTHON,
+    ".js": CodeLanguage.JAVASCRIPT,
+    ".jsx": CodeLanguage.JAVASCRIPT,
+    ".ts": CodeLanguage.TYPESCRIPT,
+    ".tsx": CodeLanguage.TYPESCRIPT,
     ".java": CodeLanguage.JAVA,
-    ".cpp": CodeLanguage.CPP, ".cc": CodeLanguage.CPP, ".cxx": CodeLanguage.CPP,
-    ".h": CodeLanguage.CPP, ".hpp": CodeLanguage.CPP,
+    ".cpp": CodeLanguage.CPP,
+    ".cc": CodeLanguage.CPP,
+    ".cxx": CodeLanguage.CPP,
+    ".h": CodeLanguage.CPP,
+    ".hpp": CodeLanguage.CPP,
     ".cs": CodeLanguage.CSHARP,
     ".rs": CodeLanguage.RUST,
     ".go": CodeLanguage.GO,
-    ".html": CodeLanguage.HTML, ".htm": CodeLanguage.HTML,
-    ".css": CodeLanguage.CSS, ".scss": CodeLanguage.CSS,
+    ".html": CodeLanguage.HTML,
+    ".htm": CodeLanguage.HTML,
+    ".css": CodeLanguage.CSS,
+    ".scss": CodeLanguage.CSS,
     ".sql": CodeLanguage.SQL,
-    ".sh": CodeLanguage.SHELL, ".bash": CodeLanguage.SHELL,
-    ".bat": CodeLanguage.SHELL, ".ps1": CodeLanguage.SHELL,
+    ".sh": CodeLanguage.SHELL,
+    ".bash": CodeLanguage.SHELL,
+    ".bat": CodeLanguage.SHELL,
+    ".ps1": CodeLanguage.SHELL,
 }
 
 
 @dataclass
 class EditorContext:
     """Current editor state for context-aware assistance."""
-    file_path: Optional[str] = None
+
+    file_path: str | None = None
     language: CodeLanguage = CodeLanguage.UNKNOWN
     cursor_line: int = 0
     cursor_col: int = 0
     selected_text: str = ""
     visible_code: str = ""
     file_content: str = ""
-    project_root: Optional[str] = None
-    git_branch: Optional[str] = None
-    recent_errors: List[str] = field(default_factory=list)
+    project_root: str | None = None
+    git_branch: str | None = None
+    recent_errors: list[str] = field(default_factory=list)
 
 
 @dataclass
 class CodeSuggestion:
     """A code suggestion or generation result."""
+
     action: CodeAction
     language: CodeLanguage
     original_code: str
     suggested_code: str
     explanation: str
     confidence: float
-    line_range: Optional[Tuple[int, int]] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    line_range: tuple[int, int] | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class EditorWatcher:
@@ -107,11 +120,12 @@ class EditorWatcher:
     def __init__(self):
         self._context = EditorContext()
 
-    def detect_active_file(self) -> Optional[str]:
+    def detect_active_file(self) -> str | None:
         """Detect the currently active file from VS Code or other editors."""
         try:
             # Try VS Code workspace detection
             from sentinel.utils.window_context import get_active_window_info
+
             info = get_active_window_info()
             title = info.get("title", "")
 
@@ -126,9 +140,9 @@ class EditorWatcher:
             pass
         return None
 
-    def update_context(self, file_path: Optional[str] = None,
-                       content: str = "", cursor_line: int = 0,
-                       selected_text: str = "") -> EditorContext:
+    def update_context(
+        self, file_path: str | None = None, content: str = "", cursor_line: int = 0, selected_text: str = ""
+    ) -> EditorContext:
         """Update editor context manually or from detection."""
         if file_path:
             self._context.file_path = file_path
@@ -154,7 +168,7 @@ class EditorWatcher:
 
         return self._context
 
-    def _find_project_root(self, start_dir: str) -> Optional[str]:
+    def _find_project_root(self, start_dir: str) -> str | None:
         """Walk up to find .git directory."""
         current = start_dir
         for _ in range(10):
@@ -166,12 +180,11 @@ class EditorWatcher:
             current = parent
         return None
 
-    def _get_git_branch(self, repo_path: str) -> Optional[str]:
+    def _get_git_branch(self, repo_path: str) -> str | None:
         """Get current git branch name."""
         try:
             result = subprocess.run(
-                ["git", "branch", "--show-current"],
-                cwd=repo_path, capture_output=True, text=True, timeout=5
+                ["git", "branch", "--show-current"], cwd=repo_path, capture_output=True, text=True, timeout=5
             )
             return result.stdout.strip() if result.returncode == 0 else None
         except Exception:
@@ -189,28 +202,30 @@ class ErrorDetector:
     _PATTERNS = {
         CodeLanguage.PYTHON: [
             re.compile(r'File "(.+)", line (\d+).*\n\s*(.+)\n(\w+Error:.+)', re.MULTILINE),
-            re.compile(r'(\w+Error):\s*(.+)'),
-            re.compile(r'SyntaxError:\s*(.+)'),
+            re.compile(r"(\w+Error):\s*(.+)"),
+            re.compile(r"SyntaxError:\s*(.+)"),
         ],
         CodeLanguage.JAVASCRIPT: [
-            re.compile(r'(\w+Error):\s*(.+)'),
-            re.compile(r'at\s+(.+)\s+\((.+):(\d+):(\d+)\)'),
+            re.compile(r"(\w+Error):\s*(.+)"),
+            re.compile(r"at\s+(.+)\s+\((.+):(\d+):(\d+)\)"),
         ],
     }
 
-    def detect_errors(self, output: str, language: CodeLanguage) -> List[Dict[str, Any]]:
+    def detect_errors(self, output: str, language: CodeLanguage) -> list[dict[str, Any]]:
         """Parse error output and return structured error information."""
         errors = []
         patterns = self._PATTERNS.get(language, [])
 
         for pattern in patterns:
             for match in pattern.finditer(output):
-                errors.append({
-                    "type": match.group(1) if match.lastindex >= 1 else "Error",
-                    "message": match.group(match.lastindex) if match.lastindex else "",
-                    "full_match": match.group(0)[:200],
-                    "language": language.value,
-                })
+                errors.append(
+                    {
+                        "type": match.group(1) if match.lastindex >= 1 else "Error",
+                        "message": match.group(match.lastindex) if match.lastindex else "",
+                        "full_match": match.group(0)[:200],
+                        "language": language.value,
+                    }
+                )
 
         return errors
 
@@ -219,58 +234,28 @@ class CodeGenerator:
     """Generates code boilerplate from voice descriptions."""
 
     _TEMPLATES = {
-        (CodeLanguage.PYTHON, "function"): (
-            'def {name}({params}):\n'
-            '    """{description}"""\n'
-            '    pass\n'
-        ),
+        (CodeLanguage.PYTHON, "function"): ('def {name}({params}):\n    """{description}"""\n    pass\n'),
         (CodeLanguage.PYTHON, "class"): (
-            'class {name}:\n'
-            '    """{description}"""\n\n'
-            '    def __init__(self):\n'
-            '        pass\n'
+            'class {name}:\n    """{description}"""\n\n    def __init__(self):\n        pass\n'
         ),
         (CodeLanguage.PYTHON, "test"): (
-            'def test_{name}():\n'
-            '    """{description}"""\n'
-            '    # Arrange\n\n'
-            '    # Act\n\n'
-            '    # Assert\n'
-            '    assert True\n'
+            'def test_{name}():\n    """{description}"""\n    # Arrange\n\n    # Act\n\n    # Assert\n    assert True\n'
         ),
-        (CodeLanguage.JAVASCRIPT, "function"): (
-            'function {name}({params}) {{\n'
-            '  // {description}\n'
-            '}}\n'
-        ),
-        (CodeLanguage.JAVASCRIPT, "class"): (
-            'class {name} {{\n'
-            '  constructor() {{\n'
-            '    // {description}\n'
-            '  }}\n'
-            '}}\n'
-        ),
-        (CodeLanguage.TYPESCRIPT, "function"): (
-            'function {name}({params}): void {{\n'
-            '  // {description}\n'
-            '}}\n'
-        ),
+        (CodeLanguage.JAVASCRIPT, "function"): ("function {name}({params}) {{\n  // {description}\n}}\n"),
+        (CodeLanguage.JAVASCRIPT, "class"): ("class {name} {{\n  constructor() {{\n    // {description}\n  }}\n}}\n"),
+        (CodeLanguage.TYPESCRIPT, "function"): ("function {name}({params}): void {{\n  // {description}\n}}\n"),
     }
 
-    def generate(self, language: CodeLanguage, construct: str,
-                 name: str, description: str = "",
-                 params: str = "") -> CodeSuggestion:
+    def generate(
+        self, language: CodeLanguage, construct: str, name: str, description: str = "", params: str = ""
+    ) -> CodeSuggestion:
         """Generate code from template."""
         template = self._TEMPLATES.get((language, construct))
         if not template:
             # Fallback to Python
-            template = self._TEMPLATES.get((CodeLanguage.PYTHON, construct),
-                                           'def {name}({params}):\n    pass\n')
+            template = self._TEMPLATES.get((CodeLanguage.PYTHON, construct), "def {name}({params}):\n    pass\n")
 
-        code = template.format(
-            name=name, params=params,
-            description=description or f"TODO: Implement {name}"
-        )
+        code = template.format(name=name, params=params, description=description or f"TODO: Implement {name}")
 
         return CodeSuggestion(
             action=CodeAction.GENERATE,
@@ -290,7 +275,7 @@ class CodeWhispererEngine:
     and contextual coding assistance.
     """
 
-    def __init__(self, llm_callback: Optional[Callable] = None):
+    def __init__(self, llm_callback: Callable | None = None):
         self._editor = EditorWatcher()
         self._error_detector = ErrorDetector()
         self._code_gen = CodeGenerator()
@@ -301,7 +286,7 @@ class CodeWhispererEngine:
         self._debug_sessions = 0
         logger.info("CodeWhispererEngine initialized")
 
-    def start_session(self, file_path: Optional[str] = None) -> Dict[str, Any]:
+    def start_session(self, file_path: str | None = None) -> dict[str, Any]:
         """Start a pair-programming session."""
         self._session_active = True
         ctx = self._editor.update_context(file_path=file_path)
@@ -313,7 +298,7 @@ class CodeWhispererEngine:
             "branch": ctx.git_branch,
         }
 
-    def end_session(self) -> Dict[str, Any]:
+    def end_session(self) -> dict[str, Any]:
         """End the pair-programming session."""
         self._session_active = False
         return {
@@ -323,7 +308,7 @@ class CodeWhispererEngine:
             "debug_sessions": self._debug_sessions,
         }
 
-    def explain_code(self, code: str, language: Optional[CodeLanguage] = None) -> CodeSuggestion:
+    def explain_code(self, code: str, language: CodeLanguage | None = None) -> CodeSuggestion:
         """Generate a natural language explanation of code."""
         lang = language or self._editor.context.language
 
@@ -370,23 +355,28 @@ class CodeWhispererEngine:
             confidence=0.70,
         )
 
-    def generate_code(self, description: str, construct: str = "function",
-                      name: str = "my_function",
-                      language: Optional[CodeLanguage] = None) -> CodeSuggestion:
+    def generate_code(
+        self,
+        description: str,
+        construct: str = "function",
+        name: str = "my_function",
+        language: CodeLanguage | None = None,
+    ) -> CodeSuggestion:
         """Generate code from a voice description."""
         lang = language or self._editor.context.language
         if lang == CodeLanguage.UNKNOWN:
             lang = CodeLanguage.PYTHON
 
         suggestion = self._code_gen.generate(
-            language=lang, construct=construct,
-            name=name, description=description,
+            language=lang,
+            construct=construct,
+            name=name,
+            description=description,
         )
         self._suggestions_given += 1
         return suggestion
 
-    def analyze_error(self, error_output: str,
-                      language: Optional[CodeLanguage] = None) -> Dict[str, Any]:
+    def analyze_error(self, error_output: str, language: CodeLanguage | None = None) -> dict[str, Any]:
         """Analyze an error output and provide debugging guidance."""
         lang = language or self._editor.context.language
         errors = self._error_detector.detect_errors(error_output, lang)
@@ -418,6 +408,7 @@ class CodeWhispererEngine:
         ]
 
         import random
+
         selected = random.choice(questions)
 
         if self._llm_callback:
@@ -432,8 +423,7 @@ class CodeWhispererEngine:
 
         return selected
 
-    def suggest_refactor(self, code: str,
-                          language: Optional[CodeLanguage] = None) -> CodeSuggestion:
+    def suggest_refactor(self, code: str, language: CodeLanguage | None = None) -> CodeSuggestion:
         """Suggest refactoring improvements for code."""
         lang = language or self._editor.context.language
         suggestions = []
@@ -459,7 +449,7 @@ class CodeWhispererEngine:
             confidence=0.75,
         )
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Return code whisperer session status."""
         ctx = self._editor.context
         return {

@@ -1,9 +1,12 @@
-import psutil
 import logging
+
+import psutil
+
 try:
     import GPUtil
 except ImportError:
     GPUtil = None
+
 
 class SystemMonitor:
     def __init__(self, temp_threshold=80):
@@ -14,7 +17,7 @@ class SystemMonitor:
         """Attempt to read CPU temperature, handling Windows/psutil limitations."""
         if not hasattr(psutil, "sensors_temperatures"):
             return None
-            
+
         try:
             temps = psutil.sensors_temperatures()
             if not temps:
@@ -53,13 +56,15 @@ class SystemMonitor:
         misuse_alerts = []
         try:
             # We use a short interval for process_iter to get real-time CPU %
-            for proc in psutil.process_iter(['pid', 'name', 'cpu_percent']):
+            for proc in psutil.process_iter(["pid", "name", "cpu_percent"]):
                 try:
                     # Ignore the 'System Idle Process' and 'System'
-                    if (proc.info['name'] or "").lower() in ('system idle process', 'system', 'idle'):
+                    if (proc.info["name"] or "").lower() in ("system idle process", "system", "idle"):
                         continue
-                    if proc.info['cpu_percent'] > 95:
-                        misuse_alerts.append(f"Process {proc.info['name']} (PID: {proc.info['pid']}) is using high CPU: {proc.info['cpu_percent']}%")
+                    if proc.info["cpu_percent"] > 95:
+                        misuse_alerts.append(
+                            f"Process {proc.info['name']} (PID: {proc.info['pid']}) is using high CPU: {proc.info['cpu_percent']}%"
+                        )
                 except (psutil.NoSuchProcess, psutil.AccessDenied):
                     continue
         except Exception:

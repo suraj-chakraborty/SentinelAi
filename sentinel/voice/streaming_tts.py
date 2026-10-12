@@ -5,10 +5,11 @@ Streaming Sentence-by-Sentence TTS dispatcher.
 Enables sub-400ms time-to-first-speech by pipelining LLM output chunks into speech.
 """
 
-import re
 import logging
-from typing import Iterable, Union
-from sentinel.voice.tts import get_tts, TTSEngine
+import re
+from collections.abc import Iterable
+
+from sentinel.voice.tts import TTSEngine, get_tts
 
 logger = logging.getLogger("StreamingTTS")
 
@@ -25,7 +26,7 @@ class StreamingTTSPlayer:
     def __init__(self, tts: TTSEngine = None):
         self.tts = tts or get_tts()
 
-    def speak_stream(self, text_or_chunks: Union[str, Iterable[str]], emotion: str = "Neutral") -> int:
+    def speak_stream(self, text_or_chunks: str | Iterable[str], emotion: str = "Neutral") -> int:
         """
         Process incoming text chunks and speak sentences as soon as formed.
         Returns total number of sentences spoken.

@@ -6,10 +6,12 @@ Implements bi-directional low-latency audio streaming (<200ms) with adaptive
 acoustic volume mirroring (whispering vs normal) and live voice translation.
 """
 
-import threading
 import logging
+import threading
+from collections.abc import Callable
+from typing import Any
+
 import numpy as np
-from typing import Optional, Callable, Dict, Any
 
 logger = logging.getLogger("LiveSpeechStream")
 
@@ -17,7 +19,7 @@ logger = logging.getLogger("LiveSpeechStream")
 class AdaptiveAcousticMirror:
     """Measures user audio dynamics (RMS energy) to mirror whisper vs assertive volume."""
 
-    def analyze_audio_energy(self, pcm_data: bytes) -> Dict[str, Any]:
+    def analyze_audio_energy(self, pcm_data: bytes) -> dict[str, Any]:
         if not pcm_data:
             return {"mode": "normal", "rms": 0.03, "volume_multiplier": 1.0}
 
@@ -49,9 +51,9 @@ class LiveSpeechStream:
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
-        endpoint_url: Optional[str] = None,
-        on_audio_delta: Optional[Callable[[bytes], None]] = None
+        api_key: str | None = None,
+        endpoint_url: str | None = None,
+        on_audio_delta: Callable[[bytes], None] | None = None,
     ):
         self.api_key = api_key
         self.endpoint_url = endpoint_url
@@ -81,7 +83,7 @@ class LiveSpeechStream:
             self._connected = False
             logger.info("LiveSpeechStream disconnected.")
 
-    def process_incoming_audio_chunk(self, pcm_chunk: bytes) -> Dict[str, Any]:
+    def process_incoming_audio_chunk(self, pcm_chunk: bytes) -> dict[str, Any]:
         """
         Analyzes incoming microphone chunk, adapts acoustic mirroring parameters,
         and streams audio to live session.

@@ -19,53 +19,55 @@ import logging
 import math
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger("AirGesture")
 
 
 class GestureType(Enum):
-    NONE            = "none"
-    SWIPE_LEFT      = "swipe_left"
-    SWIPE_RIGHT     = "swipe_right"
-    SWIPE_UP        = "swipe_up"
-    SWIPE_DOWN      = "swipe_down"
-    PINCH_IN        = "pinch_in"
-    PINCH_OUT       = "pinch_out"
-    PALM_HOLD       = "palm_hold"
-    FIST_CLOSE      = "fist_close"
-    TWO_FINGER_TAP  = "two_finger_tap"
-    CIRCLE_CW       = "circle_clockwise"
-    CIRCLE_CCW      = "circle_counterclockwise"
-    PEACE_SIGN      = "peace_sign"
-    THUMBS_UP       = "thumbs_up"
-    POINT            = "point"
+    NONE = "none"
+    SWIPE_LEFT = "swipe_left"
+    SWIPE_RIGHT = "swipe_right"
+    SWIPE_UP = "swipe_up"
+    SWIPE_DOWN = "swipe_down"
+    PINCH_IN = "pinch_in"
+    PINCH_OUT = "pinch_out"
+    PALM_HOLD = "palm_hold"
+    FIST_CLOSE = "fist_close"
+    TWO_FINGER_TAP = "two_finger_tap"
+    CIRCLE_CW = "circle_clockwise"
+    CIRCLE_CCW = "circle_counterclockwise"
+    PEACE_SIGN = "peace_sign"
+    THUMBS_UP = "thumbs_up"
+    POINT = "point"
 
 
 # Actions mapped to each gesture
-GESTURE_ACTION_MAP: Dict[GestureType, str] = {
-    GestureType.SWIPE_LEFT:     "snap_window_left",
-    GestureType.SWIPE_RIGHT:    "snap_window_right",
-    GestureType.SWIPE_UP:       "maximize_window",
-    GestureType.SWIPE_DOWN:     "minimize_window",
-    GestureType.PINCH_IN:       "zoom_out",
-    GestureType.PINCH_OUT:      "zoom_in",
-    GestureType.PALM_HOLD:      "activate_listening",
-    GestureType.FIST_CLOSE:     "dismiss_notification",
+GESTURE_ACTION_MAP: dict[GestureType, str] = {
+    GestureType.SWIPE_LEFT: "snap_window_left",
+    GestureType.SWIPE_RIGHT: "snap_window_right",
+    GestureType.SWIPE_UP: "maximize_window",
+    GestureType.SWIPE_DOWN: "minimize_window",
+    GestureType.PINCH_IN: "zoom_out",
+    GestureType.PINCH_OUT: "zoom_in",
+    GestureType.PALM_HOLD: "activate_listening",
+    GestureType.FIST_CLOSE: "dismiss_notification",
     GestureType.TWO_FINGER_TAP: "toggle_media",
-    GestureType.CIRCLE_CW:      "volume_up",
-    GestureType.CIRCLE_CCW:     "volume_down",
-    GestureType.PEACE_SIGN:     "take_screenshot",
-    GestureType.THUMBS_UP:      "confirm_action",
-    GestureType.POINT:          "click_at_position",
+    GestureType.CIRCLE_CW: "volume_up",
+    GestureType.CIRCLE_CCW: "volume_down",
+    GestureType.PEACE_SIGN: "take_screenshot",
+    GestureType.THUMBS_UP: "confirm_action",
+    GestureType.POINT: "click_at_position",
 }
 
 
 @dataclass
 class HandLandmark:
     """A single tracked hand landmark (21 landmarks per hand)."""
+
     id: int
     x: float  # Normalized 0–1
     y: float
@@ -75,7 +77,8 @@ class HandLandmark:
 @dataclass
 class HandFrame:
     """One frame of hand tracking data."""
-    landmarks: List[HandLandmark]
+
+    landmarks: list[HandLandmark]
     handedness: str  # "Left" or "Right"
     confidence: float
     timestamp: float
@@ -84,13 +87,14 @@ class HandFrame:
 @dataclass
 class GestureEvent:
     """A detected gesture event."""
+
     gesture: GestureType
     action: str
     confidence: float
     hand: str
-    position: Tuple[float, float]
+    position: tuple[float, float]
     timestamp: float
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class GestureRecognizer:
@@ -100,14 +104,14 @@ class GestureRecognizer:
     """
 
     def __init__(self):
-        self._history: List[HandFrame] = []
+        self._history: list[HandFrame] = []
         self._max_history = 30  # ~1 second at 30fps
         self._last_gesture_time = 0.0
         self._cooldown = 0.5  # seconds between repeated gestures
-        self._palm_hold_start: Optional[float] = None
+        self._palm_hold_start: float | None = None
         self._palm_hold_threshold = 2.0  # seconds
 
-    def add_frame(self, frame: HandFrame) -> Optional[GestureEvent]:
+    def add_frame(self, frame: HandFrame) -> GestureEvent | None:
         """Process a hand frame and return gesture if detected."""
         self._history.append(frame)
         if len(self._history) > self._max_history:
@@ -135,22 +139,20 @@ class GestureRecognizer:
             return gesture
         return None
 
-    def _finger_extended(self, landmarks: List[HandLandmark], tip_id: int,
-                         pip_id: int) -> bool:
+    def _finger_extended(self, landmarks: list[HandLandmark], tip_id: int, pip_id: int) -> bool:
         """Check if a finger is extended (tip above PIP joint)."""
         if tip_id >= len(landmarks) or pip_id >= len(landmarks):
             return False
         return landmarks[tip_id].y < landmarks[pip_id].y
 
-    def _check_fist(self, frame: HandFrame) -> Optional[GestureEvent]:
+    def _check_fist(self, frame: HandFrame) -> GestureEvent | None:
         """All fingers curled → fist close."""
         lm = frame.landmarks
         if len(lm) < 21:
             return None
         # Check all 4 finger tips (8,12,16,20) are below their PIP joints (6,10,14,18)
         fingers_curled = all(
-            not self._finger_extended(lm, tip, pip)
-            for tip, pip in [(8, 6), (12, 10), (16, 14), (20, 18)]
+            not self._finger_extended(lm, tip, pip) for tip, pip in [(8, 6), (12, 10), (16, 14), (20, 18)]
         )
         if fingers_curled:
             wrist = lm[0]
@@ -164,7 +166,7 @@ class GestureRecognizer:
             )
         return None
 
-    def _check_peace_sign(self, frame: HandFrame) -> Optional[GestureEvent]:
+    def _check_peace_sign(self, frame: HandFrame) -> GestureEvent | None:
         """Index + Middle extended, Ring + Pinky curled → Victory/Peace."""
         lm = frame.landmarks
         if len(lm) < 21:
@@ -184,15 +186,14 @@ class GestureRecognizer:
             )
         return None
 
-    def _check_thumbs_up(self, frame: HandFrame) -> Optional[GestureEvent]:
+    def _check_thumbs_up(self, frame: HandFrame) -> GestureEvent | None:
         """Thumb extended upward, all others curled → Thumbs Up."""
         lm = frame.landmarks
         if len(lm) < 21:
             return None
         thumb_up = lm[4].y < lm[3].y  # Thumb tip above thumb IP
         others_down = all(
-            not self._finger_extended(lm, tip, pip)
-            for tip, pip in [(8, 6), (12, 10), (16, 14), (20, 18)]
+            not self._finger_extended(lm, tip, pip) for tip, pip in [(8, 6), (12, 10), (16, 14), (20, 18)]
         )
         if thumb_up and others_down:
             return GestureEvent(
@@ -205,16 +206,13 @@ class GestureRecognizer:
             )
         return None
 
-    def _check_palm_hold(self, frame: HandFrame, now: float) -> Optional[GestureEvent]:
+    def _check_palm_hold(self, frame: HandFrame, now: float) -> GestureEvent | None:
         """All fingers extended and held still → palm hold activation."""
         lm = frame.landmarks
         if len(lm) < 21:
             self._palm_hold_start = None
             return None
-        all_extended = all(
-            self._finger_extended(lm, tip, pip)
-            for tip, pip in [(8, 6), (12, 10), (16, 14), (20, 18)]
-        )
+        all_extended = all(self._finger_extended(lm, tip, pip) for tip, pip in [(8, 6), (12, 10), (16, 14), (20, 18)])
         if all_extended:
             if self._palm_hold_start is None:
                 self._palm_hold_start = now
@@ -233,29 +231,27 @@ class GestureRecognizer:
             self._palm_hold_start = None
         return None
 
-    def _check_pinch(self, frame: HandFrame) -> Optional[GestureEvent]:
+    def _check_pinch(self, frame: HandFrame) -> GestureEvent | None:
         """Thumb tip close to index tip → pinch gesture."""
         lm = frame.landmarks
         if len(lm) < 21:
             return None
         thumb_tip = lm[4]
         index_tip = lm[8]
-        dist = math.sqrt((thumb_tip.x - index_tip.x) ** 2 +
-                         (thumb_tip.y - index_tip.y) ** 2)
+        dist = math.sqrt((thumb_tip.x - index_tip.x) ** 2 + (thumb_tip.y - index_tip.y) ** 2)
         if dist < 0.04:
             return GestureEvent(
                 gesture=GestureType.PINCH_IN,
                 action=GESTURE_ACTION_MAP[GestureType.PINCH_IN],
                 confidence=0.80,
                 hand=frame.handedness,
-                position=((thumb_tip.x + index_tip.x) / 2,
-                          (thumb_tip.y + index_tip.y) / 2),
+                position=((thumb_tip.x + index_tip.x) / 2, (thumb_tip.y + index_tip.y) / 2),
                 timestamp=frame.timestamp,
                 metadata={"distance": round(dist, 4)},
             )
         return None
 
-    def _check_swipe(self, now: float) -> Optional[GestureEvent]:
+    def _check_swipe(self, now: float) -> GestureEvent | None:
         """Check recent wrist trajectory for swipe gestures."""
         if len(self._history) < 8:
             return None
@@ -297,12 +293,12 @@ class AirGestureController:
     gesture recognition, and action dispatch.
     """
 
-    def __init__(self, action_callback: Optional[Callable[[GestureEvent], None]] = None):
+    def __init__(self, action_callback: Callable[[GestureEvent], None] | None = None):
         self._recognizer = GestureRecognizer()
         self._action_callback = action_callback
         self._running = False
-        self._thread: Optional[threading.Thread] = None
-        self._gesture_log: List[GestureEvent] = []
+        self._thread: threading.Thread | None = None
+        self._gesture_log: list[GestureEvent] = []
         self._max_log = 50
         self._camera_index = 0
         self._enabled_gestures: set = set(GestureType)
@@ -313,8 +309,7 @@ class AirGestureController:
         if self._running:
             return False
         self._running = True
-        self._thread = threading.Thread(target=self._capture_loop, daemon=True,
-                                        name="AirGestureCapture")
+        self._thread = threading.Thread(target=self._capture_loop, daemon=True, name="AirGestureCapture")
         self._thread.start()
         logger.info("Air gesture recognition started")
         return True
@@ -335,6 +330,7 @@ class AirGestureController:
         try:
             import cv2
             import mediapipe as mp
+
             mp_hands = mp.solutions.hands.Hands(
                 static_image_mode=False,
                 max_num_hands=2,
@@ -353,13 +349,11 @@ class AirGestureController:
                         time.sleep(0.03)
                         continue
                     import cv2
+
                     rgb = cv2.cvtColor(frame_img, cv2.COLOR_BGR2RGB)
                     result = mp_hands.process(rgb)
                     if result.multi_hand_landmarks:
-                        for hand_landmarks, hand_info in zip(
-                            result.multi_hand_landmarks,
-                            result.multi_handedness
-                        ):
+                        for hand_landmarks, hand_info in zip(result.multi_hand_landmarks, result.multi_handedness):
                             landmarks = [
                                 HandLandmark(
                                     id=i,
@@ -393,16 +387,11 @@ class AirGestureController:
         self._gesture_log.append(event)
         if len(self._gesture_log) > self._max_log:
             self._gesture_log.pop(0)
-        logger.info("Gesture detected: %s (action=%s, conf=%.2f)",
-                     event.gesture.value, event.action, event.confidence)
+        logger.info("Gesture detected: %s (action=%s, conf=%.2f)", event.gesture.value, event.action, event.confidence)
 
-    def process_frame_landmarks(self, landmarks_data: List[Dict],
-                                 handedness: str = "Right") -> Optional[GestureEvent]:
+    def process_frame_landmarks(self, landmarks_data: list[dict], handedness: str = "Right") -> GestureEvent | None:
         """Manually feed landmark data for testing or external tracking."""
-        landmarks = [
-            HandLandmark(id=lm["id"], x=lm["x"], y=lm["y"], z=lm.get("z", 0.0))
-            for lm in landmarks_data
-        ]
+        landmarks = [HandLandmark(id=lm["id"], x=lm["x"], y=lm["y"], z=lm.get("z", 0.0)) for lm in landmarks_data]
         frame = HandFrame(
             landmarks=landmarks,
             handedness=handedness,
@@ -416,7 +405,7 @@ class AirGestureController:
                 self._action_callback(gesture)
         return gesture
 
-    def get_recent_gestures(self, count: int = 10) -> List[Dict[str, Any]]:
+    def get_recent_gestures(self, count: int = 10) -> list[dict[str, Any]]:
         """Return recent gesture events."""
         return [
             {
@@ -429,7 +418,7 @@ class AirGestureController:
             for g in self._gesture_log[-count:]
         ]
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         return {
             "running": self._running,
             "total_gestures_detected": len(self._gesture_log),

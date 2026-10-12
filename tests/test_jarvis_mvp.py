@@ -1,12 +1,18 @@
 import unittest
+
 from sentinel.core.jarvis_persona import JarvisPersona
-from sentinel.core.retrieval import RetrievalContext, PromptBuilder
+from sentinel.core.retrieval import PromptBuilder, RetrievalContext
 
 
 class TestJarvisMVP(unittest.TestCase):
     def test_jarvis_persona_prompt_integration(self):
         jp = JarvisPersona(tone="calm")
-        rc = RetrievalContext(memory_context="Memory: test", retrieved_context="Retrieved: facts", knowledge_context="KB: notes", current_task="What should I do?")
+        rc = RetrievalContext(
+            memory_context="Memory: test",
+            retrieved_context="Retrieved: facts",
+            knowledge_context="KB: notes",
+            current_task="What should I do?",
+        )
         rc.persona = jp.get_prompt_schip()
         pb = PromptBuilder(rc)
         prompt = pb.build()
@@ -18,6 +24,7 @@ class TestJarvisMVP(unittest.TestCase):
 
     def test_planner_basic(self):
         from sentinel.core.planner import Planner
+
         p = Planner()
         steps = p.plan("organize downloads")
         self.assertTrue(len(steps) >= 1)

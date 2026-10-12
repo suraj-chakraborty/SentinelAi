@@ -9,11 +9,9 @@ Handles: "start task dispatcher", "stop task dispatcher", "dispatcher status",
 
 import logging
 import re
-from typing import Optional
 
 from sentinel.core.task_dispatcher import (
     AutonomousTaskDispatcher,
-    TaskPriority,
 )
 
 logger = logging.getLogger("DispatcherCommand")
@@ -24,18 +22,22 @@ class DispatcherCommand:
         self.orchestrator = orchestrator
         self.dispatcher = AutonomousTaskDispatcher(max_workers=4)
 
-    def execute(self, command: str, entity: Optional[str] = None) -> str:
+    def execute(self, command: str, entity: str | None = None) -> str:
         cmd = command.lower().strip()
 
         # 1. Start Dispatcher
-        if any(k in cmd for k in ("start task dispatcher", "start dispatcher", "enable dispatcher", "launch dispatcher")):
+        if any(
+            k in cmd for k in ("start task dispatcher", "start dispatcher", "enable dispatcher", "launch dispatcher")
+        ):
             started = self.dispatcher.start()
             if started:
                 return "🚀 Autonomous Task Dispatcher started with 4 worker threads. Ready to route tasks across mesh nodes."
             return "Task Dispatcher is already running."
 
         # 2. Stop Dispatcher
-        if any(k in cmd for k in ("stop task dispatcher", "stop dispatcher", "disable dispatcher", "shutdown dispatcher")):
+        if any(
+            k in cmd for k in ("stop task dispatcher", "stop dispatcher", "disable dispatcher", "shutdown dispatcher")
+        ):
             self.dispatcher.stop()
             return "⏹️ Autonomous Task Dispatcher stopped. All active workers gracefully halted."
 
@@ -69,7 +71,7 @@ class DispatcherCommand:
 
         # 5. Cancel Task
         if any(k in cmd for k in ("cancel task", "abort task", "stop task")):
-            task_id_match = re.search(r'(?:task\s+)?([a-f0-9\-]{8,12})', cmd)
+            task_id_match = re.search(r"(?:task\s+)?([a-f0-9\-]{8,12})", cmd)
             target_id = task_id_match.group(1) if task_id_match else (entity or "").strip()
             if target_id and self.dispatcher.cancel_task(target_id):
                 return f"✅ Task '{target_id}' has been cancelled."
@@ -77,7 +79,7 @@ class DispatcherCommand:
 
         # 6. Task Status
         if any(k in cmd for k in ("task status", "check task")):
-            task_id_match = re.search(r'(?:task\s+)?([a-f0-9\-]{8,12})', cmd)
+            task_id_match = re.search(r"(?:task\s+)?([a-f0-9\-]{8,12})", cmd)
             target_id = task_id_match.group(1) if task_id_match else (entity or "").strip()
             info = self.dispatcher.get_task_status(target_id) if target_id else None
             if info:
@@ -85,8 +87,7 @@ class DispatcherCommand:
                     f"📋 Task '{info['name']}' ({info['task_id']}):\n"
                     f"• Status: {info['status']}\n"
                     f"• Device: {info['device'] or 'Unassigned'}\n"
-                    f"• Retries: {info['retries']}"
-                    + (f"\n• Error: {info['error']}" if info['error'] else "")
+                    f"• Retries: {info['retries']}" + (f"\n• Error: {info['error']}" if info["error"] else "")
                 )
             return f"Task '{target_id}' not found."
 

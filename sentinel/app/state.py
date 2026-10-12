@@ -23,7 +23,6 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Optional
 
 
 @dataclass
@@ -46,7 +45,7 @@ class AppState:
 
     # ── Agent ────────────────────────────────────────────────────────────────
     _agent_active: bool = False
-    _pending_step: Optional[str] = None
+    _pending_step: str | None = None
 
     # ── Entertainment / Media ────────────────────────────────────────────────
     _entertainment_active: bool = False
@@ -117,12 +116,12 @@ class AppState:
 
     # pending_step ───────────────────────────────────────────────────────────
     @property
-    def pending_step(self) -> Optional[str]:
+    def pending_step(self) -> str | None:
         with self._lock:
             return self._pending_step
 
     @pending_step.setter
-    def pending_step(self, value: Optional[str]) -> None:
+    def pending_step(self, value: str | None) -> None:
         with self._lock:
             self._pending_step = value
 
@@ -245,8 +244,10 @@ class AppState:
         key = key.upper()
         with self._lock:
             if key == "LISTENING_PAUSED":
-                if value is True: self.block_listening(300) # 5 min default
-                else: self.unblock_listening()
+                if value is True:
+                    self.block_listening(300)  # 5 min default
+                else:
+                    self.unblock_listening()
             elif key == "AGENT_ACTIVE":
                 self.agent_active = bool(value)
             elif key == "RECORDING":
@@ -260,7 +261,7 @@ class AppState:
             elif key == "BRAIN_STATUS":
                 self.brain_status = str(value)
             elif key in ("SYS_CPU", "SYS_MEM", "SENTINEL_MEM_MB", "STABILITY_WARNING") or "LATENCY" in key:
-                pass # Accept these keys but don't perform special logic (for GUI display)
+                pass  # Accept these keys but don't perform special logic (for GUI display)
             elif key == "LAST_AUTH_TIME":
                 self.last_auth_time = float(value)
 
@@ -271,7 +272,7 @@ class AppState:
 
 # ── Singleton accessor ────────────────────────────────────────────────────────
 
-_app_state: Optional[AppState] = None
+_app_state: AppState | None = None
 _state_lock = threading.Lock()
 
 
