@@ -1,6 +1,10 @@
 import logging
 
-import librosa
+try:
+    import librosa
+except ImportError:
+    librosa = None
+
 import numpy as np
 
 
@@ -11,6 +15,9 @@ class EmotionModule:
 
     def analyze_audio_emotion(self, wav_path):
         """Analyzes the emotion in a voice recording based on spectral features."""
+        if librosa is None:
+            self.logger.warning("librosa is not installed; emotion analysis unavailable")
+            return "Neutral"
         try:
             y, sr = librosa.load(wav_path)
             # Basic features for simple emotion heuristic (pitch, energy, spectral flux)
