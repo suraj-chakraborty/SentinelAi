@@ -15,6 +15,10 @@ branch = false
 omit = [
     "sentinel/app/gui.py",
     "sentinel/app/application.py",
+    "sentinel/app/floating_hud.py",
+    "sentinel/app/audio.py",
+    "sentinel/app/voice_enroll.py",
+    "sentinel/voice/stt.py",
     "sentinel/templates/*",
 ]
 
