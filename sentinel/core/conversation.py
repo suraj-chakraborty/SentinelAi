@@ -8,13 +8,12 @@ them into LLM prompts so SentinelAI remembers what was said earlier
 in the session.
 """
 
-import time
 import json
-import os
 import logging
+import os
+import time
 from collections import deque
-from dataclasses import dataclass, asdict
-from typing import List, Optional
+from dataclasses import asdict, dataclass
 
 logger = logging.getLogger("SentinelConversation")
 
@@ -24,17 +23,17 @@ HISTORY_PATH = os.path.join(APPDATA_DIR, "conversation_history.json")
 
 @dataclass
 class Turn:
-    role: str           # "user" or "assistant"
+    role: str  # "user" or "assistant"
     content: str
     timestamp: float
-    emotion: Optional[str] = None
-    intent: Optional[str] = None
+    emotion: str | None = None
+    intent: str | None = None
 
 
 class ConversationManager:
     """
     Manages multi-turn conversation history for coherent AI interactions.
-    
+
     Features:
     - Rolling window (configurable max turns)
     - Persistent storage across sessions
@@ -42,33 +41,13 @@ class ConversationManager:
     - Context-aware LLM prompt builder
     """
 
-    SYSTEM_PROMPT = """You are SentinelAI — an advanced, personal AI assistant running locally on the user's Windows PC.
+    SYSTEM_PROMPT = """You are SentinelAI — a personal AI assistant on the user's Windows PC.
 
-Your personality:
-- Concise and action-oriented (prefer doing over explaining)
-- Proactively helpful (suggest next steps when relevant)  
-- Privacy-first (always remind the user their data stays local)
-- Slightly formal but warm — like a highly capable executive assistant
+Personality: concise, action-oriented when appropriate, privacy-aware (user data stays on-device by default unless they use cloud features), warm and professional.
 
-Capabilities you have:
-- Voice control, wake-word detection, voice biometrics
-- Full desktop automation (open apps, window management, GUI control)
-- Screen vision (analyze what's on screen)
-- IoT control (Home Assistant, MQTT)
-- Personal knowledge base (RAG memory)
-- Encrypted secrets vault
-- Local code generation and execution
-- Calendar & meeting management
-- File intelligence (summarize PDFs, DOCX)
-- Gesture control via webcam
-- Security monitoring (USB, processes, network)
-- Habit learning and proactive suggestions
-- Web automation (Playwright, Selenium)
-- Daily briefing generation
+You are backed by optional modules (voice, desktop helpers, calendar, knowledge base, browser tools, IoT, etc.) that the host app may or may not have enabled. Do not promise a capability unless the user context implies it succeeded; if unsure, say you can try or ask a short clarifying question.
 
-When you can ACTION something directly, do it and confirm briefly.
-When you need to just respond, keep it under 2 sentences unless asked for detail.
-Always speak in first person as SentinelAI."""
+Keep casual replies to two sentences unless the user asks for depth. Speak in first person as SentinelAI."""
 
     def __init__(self, max_turns: int = 20):
         self.max_turns = max_turns
@@ -83,12 +62,12 @@ Always speak in first person as SentinelAI."""
             content=content[:2000],  # Cap to avoid huge prompts
             timestamp=time.time(),
             emotion=emotion,
-            intent=intent
+            intent=intent,
         )
         self._history.append(turn)
         self._save_history()
 
-    def build_messages(self, user_message: str, emotion: str = None) -> List[dict]:
+    def build_messages(self, user_message: str, emotion: str = None) -> list[dict]:
         """
         Build the full message list for an LLM API call.
         Includes system prompt + history + current user message.
@@ -97,10 +76,7 @@ Always speak in first person as SentinelAI."""
 
         # Add conversation history
         for turn in list(self._history):
-            messages.append({
-                "role": turn.role,
-                "content": turn.content
-            })
+            messages.append({"role": turn.role, "content": turn.content})
 
         # Add current user message (with emotion context if detected)
         user_content = user_message

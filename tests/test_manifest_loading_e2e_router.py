@@ -1,0 +1,58 @@
+import json
+import os
+import tempfile
+import unittest
+
+
+class TestManifestLoadingE2ERouter(unittest.TestCase):
+    def test_end_to_end_dispatch_through_router(self):
+        # Setup a temporary manifest plugin and patch the PLUGINS_DIR
+        from sentinel.core.command_router import CommandRouter
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            plugins_root = os.path.join(tmpdir, "plugins_e2e")
+            os.makedirs(os.path.join(plugins_root, "Manifest"), exist_ok=True)
+            manifest = {
+                "name": "Manifest",
+                "version": "0.1.0",
+                "description": "End-to-end manifest test plugin",
+                "author": "Test",
+                "intents": [],
+                "triggers": ["test manifest plugin"],
+                "entry": "plugin.py",
+                "class": "Manifest",
+                "requires": [],
+            }
+            with open(os.path.join(plugins_root, "Manifest", "manifest.json"), "w", encoding="utf-8") as f:
+                json.dump(manifest, f)
+            with open(os.path.join(plugins_root, "Manifest", "plugin.py"), "w", encoding="utf-8") as f:
+                f.write(
+                    """
+from sentinel.core.plugin_system import PluginBase
+class Manifest(PluginBase):
+    def __init__(self, orchestrator=None):
+        super().__init__(orchestrator)
+    def can_handle(self, command):
+        return True
+    def execute(self, command, entity):
+        return 'Manifest Plugin Activated'
+"""
+                )
+            import sentinel.core.plugin_system as plugin_sys
+
+            old_dir = plugin_sys.PLUGINS_DIR
+            try:
+                plugin_sys.PLUGINS_DIR = plugins_root
+
+                class DummyOrchestrator:
+                    pass
+
+                router = CommandRouter(orchestrator=DummyOrchestrator())
+                result = router.run_command("test manifest plugin")
+                self.assertEqual(result, "Manifest Plugin Activated")
+            finally:
+                plugin_sys.PLUGINS_DIR = old_dir
+
+
+if __name__ == "__main__":
+    unittest.main()

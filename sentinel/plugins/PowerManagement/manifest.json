@@ -1,0 +1,11 @@
+{
+  "name": "PowerManagement",
+  "version": "1.0.0",
+  "description": "Sleep/hibernate/wake control for Windows",
+  "author": "SentinelAi",
+  "intents": ["sleep", "hibernate", "wake"],
+  "triggers": ["sleep", "hibernate", "wake"],
+  "entry": "plugin.py",
+  "class": "PowerManagement",
+  "requires": []
+}

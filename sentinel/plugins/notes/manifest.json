@@ -1,0 +1,11 @@
+{
+    "name": "Notes",
+    "version": "1.0.0",
+    "description": "Create and read local sticky notes stored as JSON.",
+    "author": "SentinelAI",
+    "intents": ["take_note", "read_note"],
+    "triggers": ["take a note", "note that", "jot down", "write down", "my notes", "read notes", "show notes"],
+    "entry": "plugin.py",
+    "class": "NotesPlugin",
+    "requires": []
+}

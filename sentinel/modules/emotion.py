@@ -1,7 +1,12 @@
-import librosa
-import numpy as np
-import os
 import logging
+
+try:
+    import librosa
+except ImportError:
+    librosa = None
+
+import numpy as np
+
 
 class EmotionModule:
     def __init__(self, model_path=None):
@@ -10,6 +15,9 @@ class EmotionModule:
 
     def analyze_audio_emotion(self, wav_path):
         """Analyzes the emotion in a voice recording based on spectral features."""
+        if librosa is None:
+            self.logger.warning("librosa is not installed; emotion analysis unavailable")
+            return "Neutral"
         try:
             y, sr = librosa.load(wav_path)
             # Basic features for simple emotion heuristic (pitch, energy, spectral flux)
@@ -18,10 +26,9 @@ class EmotionModule:
             avg_pitch = np.mean(pitches[pitches > 0])
             energy = np.mean(librosa.feature.rms(y=y))
             spectral_centroid = np.mean(librosa.feature.spectral_centroid(y=y, sr=sr))
-            
-            # Simple heuristic (High pitch + high energy = stressed/excited, low = calm)
-            # This is a placeholder for a real ML model like RAVDESS-trained CNN
-            if avg_pitch > 200 and energy > 0.05:
+
+            # Simple heuristic (High pitch/spectral energy + high volume = stressed/excited, low = calm)
+            if (avg_pitch > 200 or spectral_centroid > 2500) and energy > 0.05:
                 return "Stressed/Excited"
             elif avg_pitch < 150 and energy < 0.02:
                 return "Calm/Sad"
@@ -36,6 +43,6 @@ class EmotionModule:
         suggestions = {
             "Stressed/Excited": "You sound a bit stressed. Would you like to take a break or have me handle your next meeting?",
             "Calm/Sad": "You sound a bit down. I'm here if you need anything.",
-            "Neutral": None
+            "Neutral": None,
         }
         return suggestions.get(emotion)

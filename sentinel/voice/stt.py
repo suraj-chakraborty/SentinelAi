@@ -9,8 +9,8 @@ Usage:
     text = transcribe("command.wav")
 """
 
-import os
 import logging
+import os
 import time
 
 logger = logging.getLogger("SentinelSTT")
@@ -20,6 +20,7 @@ APPDATA_DIR = os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "Senti
 # ---------- faster-whisper (local, primary) ----------
 try:
     from faster_whisper import WhisperModel
+
     _WHISPER_AVAILABLE = True
 except ImportError:
     _WHISPER_AVAILABLE = False
@@ -28,6 +29,7 @@ except ImportError:
 # ---------- Google STT (fallback) ----------
 try:
     import speech_recognition as sr
+
     _GOOGLE_STT_AVAILABLE = True
 except ImportError:
     _GOOGLE_STT_AVAILABLE = False
@@ -35,6 +37,7 @@ except ImportError:
 # ---------- Vosk (offline fallback) ----------
 try:
     import vosk as _vosk
+
     _VOSK_AVAILABLE = True
 except ImportError:
     _VOSK_AVAILABLE = False
@@ -54,8 +57,8 @@ def _get_whisper_model() -> "WhisperModel":
             _whisper_model = WhisperModel(
                 _whisper_model_size,
                 device="cpu",
-                compute_type="int8",           # quantized for fast CPU inference
-                download_root=model_dir
+                compute_type="int8",  # quantized for fast CPU inference
+                download_root=model_dir,
             )
             logger.info("Whisper model loaded successfully.")
         except Exception as e:
@@ -66,23 +69,26 @@ def _get_whisper_model() -> "WhisperModel":
 def transcribe(wav_path: str) -> str:
     """
     Transcribe audio file to text.
-    Priority: faster-whisper (local) → Google STT (online) → Vosk (offline)
+    Priority: faster-whisper (local, private, offline) → Google STT (online fallback) → Vosk (offline fallback)
     """
     if not os.path.exists(wav_path):
         logger.error(f"Audio file not found: {wav_path}")
         return ""
 
-    # 1. Try Google STT first when network is available for lower latency on short commands
-    if _GOOGLE_STT_AVAILABLE and _has_network():
-        result = _transcribe_google(wav_path)
-        if result:
-            return result
-
-    # 2. Try faster-whisper (local, offline)
+    # 1. Try faster-whisper (local, offline, high accuracy) first
     if _WHISPER_AVAILABLE:
         result = _transcribe_whisper(wav_path)
         if result:
             return result
+
+    # 2. Try Google STT (fallback)
+    if _GOOGLE_STT_AVAILABLE:
+        try:
+            result = _transcribe_google(wav_path)
+            if result:
+                return result
+        except Exception as exc:
+            logger.debug("Google STT failed: %s", exc)
 
     # 3. Try Vosk (offline fallback, needs model downloaded)
     if _VOSK_AVAILABLE:
@@ -106,8 +112,8 @@ def _transcribe_whisper(wav_path: str) -> str:
             beam_size=3,
             language="en",
             condition_on_previous_text=False,
-            vad_filter=True,               # Built-in VAD to skip silence
-            vad_parameters={"min_silence_duration_ms": 500}
+            vad_filter=True,  # Built-in VAD to skip silence
+            vad_parameters={"min_silence_duration_ms": 500},
         )
         text = " ".join(seg.text.strip() for seg in segments).strip()
         elapsed = round(time.time() - t0, 2)
@@ -140,7 +146,9 @@ def _transcribe_google(wav_path: str) -> str:
 
 def _transcribe_vosk(wav_path: str) -> str:
     """Transcribe using Vosk (fully offline fallback)."""
-    import wave, json
+    import json
+    import wave
+
     try:
         model_dir = os.getenv("VOSK_MODEL") or os.path.join(APPDATA_DIR, "vosk-model")
         if not os.path.isdir(model_dir):
@@ -169,6 +177,7 @@ def _has_network() -> bool:
     """Quick network connectivity check."""
     try:
         import socket
+
         socket.create_connection(("8.8.8.8", 53), timeout=2)
         return True
     except Exception:

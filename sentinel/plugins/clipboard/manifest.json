@@ -1,0 +1,11 @@
+{
+    "name": "Clipboard",
+    "version": "1.0.0",
+    "description": "Read and write the Windows clipboard.",
+    "author": "SentinelAI",
+    "intents": ["clipboard_read", "clipboard_write"],
+    "triggers": ["clipboard", "what did i copy", "paste", "copy this", "read clipboard"],
+    "entry": "plugin.py",
+    "class": "ClipboardPlugin",
+    "requires": ["pywin32>=306"]
+}

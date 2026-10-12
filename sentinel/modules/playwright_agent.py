@@ -12,17 +12,16 @@ browser automation agent that:
   5. Executes them and loops until the goal is achieved or max_steps reached
 """
 
-import os
 import base64
-import time
 import logging
-import io
-from typing import Optional
+import os
+import time
 
 logger = logging.getLogger("PlaywrightAgentModule")
 
 try:
-    from playwright.sync_api import sync_playwright, Page, Browser
+    from playwright.sync_api import Browser, Page, sync_playwright
+
     _PW_AVAILABLE = True
 except ImportError:
     _PW_AVAILABLE = False
@@ -30,6 +29,7 @@ except ImportError:
 
 try:
     import httpx
+
     _HTTPX_AVAILABLE = True
 except ImportError:
     _HTTPX_AVAILABLE = False
@@ -59,8 +59,8 @@ class PlaywrightAgentModule:
         self.headless = headless
         self.gemini_api_key = gemini_api_key or os.getenv("GEMINI_API_KEY")
         self.logger = logging.getLogger("PlaywrightAgentModule")
-        self.browser: Optional["Browser"] = None
-        self.page: Optional["Page"] = None
+        self.browser: Browser | None = None
+        self.page: Page | None = None
         self._pw = None
 
     # ─── Lifecycle ────────────────────────────────────────────────────────────
@@ -72,12 +72,11 @@ class PlaywrightAgentModule:
         try:
             self._pw = sync_playwright().start()
             self.browser = self._pw.chromium.launch(
-                headless=self.headless,
-                args=["--disable-blink-features=AutomationControlled"]
+                headless=self.headless, args=["--disable-blink-features=AutomationControlled"]
             )
             context = self.browser.new_context(
                 viewport={"width": 1280, "height": 800},
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             )
             self.page = context.new_page()
             self.logger.info("Playwright started.")
@@ -235,7 +234,7 @@ class PlaywrightAgentModule:
 
     # ─── Private ──────────────────────────────────────────────────────────────
 
-    def _capture_screenshot_b64(self) -> Optional[str]:
+    def _capture_screenshot_b64(self) -> str | None:
         """Capture page screenshot and return as base64 PNG."""
         try:
             if not self.page:
@@ -246,25 +245,21 @@ class PlaywrightAgentModule:
             self.logger.error(f"Screenshot failed: {e}")
             return None
 
-    def _get_next_action(self, goal: str, steps: list, screenshot_b64: str) -> Optional[dict]:
+    def _get_next_action(self, goal: str, steps: list, screenshot_b64: str) -> dict | None:
         """Ask Gemini Vision to decide the next browser action."""
-        import json, re
+        import json
+        import re
+
         if not self.gemini_api_key or not _HTTPX_AVAILABLE:
             return None
         try:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={self.gemini_api_key}"
-            prompt = AGENT_SYSTEM_PROMPT.format(
-                goal=goal,
-                steps="; ".join(steps[-5:]) if steps else "None yet"
-            )
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={self.gemini_api_key}"
+            prompt = AGENT_SYSTEM_PROMPT.format(goal=goal, steps="; ".join(steps[-5:]) if steps else "None yet")
             payload = {
-                "contents": [{
-                    "parts": [
-                        {"text": prompt},
-                        {"inline_data": {"mime_type": "image/png", "data": screenshot_b64}}
-                    ]
-                }],
-                "generationConfig": {"maxOutputTokens": 200, "temperature": 0.2}
+                "contents": [
+                    {"parts": [{"text": prompt}, {"inline_data": {"mime_type": "image/png", "data": screenshot_b64}}]}
+                ],
+                "generationConfig": {"maxOutputTokens": 200, "temperature": 0.2},
             }
             with httpx.Client(timeout=30) as client:
                 resp = client.post(url, json=payload)
@@ -272,7 +267,7 @@ class PlaywrightAgentModule:
 
             text = j.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "")
             # Extract JSON from response
-            json_match = re.search(r'\{[^{}]+\}', text, re.DOTALL)
+            json_match = re.search(r"\{[^{}]+\}", text, re.DOTALL)
             if json_match:
                 return json.loads(json_match.group())
             return None

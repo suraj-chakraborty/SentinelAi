@@ -1,8 +1,13 @@
-import paho.mqtt.client as mqtt
-import requests
-import os
+try:
+    import paho.mqtt.client as mqtt
+except ImportError:
+    mqtt = None
+
 import logging
-import json
+import os
+
+import requests
+
 
 class IoTHubModule:
     def __init__(self):
@@ -16,14 +21,14 @@ class IoTHubModule:
         """Controls an entity in Home Assistant."""
         if not self.ha_url or not self.ha_token:
             return False, "Home Assistant credentials missing."
-        
+
         url = f"{self.ha_url}/api/services/{domain}/{service}"
         headers = {
             "Authorization": f"Bearer {self.ha_token}",
             "content-type": "application/json",
         }
         data = {"entity_id": entity_id}
-        
+
         try:
             response = requests.post(url, headers=headers, json=data)
             if response.status_code == 200:
@@ -36,6 +41,8 @@ class IoTHubModule:
 
     def publish_mqtt(self, topic, message):
         """Publishes a message to an MQTT broker."""
+        if mqtt is None:
+            return False, "paho-mqtt library not installed."
         try:
             client = mqtt.Client()
             client.connect(self.mqtt_host, self.mqtt_port, 60)

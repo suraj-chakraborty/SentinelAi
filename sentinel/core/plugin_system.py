@@ -32,18 +32,16 @@ plugin.py must expose a class with:
         def on_unload(self): ...
 """
 
-import os
-import sys
-import json
 import importlib.util
+import json
 import logging
-from typing import Dict, List, Optional
+import os
+import subprocess
+import sys
 
 logger = logging.getLogger("PluginSystem")
 
-PLUGINS_DIR = os.path.join(
-    os.path.expanduser("~"), "AppData", "Roaming", "SentinelAi", "plugins"
-)
+PLUGINS_DIR = os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "SentinelAi", "plugins")
 BUILTIN_PLUGINS_DIR = os.path.join(os.path.dirname(__file__), "..", "plugins")
 
 
@@ -58,17 +56,23 @@ class PluginBase:
         """Return True if this plugin can handle the given command."""
         return False
 
+    def health(self) -> bool:
+        """Return health status of the plugin. Default to healthy."""
+        return True
+
     def handle(self, command: str) -> str:
         """Handle the command and return a response string."""
         return ""
 
+    def execute(self, command: str, entity: str | None = None) -> str:
+        """Execute the command and return a response string (alias for handle)."""
+        return self.handle(command)
+
     def on_load(self):
         """Called when the plugin is loaded."""
-        pass
 
     def on_unload(self):
         """Called when the plugin is unloaded."""
-        pass
 
 
 class LoadedPlugin:
@@ -80,7 +84,7 @@ class LoadedPlugin:
         self.path = path
         self.name = manifest.get("name", "Unknown")
         self.version = manifest.get("version", "0.0")
-        self.triggers: List[str] = [t.lower() for t in manifest.get("triggers", [])]
+        self.triggers: list[str] = [t.lower() for t in manifest.get("triggers", [])]
 
     def matches(self, command: str) -> bool:
         """Check if command matches any trigger phrase, or plugin.can_handle()."""
@@ -92,12 +96,26 @@ class LoadedPlugin:
         except Exception:
             return False
 
-    def execute(self, command: str) -> str:
+    def execute(self, command: str, entity: str | None = None) -> str:
         """Execute the plugin handler."""
         try:
+            # Check if custom execute is defined
+            inst_exec = getattr(self.instance, "execute", None)
+            base_exec = getattr(PluginBase, "execute", None)
+            if inst_exec and inst_exec != base_exec:
+                import inspect
+
+                sig = inspect.signature(inst_exec)
+                params = [p for p in sig.parameters.values() if p.name != "self"]
+                if len(params) >= 2:
+                    return inst_exec(command, entity) or ""
+                elif len(params) == 1:
+                    return inst_exec(command) or ""
+                else:
+                    return inst_exec() or ""
             return self.instance.handle(command) or ""
         except Exception as e:
-            self.instance.logger.error(f"Plugin '{self.name}' handle error: {e}")
+            self.instance.logger.error("Plugin '%s' handle error: %s", self.name, e, exc_info=True)
             return f"Plugin error: {e}"
 
 
@@ -117,7 +135,7 @@ class PluginSystem:
 
     def __init__(self, orchestrator=None):
         self.orchestrator = orchestrator
-        self._plugins: Dict[str, LoadedPlugin] = {}
+        self._plugins: dict[str, LoadedPlugin] = {}
         os.makedirs(PLUGINS_DIR, exist_ok=True)
 
     # ─── Discovery & Loading ──────────────────────────────────────────────────
@@ -138,22 +156,30 @@ class PluginSystem:
         return loaded
 
     def load_plugin(self, plugin_dir: str) -> bool:
-        """Load a single plugin from its directory."""
+        """Load a single plugin from its directory, installing any missing dependencies first."""
         manifest_path = os.path.join(plugin_dir, "manifest.json")
         try:
             with open(manifest_path, "r", encoding="utf-8") as f:
                 manifest = json.load(f)
-        except Exception as e:
-            logger.error(f"Bad manifest at {manifest_path}: {e}")
+        except Exception as exc:
+            logger.error("Bad manifest at %s: %s", manifest_path, exc)
             return False
 
         name = manifest.get("name", os.path.basename(plugin_dir))
+
+        # ── Install dependencies declared in manifest ──────────────────────
+        requires = manifest.get("requires", [])
+        if requires:
+            if not self._install_requirements(name, requires):
+                logger.warning("Plugin '%s' skipped — dependency installation failed.", name)
+                return False
+
         entry_file = manifest.get("entry", "plugin.py")
         class_name = manifest.get("class", "Plugin")
         entry_path = os.path.join(plugin_dir, entry_file)
 
         if not os.path.exists(entry_path):
-            logger.error(f"Plugin '{name}': entry file not found: {entry_path}")
+            logger.error("Plugin '%s': entry file not found: %s", name, entry_path)
             return False
 
         try:
@@ -164,11 +190,41 @@ class PluginSystem:
             instance = PluginClass(orchestrator=self.orchestrator)
             instance.on_load()
             self._plugins[name] = LoadedPlugin(manifest, instance, plugin_dir)
-            logger.info(f"Loaded plugin: {name} v{manifest.get('version', '?')}")
+            logger.info("Loaded plugin: %s v%s", name, manifest.get("version", "?"))
             return True
-        except Exception as e:
-            logger.error(f"Failed to load plugin '{name}': {e}")
+        except Exception as exc:
+            logger.error("Failed to load plugin '%s': %s", name, exc, exc_info=True)
             return False
+
+    def _install_requirements(self, plugin_name: str, requires: list[str]) -> bool:
+        """
+        Install each requirement in `requires` via pip if not already present.
+        Returns True if all requirements are satisfied, False if any failed.
+        """
+        all_ok = True
+        for req in requires:
+            pkg = req.split(">=")[0].split("<=")[0].split("==")[0].split("!=")[0].strip()
+            try:
+                __import__(pkg.replace("-", "_"))
+                logger.debug("Plugin '%s' dep already satisfied: %s", plugin_name, pkg)
+            except ImportError:
+                logger.info("Installing dependency '%s' for plugin '%s'…", req, plugin_name)
+                try:
+                    result = subprocess.run(
+                        [sys.executable, "-m", "pip", "install", req, "--quiet"],
+                        capture_output=True,
+                        text=True,
+                        timeout=120,
+                    )
+                    if result.returncode == 0:
+                        logger.info("Installed: %s", req)
+                    else:
+                        logger.error("pip install failed for '%s': %s", req, result.stderr[:200])
+                        all_ok = False
+                except Exception as exc:
+                    logger.error("Dependency install error for '%s': %s", req, exc)
+                    all_ok = False
+        return all_ok
 
     def unload_plugin(self, name: str) -> bool:
         """Unload a plugin by name."""
@@ -192,7 +248,7 @@ class PluginSystem:
 
     # ─── Dispatch ─────────────────────────────────────────────────────────────
 
-    def dispatch(self, command: str) -> Optional[str]:
+    def dispatch(self, command: str) -> str | None:
         """
         Try each plugin in order. Return the first non-empty response,
         or None if no plugin handles the command.
@@ -207,15 +263,10 @@ class PluginSystem:
 
     # ─── Introspection ────────────────────────────────────────────────────────
 
-    def list_plugins(self) -> List[dict]:
+    def list_plugins(self) -> list[dict]:
         """Returns info about all loaded plugins."""
         return [
-            {
-                "name": p.name,
-                "version": p.version,
-                "triggers": p.triggers,
-                "path": p.path
-            }
+            {"name": p.name, "version": p.version, "triggers": p.triggers, "path": p.path}
             for p in self._plugins.values()
         ]
 

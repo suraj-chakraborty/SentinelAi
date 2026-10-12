@@ -1,34 +1,46 @@
-import chromadb
-from chromadb.utils import embedding_functions
-import os
-import logging
-import uuid
+try:
+    import chromadb
+    from chromadb.utils import embedding_functions
+
+    _CHROMADB_AVAILABLE = True
+except ImportError:
+    _CHROMADB_AVAILABLE = False
 import json
+import logging
+import os
+import uuid
 
 try:
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
     _AES_AVAILABLE = True
 except ImportError:
     _AES_AVAILABLE = False
 
 try:
     import networkx as nx
+
     _NX_AVAILABLE = True
 except ImportError:
     _NX_AVAILABLE = False
 
 import base64
 
+
 class KnowledgeBaseModule:
     def __init__(self, db_path="sentinel_db", master_key=None, llm_callback=None):
         self.db_path = os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "SentinelAi", db_path)
         os.makedirs(self.db_path, exist_ok=True)
-        self.client = chromadb.PersistentClient(path=self.db_path)
-        self.embedding_fn = embedding_functions.DefaultEmbeddingFunction()
-        self.collection = self.client.get_or_create_collection(
-            name="personal_knowledge",
-            embedding_function=self.embedding_fn
-        )
+        if _CHROMADB_AVAILABLE:
+            self.client = chromadb.PersistentClient(path=self.db_path)
+            self.embedding_fn = embedding_functions.DefaultEmbeddingFunction()
+            self.collection = self.client.get_or_create_collection(
+                name="personal_knowledge", embedding_function=self.embedding_fn
+            )
+        else:
+            self.client = None
+            self.embedding_fn = None
+            self.collection = None
         self.logger = logging.getLogger("KnowledgeBaseModule")
         self.master_key = master_key
         self.llm_callback = llm_callback
@@ -75,13 +87,15 @@ class KnowledgeBaseModule:
             doc_id = f"kb_{uuid.uuid4().hex}"
             self.collection.add(
                 documents=[text],
-                metadatas=[{
-                    **(metadata or {}),
-                    "source": (metadata or {}).get("source", "manual_entry"),
-                    "encrypted_payload": encrypted_payload,
-                    "is_encrypted": str(self.master_key is not None)
-                }],
-                ids=[doc_id]
+                metadatas=[
+                    {
+                        **(metadata or {}),
+                        "source": (metadata or {}).get("source", "manual_entry"),
+                        "encrypted_payload": encrypted_payload,
+                        "is_encrypted": str(self.master_key is not None),
+                    }
+                ],
+                ids=[doc_id],
             )
 
             # Record in Graph Database
@@ -122,11 +136,11 @@ class KnowledgeBaseModule:
         """Uses LLM to extract [Subject] -> [Predicate] -> [Object] and add to graph."""
         if not self.llm_callback:
             return
-        
+
         prompt = (
             f"Extract entity relationships from the following text into a strict JSON list of lists.\n"
-            f"Format = [[\"Subject Node\", \"Predicate/Relationship\", \"Object Node\"], ...]\n"
-            f"Only output the raw JSON array. Example: [[\"User\", \"likes\", \"Python\"]]\n\n"
+            f'Format = [["Subject Node", "Predicate/Relationship", "Object Node"], ...]\n'
+            f'Only output the raw JSON array. Example: [["User", "likes", "Python"]]\n\n'
             f"Text: {text}"
         )
         try:
@@ -141,7 +155,11 @@ class KnowledgeBaseModule:
                 added = 0
                 for t in tuples:
                     if len(t) == 3:
-                        subj, pred, obj = str(t[0]).lower().strip(), str(t[1]).lower().strip(), str(t[2]).lower().strip()
+                        subj, pred, obj = (
+                            str(t[0]).lower().strip(),
+                            str(t[1]).lower().strip(),
+                            str(t[2]).lower().strip(),
+                        )
                         self.graph.add_edge(subj, obj, relation=pred)
                         added += 1
                 if added > 0:
@@ -157,12 +175,12 @@ class KnowledgeBaseModule:
         entity = entity.lower().strip()
         if not self.graph.has_node(entity):
             return f"I have no specific relational memory about '{entity}'."
-        
+
         relations = []
         for nbr, datadict in self.graph.adj[entity].items():
             rel = datadict.get("relation", "is related to")
             relations.append(f"{entity} {rel} {nbr}")
-        
+
         return "\n".join(relations)
 
     def query_knowledge(self, query_text: str, n_results: int = 3) -> str:
@@ -180,7 +198,7 @@ class KnowledgeBaseModule:
             results = self.collection.query(
                 query_texts=[query_text],
                 n_results=min(n_results, count),
-                include=["documents", "metadatas", "distances"]
+                include=["documents", "metadatas", "distances"],
             )
             if not results or not results.get("documents") or not results["documents"][0]:
                 return "No relevant information found."
@@ -212,4 +230,3 @@ class KnowledgeBaseModule:
             return self.collection.count()
         except Exception:
             return 0
-

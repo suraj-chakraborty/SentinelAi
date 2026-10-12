@@ -1,6 +1,7 @@
-import pyautogui
 import logging
-import time
+
+import pyautogui
+
 
 class AutomationModule:
     def __init__(self):
@@ -8,7 +9,7 @@ class AutomationModule:
         pyautogui.FAILSAFE = True
         self.logger = logging.getLogger("AutomationModule")
 
-    def move_and_click(self, x, y, button='left'):
+    def move_and_click(self, x, y, button="left"):
         """Moves the mouse and clicks."""
         try:
             self.logger.info(f"Moving to ({x}, {y}) and clicking {button}.")

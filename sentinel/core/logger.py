@@ -6,12 +6,13 @@ Structured Logging with Contextual Metadata — Tier 4 Production Hardening.
 Outputs rich, parseable JSON logs and beautiful console logs.
 """
 
-import logging
-import sys
 import json
+import logging
+import os
+import sys
 import traceback
 from datetime import datetime
-import os
+
 
 def _resolve_log_file():
     candidates = [
@@ -30,7 +31,9 @@ def _resolve_log_file():
             continue
     return None
 
+
 JSON_LOG_FILE = _resolve_log_file()
+
 
 class JSONFormatter(logging.Formatter):
     def format(self, record):
@@ -47,13 +50,14 @@ class JSONFormatter(logging.Formatter):
             log_obj["exception"] = traceback.format_exception(*record.exc_info)
         return json.dumps(log_obj)
 
+
 class ConsoleFormatter(logging.Formatter):
     COLORS = {
-        logging.DEBUG: "\033[90m",    # Gray
-        logging.INFO: "\033[96m",     # Cyan
+        logging.DEBUG: "\033[90m",  # Gray
+        logging.INFO: "\033[96m",  # Cyan
         logging.WARNING: "\033[93m",  # Yellow
-        logging.ERROR: "\033[91m",    # Red
-        logging.CRITICAL: "\033[95m", # Magenta
+        logging.ERROR: "\033[91m",  # Red
+        logging.CRITICAL: "\033[95m",  # Magenta
     }
     RESET = "\033[0m"
 
@@ -64,6 +68,7 @@ class ConsoleFormatter(logging.Formatter):
         if record.exc_info:
             msg += f"\n{color}{traceback.format_exc()}{self.RESET}"
         return msg
+
 
 class SafeStreamHandler(logging.StreamHandler):
     def emit(self, record):
@@ -81,11 +86,12 @@ class SafeStreamHandler(logging.StreamHandler):
                 except Exception:
                     pass
 
+
 def setup_logging(level=logging.INFO):
     """Initializes structured JSON logging to file and colored text logging to console."""
     root_logger = logging.getLogger()
     root_logger.setLevel(level)
-    
+
     # Remove existing handlers
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
@@ -104,7 +110,7 @@ def setup_logging(level=logging.INFO):
     # 2. File Handler (JSON, structured for ELK/Datadog/etc)
     if JSON_LOG_FILE:
         try:
-            fh = logging.FileHandler(JSON_LOG_FILE, encoding='utf-8')
+            fh = logging.FileHandler(JSON_LOG_FILE, encoding="utf-8")
             fh.setLevel(logging.DEBUG)
             fh.setFormatter(JSONFormatter())
             root_logger.addHandler(fh)
@@ -115,6 +121,7 @@ def setup_logging(level=logging.INFO):
         logging.getLogger("SentinelLogger").info("Structured logging initialized.")
     except Exception:
         pass
+
 
 # Auto-setup on import
 setup_logging()

@@ -1,12 +1,16 @@
 from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.support.ui import WebDriverWait
+
+try:
+    from webdriver_manager.chrome import ChromeDriverManager
+except ImportError:
+    ChromeDriverManager = None
 import logging
-import time
+
 
 class WebAgentModule:
     def __init__(self, headless=False):
@@ -42,19 +46,15 @@ class WebAgentModule:
         """Searches Google and navigates to the first result."""
         if not self.driver:
             self.init_driver()
-        
+
         try:
             self.driver.get(url)
-            search_box = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.NAME, "q"))
-            )
+            search_box = WebDriverWait(self.driver, 10).until(EC.presence_of_element_located((By.NAME, "q")))
             search_box.send_keys(query)
             search_box.submit()
-            
+
             # Wait for results and click first one
-            first_result = WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "h3"))
-            )
+            first_result = WebDriverWait(self.driver, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, "h3")))
             first_result.click()
             return True, f"Navigated to first result for: {query}"
         except Exception as e:
@@ -67,4 +67,6 @@ class WebAgentModule:
         # For now, it provides a foundation for the assistant to perform web tasks.
         self.logger.info(f"Booking ticket task: {task_description}")
         # Implementation of autonomous booking would go here.
-        return f"Starting web task for: {task_description}. I will search and try to navigate through the booking process."
+        return (
+            f"Starting web task for: {task_description}. I will search and try to navigate through the booking process."
+        )
