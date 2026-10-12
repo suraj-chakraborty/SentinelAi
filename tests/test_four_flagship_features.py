@@ -8,17 +8,14 @@ Unit tests for the 4 flagship functionalities:
 4. Transparent Floating Desktop Widget (Win + Space companion & hotkey hooks).
 """
 
+import importlib.util
 import os
 import unittest
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
-try:
-    import PIL
-    _PIL_AVAILABLE = True
-except ImportError:
-    _PIL_AVAILABLE = False
+_PIL_AVAILABLE = importlib.util.find_spec("PIL") is not None
 
 
 class TestFourFlagshipFeatures(unittest.TestCase):
