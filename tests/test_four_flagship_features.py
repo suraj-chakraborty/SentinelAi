@@ -14,6 +14,12 @@ from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
+try:
+    import PIL
+    _PIL_AVAILABLE = True
+except ImportError:
+    _PIL_AVAILABLE = False
+
 
 class TestFourFlagshipFeatures(unittest.TestCase):
     def setUp(self):
@@ -43,6 +49,7 @@ class TestFourFlagshipFeatures(unittest.TestCase):
         self.assertIn("innerCore.scale.set", html)
 
     # ── Feature 2: Live Screen Vision HUD ────────────────────────────────────
+    @unittest.skipUnless(_PIL_AVAILABLE, "PIL/Pillow not installed")
     @patch("sentinel.utils.window_context.get_active_window_info")
     @patch("PIL.ImageGrab.grab")
     def test_screen_vision_hud_endpoint(self, mock_grab, mock_window):
