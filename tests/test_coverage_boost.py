@@ -45,8 +45,13 @@ from sentinel.core.logger import ConsoleFormatter, JSONFormatter, setup_logging
 from sentinel.core.orchestrator import SentinelOrchestrator
 from sentinel.core.user_profiles import UserProfileManager
 from sentinel.models.user_profile import UserProfile
+from sentinel.modules.automation_module import AutomationModule
 from sentinel.modules.calendar import CalendarModule
 from sentinel.modules.coding import CodingModule
+from sentinel.modules.emotion import EmotionModule
+from sentinel.modules.file_intelligence_module import FileIntelligenceModule
+from sentinel.modules.habit_learner import HabitLearnerModule
+from sentinel.modules.lora_collector import LoRACollector
 from sentinel.modules.system_monitor import SystemMonitor
 from sentinel.voice.enhanced_tts import EnhancedTTS
 from sentinel.voice.fast_voice import FastVoiceHandler
@@ -349,6 +354,66 @@ class TestSentinelOrchestratorSuite(unittest.TestCase):
     def test_run_command_dispatch(self):
         out = self.orch.run_command("what is 5 + 5")
         self.assertIsNotNone(out)
+
+
+class TestEmotionModule(unittest.TestCase):
+    def test_suggest_action(self):
+        em = EmotionModule()
+        sug = em.suggest_action_based_on_emotion("Stressed/Excited")
+        self.assertIn("break", sug.lower())
+        self.assertIsNone(em.suggest_action_based_on_emotion("Neutral"))
+
+    def test_analyze_audio_emotion_fallback(self):
+        em = EmotionModule()
+        res = em.analyze_audio_emotion("nonexistent.wav")
+        self.assertEqual(res, "Neutral")
+
+
+class TestAutomationModule(unittest.TestCase):
+    def test_automation_actions(self):
+        with patch("sentinel.modules.automation_module.pyautogui") as mock_pag:
+            mock_pag.size.return_value = unittest.mock.MagicMock(width=1920, height=1080)
+            mock_pag.position.return_value = unittest.mock.MagicMock(x=100, y=200)
+            am = AutomationModule()
+            ok, msg = am.move_and_click(50, 50)
+            self.assertTrue(ok)
+            ok, msg = am.type_text("hello")
+            self.assertTrue(ok)
+            ok, msg = am.press_key("enter")
+            self.assertTrue(ok)
+            ok, msg = am.hotkey("ctrl", "c")
+            self.assertTrue(ok)
+            info = am.get_screen_info()
+            self.assertIn("1920x1080", info)
+
+
+class TestHabitLearnerModule(unittest.TestCase):
+    def test_record_event_and_pattern(self):
+        kb_mock = unittest.mock.MagicMock()
+        hl = HabitLearnerModule(knowledge_base=kb_mock)
+        for _ in range(5):
+            hl._record_event("CodeEditor")
+        kb_mock.add_information.assert_called_once()
+        self.assertIn("CodeEditor", kb_mock.add_information.call_args[0][0])
+
+
+class TestLoRACollector(unittest.TestCase):
+    def test_log_interaction_and_dataset_size(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            collector = LoRACollector(filename="test.jsonl")
+            collector.filename = os.path.join(tmpdir, "test.jsonl")
+            self.assertEqual(collector.get_dataset_size(), 0)
+            collector.log_interaction("Execute this instruction", "Here is a complete response for fine tuning")
+            self.assertEqual(collector.get_dataset_size(), 1)
+
+
+class TestFileIntelligenceModule(unittest.TestCase):
+    def test_scan_directory_empty(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            kb_mock = unittest.mock.MagicMock()
+            fim = FileIntelligenceModule(knowledge_base=kb_mock)
+            files = fim.scan_directory(tmpdir)
+            self.assertEqual(files, [])
 
 
 if __name__ == "__main__":
